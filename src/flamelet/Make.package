@@ -1,0 +1,4 @@
+f90EXE_sources += chemtable_class.f90 flamelet_class.f90
+
+INCLUDE_LOCATIONS += $(NGA_HOME)/src/flamelet
+VPATH_LOCATIONS   += $(NGA_HOME)/src/flamelet

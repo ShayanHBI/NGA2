@@ -1,0 +1,520 @@
+!> Chemistry table class:
+module chemtable_class
+   use precision,    only: WP
+   use string,       only: str_medium
+   use config_class, only: config
+   use messager,     only: die
+   implicit none
+   private
+
+   ! Store the values for interpolation for speedup in newton
+   integer  :: i1,i2,i3
+   real(WP) :: w11,w12,w21,w22,w31,w32
+
+   ! Expose type/constructor/methods
+   public :: chemtable
+
+   !> Chemistry table object definition
+   type :: chemtable
+
+      ! This is our config
+      class(config), pointer :: cfg                         !< This is the config the solver is build for
+
+      ! This is the name of the flamelet object
+      character(len=str_medium) :: name='UNNAMED_chemtable' !< Name (default=UNNAMED_chemtable)
+
+      ! Chemistry table file name
+      character(len=str_medium) :: filename                 !< Name of datafile to read/write
+
+      ! Diffusion model name
+      integer :: comb_model
+
+      ! Mapping variables of the chemtable
+      integer :: n1,n2,n3
+      real(WP) :: x1min, x1max, x2min, x2max, x3min, x3max
+      real(WP), dimension(:), allocatable :: x1,x2,x3
+
+      ! Number of variables tabulated
+      integer :: nvar
+      character(len=str_medium), dimension(:), allocatable :: chem_name
+
+      ! Arrays of mapped variables
+      real(WP), dimension(:,:,:,:), allocatable :: table
+
+      ! Arrays of max/min of PROG as a function of A1 and A2
+      real(WP), dimension(:,:), allocatable :: prog_min
+      real(WP), dimension(:,:), allocatable :: prog_max
+
+      ! Index of density
+      integer  :: index_rho
+
+      ! Array of mask
+      ! TO BE REMOVED
+      ! integer, dimension(:,:,:), allocatable :: chem_mask
+
+
+   contains
+      procedure :: lookup
+      procedure :: lookup_rho
+      procedure :: lookup_rho_val
+      procedure :: lookup_rho_der
+      procedure :: prog_minmax
+      procedure :: lookup_max
+      procedure :: lookup_min
+      procedure :: get_var_ind
+   end type chemtable
+
+   !> Declare chemtable constructor
+   interface chemtable
+      procedure constructor
+   end interface chemtable
+
+contains
+
+   !> Default constructor for chemtable object
+   function constructor(cfg,fdata) result(self)
+      use parallel, only: info_mpiio,MPI_REAL_WP
+      use mpi_f08
+      implicit none
+      type(chemtable) :: self
+      class(config), target, intent(in) :: cfg
+      character(len=*), intent(in) :: fdata
+      integer :: ierr,n,i,j,k
+      type(MPI_File) :: ifile
+      type(MPI_Status) :: status
+      integer, dimension(4) :: dims
+
+      ! Point to config object
+      self%cfg=>cfg
+
+      ! Open the chemtable file
+      self%filename=trim(adjustl(fdata))
+      call MPI_FILE_OPEN(self%cfg%comm,trim(self%filename),MPI_MODE_RDONLY,info_mpiio,ifile,ierr)
+      if (ierr.ne.0) call die('[chemtable constructor] Problem encountered while reading chemistry table: '//trim(self%filename))
+
+      ! Read the headers
+      call MPI_FILE_READ_ALL(ifile,self%n1  ,1,MPI_INTEGER,status,ierr)
+      call MPI_FILE_READ_ALL(ifile,self%n2  ,1,MPI_INTEGER,status,ierr)
+      call MPI_FILE_READ_ALL(ifile,self%n3  ,1,MPI_INTEGER,status,ierr)
+      call MPI_FILE_READ_ALL(ifile,self%nvar,1,MPI_INTEGER,status,ierr)
+
+      ! Allocate the corresponding arrays
+      allocate(self%x1(self%n1),self%x2(self%n2),self%x3(self%n3))
+      allocate(self%chem_name(self%nvar))
+      allocate(self%table(self%n1,self%n2,self%n3,self%nvar))
+      ! allocate(self%chem_mask(self%n1,self%n2,self%n3))
+      allocate(self%prog_min(self%n1,self%n2))
+      allocate(self%prog_max(self%n1,self%n2))
+
+      ! Read the mapping variables
+      call MPI_FILE_READ_ALL(ifile,self%x1,self%n1,MPI_REAL_WP,status,ierr)
+      call MPI_FILE_READ_ALL(ifile,self%x2,self%n2,MPI_REAL_WP,status,ierr)
+      call MPI_FILE_READ_ALL(ifile,self%x3,self%n3,MPI_REAL_WP,status,ierr)
+
+      ! Read the chem_mask
+      ! call MPI_FILE_READ_ALL(ifile,self%chem_mask,self%n1*self%n2*self%n3,MPI_INTEGER,status,ierr)
+
+      ! Read the combustion model used
+      call MPI_FILE_READ_ALL(ifile,self%comb_model,1,MPI_INTEGER,status,ierr)
+
+      ! Read the names of the mapped variables
+      do n=1,self%nvar
+         call MPI_FILE_READ_ALL(ifile,self%chem_name(n),str_medium,MPI_CHARACTER,status,ierr)
+      end do
+
+      ! Read the mapped variables
+      do n=1,self%nvar
+         call MPI_FILE_READ_ALL(ifile,self%table(:,:,:,n),self%n1*self%n2*self%n3,MPI_REAL_WP,status,ierr)
+         ! Get the min/max of the table
+         if (trim(self%chem_name(n)).eq.'PROG') then
+            self%prog_min=maxval(self%table(:,:,:,n))
+            self%prog_max=minval(self%table(:,:,:,n))
+            do i=1,self%n1
+               do j=1,self%n2
+                  do k=1,self%n3
+                     self%prog_min(i,j)=min(self%table(i,j,k,n),self%prog_min(i,j))
+                     self%prog_max(i,j)=max(self%table(i,j,k,n),self%prog_max(i,j))
+                  end do
+               end do
+            end do
+         end if
+         ! Store index for density
+         if (trim(self%chem_name(n)).eq.'density') self%index_rho=n
+      end do
+
+      ! Get some properties of the mapping
+      self%x1min=minval(self%x1)
+      self%x1max=maxval(self%x1)
+      self%x2min=minval(self%x2)
+      self%x2max=maxval(self%x2)
+      self%x3min=minval(self%x3)
+      self%x3max=maxval(self%x3)
+
+      ! Close the file
+      call MPI_FILE_CLOSE(ifile,ierr)
+   end function constructor
+
+   !< Look in the chemtable for the variable named 'tag'
+   subroutine lookup(this,tag,R,A1,A2,A3,n)
+      implicit none
+      class(chemtable), intent(inout) :: this
+      character(len=*), intent(in) :: tag
+      real(WP), dimension(n), intent(in)  :: A1,A2,A3
+      real(WP), dimension(n), intent(out) :: R
+      integer, intent(in) :: n
+      real(WP) :: sc_min,sc_max
+      integer :: var_ind,i,j
+
+      ! If density call another routine
+      if (trim(tag).eq.'density') then
+         call this%lookup_rho(R,A1,A2,A3,n)
+         return
+      end if
+
+      ! Get the index of the variable
+      var_ind=this%get_var_ind(tag)
+
+      ! Trilinear interpolation
+      do i=1,n
+         ! First direction
+         if (A1(i).lt.this%x1min) then
+            i1=1
+            w11=1.0_WP
+         else if (A1(i).ge.this%x1max) then
+            i1=this%n1-1
+            w11=0.0_WP
+         else
+            loop1: do j=1,this%n1-1
+               if (A1(i).lt.this%x1(j+1)) then
+                  i1=j
+                  exit loop1
+               end if
+            end do loop1
+            w11=(this%x1(i1+1)-A1(i))/(this%x1(i1+1)-this%x1(i1))
+         end if
+         w12=1.0_WP-w11
+
+         ! Second direction
+         if (A2(i).lt.this%x2min) then
+            i2=1
+            w21=1.0_WP
+         else if (A2(i).ge.this%x2max) then
+            i2=this%n2-1
+            w21=0.0_WP
+         else
+            loop2: do j=1,this%n2-1
+               if (A2(i).lt.this%x2(j+1)) then
+                  i2=j
+                  exit loop2
+               end if
+            end do loop2
+            w21=(this%x2(i2+1)-A2(i))/(this%x2(i2+1)-this%x2(i2))
+         end if
+         w22=1.0_WP-w21
+
+         ! Third direction
+         if (A3(i).lt.this%x3min) then
+            i3=1
+            w31=1.0_WP
+         else if (A3(i).ge.this%x3max) then
+            i3=this%n3-1
+            w31=0.0_WP
+         else
+            loop3: do j=1,this%n3-1
+               if (A3(i).lt.this%x3(j+1)) then
+                  i3=j
+                  exit loop3
+               end if
+            end do loop3
+            w31=(this%x3(i3+1)-A3(i))/(this%x3(i3+1)-this%x3(i3))
+         end if
+         w32=1.0_WP-w31
+         ! Interpolation
+         R(i)=&
+            w31*(w21*(w11*this%table(i1,i2,i3  ,var_ind)+w12*this%table(i1+1,i2,i3  ,var_ind))+w22*(w11*this%table(i1,i2+1,i3  ,var_ind)+w12*this%table(i1+1,i2+1,i3  ,var_ind)))+&
+            w32*(w21*(w11*this%table(i1,i2,i3+1,var_ind)+w12*this%table(i1+1,i2,i3+1,var_ind))+w22*(w11*this%table(i1,i2+1,i3+1,var_ind)+w12*this%table(i1+1,i2+1,i3+1,var_ind)))
+         if (trim(tag).eq.'SRC_PROG') then
+            call this%prog_minmax(A1(i),A2(i),sc_min,sc_max)
+            if (A3(i).gt.sc_max.or.A3(i).lt.sc_min) R(i)=0.0_WP
+         end if
+      end do
+   end subroutine lookup
+
+   !< Look in the chemtable for the density with different interpolation than for other variables
+   subroutine lookup_rho(this,R,A1,A2,A3,n)
+      implicit none
+      class(chemtable), intent(inout) :: this
+      real(WP), dimension(n), intent(in)  :: A1,A2,A3
+      real(WP), dimension(n), intent(out) :: R
+      integer, intent(in) :: n
+      integer :: i,j
+
+      ! Trilinear interpolation
+      do i=1,n
+         ! First direction
+         if (A1(i).lt.this%x1min) then
+            i1=1
+            w11=1.0_WP
+         else if (A1(i).ge.this%x1max) then
+            i1=this%n1-1
+            w11=0.0_WP
+         else
+            loop1:do j=1,this%n1-1
+               if (A1(i).lt.this%x1(j+1)) then
+                  i1=j
+                  exit loop1
+               end if
+            end do loop1
+            w11=(this%x1(i1+1)-A1(i))/(this%x1(i1+1)-this%x1(i1))
+         end if
+         w12=1.0_WP-w11
+
+         ! Second direction
+         if (A2(i).lt.this%x2min) then
+            i2 = 1
+            w21 = 1.0_WP
+         else if (A2(i).ge.this%x2max) then
+            i2=this%n2-1
+            w21=0.0_WP
+         else
+            loop2:do j=1,this%n2-1
+               if (A2(i).lt.this%x2(j+1)) then
+                  i2=j
+                  exit loop2
+               end if
+            end do loop2
+            w21=(this%x2(i2+1)-A2(i))/(this%x2(i2+1)-this%x2(i2))
+         end if
+         w22=1.0_WP-w21
+
+         ! Third direction
+         if (A3(i).lt.this%x3min) then
+            i3=1
+            w31=1.0_WP
+         else if (A3(i).ge.this%x3max) then
+            i3=this%n3-1
+            w31=0.0_WP
+         else
+            loop3:do j=1,this%n3-1
+               if (A3(i).lt.this%x3(j+1)) then
+                  i3=j
+                  exit loop3
+               end if
+            end do loop3
+            w31=(this%x3(i3+1)-A3(i))/(this%x3(i3+1)-this%x3(i3))
+         end if
+         w32=1.0_WP-w31
+
+         ! Interpolation of 1/rho
+         R(i)=&
+            w31*(w21*(w11/this%table(i1,i2,i3  ,this%index_rho)+w12/this%table(i1+1,i2,i3  ,this%index_rho))+w22*(w11/this%table(i1,i2+1,i3  ,this%index_rho)+w12/this%table(i1+1,i2+1,i3  ,this%index_rho)))+&
+            w32*(w21*(w11/this%table(i1,i2,i3+1,this%index_rho)+w12/this%table(i1+1,i2,i3+1,this%index_rho))+w22*(w11/this%table(i1,i2+1,i3+1,this%index_rho)+w12/this%table(i1+1,i2+1,i3+1,this%index_rho)))
+         R(i)=1.0_WP/R(i)
+      end do
+   end subroutine lookup_rho
+
+   function lookup_rho_val(this,A1,A2,A3) result(rho_val)
+      implicit none
+      class(chemtable), intent(in) :: this
+      real(WP), intent(in) :: A1,A2,A3
+      real(WP) :: rho_val
+      integer :: var_ind,j
+
+      ! The variable is rho
+      var_ind=this%index_rho
+
+      ! First direction
+      if (A1.lt.this%x1min) then
+         i1=1
+         w11=1.0_WP
+      else if (A1.ge.this%x1max) then
+         i1=this%n1-1
+         w11=0.0_WP
+      else
+         loop1: do j=1,this%n1-1
+            if (A1.lt.this%x1(j+1)) then
+               i1=j
+               exit loop1
+            end if
+         end do loop1
+         w11=(this%x1(i1+1)-A1)/(this%x1(i1+1)-this%x1(i1))
+      end if
+      w12=1.0_WP-w11
+
+      ! Second direction
+      if (A2.lt.this%x2min) then
+         i2=1
+         w21=1.0_WP
+      else if (A2.ge.this%x2max) then
+         i2=this%n2-1
+         w21=0.0_WP
+      else
+         loop2: do j=1,this%n2-1
+            if (A2.lt.this%x2(j+1)) then
+               i2=j
+               exit loop2
+            end if
+         end do loop2
+         w21=(this%x2(i2+1)-A2)/(this%x2(i2+1)-this%x2(i2))
+      end if
+      w22=1.0_WP-w21
+
+      ! Third direction
+      if (A3.lt.this%x3min) then
+         i3=1
+         w31=1.0_WP
+      else if (A3.ge.this%x3max) then
+         i3=this%n3-1
+         w31=0.0_WP
+      else
+         loop3: do j=1,this%n3-1
+            if (A3.lt.this%x3(j+1)) then
+               i3=j
+               exit loop3
+            end if
+         end do loop3
+         w31=(this%x3(i3+1)-A3)/(this%x3(i3+1)-this%x3(i3))
+      end if
+      w32=1.0_WP-w31
+
+      ! Interpolation
+      rho_val=1.0_WP/(&
+         w31*(w21*(w11/this%table(i1,i2,i3  ,var_ind)+w12/this%table(i1+1,i2,i3  ,var_ind))+w22*(w11/this%table(i1,i2+1,i3  ,var_ind)+w12/this%table(i1+1,i2+1,i3,var_ind)))+&
+         w32*(w21*(w11/this%table(i1,i2,i3+1,var_ind)+w12/this%table(i1+1,i2,i3+1,var_ind))+w22*(w11/this%table(i1,i2+1,i3+1,var_ind)+w12/this%table(i1+1,i2+1,i3+1,var_ind))))
+   end function lookup_rho_val
+
+   !< Look in the chemtable for the density
+   function lookup_rho_der(this,dir) result(rho_der_val)
+      implicit none
+      class(chemtable), intent(in) :: this
+      integer, intent(in) :: dir
+      real(WP) :: rho_der_val
+      integer :: var_ind,j
+      real(WP) :: c11,c12,c21,c22,c31,c32
+
+      ! Get the index of the variable
+      var_ind = this%index_rho
+
+      ! Compute the coefficients
+      c11=w11
+      c12=w12
+      c21=w21
+      c22=w22
+      c31=w31
+      c32=w32
+
+      ! Update the coefficients to account for derivatives
+      select case(dir)
+       case (1)
+         c12=1.0_WP/(this%x1(i1+1)-this%x1(i1))
+         c11=-c12
+       case (2)
+         c22=1.0_WP/(this%x2(i2+1)-this%x2(i2))
+         c21=-c22
+       case (3)
+         c32=1.0_WP/(this%x3(i3+1)-this%x3(i3))
+         c31=-c32
+      end select
+
+      ! Compute derivative in the direction 'dir' and interpolation in the two others
+      rho_der_val= &
+         c31*(c21*(c11*this%table(i1,i2,i3  ,var_ind)+c12*this%table(i1+1,i2,i3  ,var_ind))+c22*(c11*this%table(i1,i2+1,i3  ,var_ind)+c12*this%table(i1+1,i2+1,i3  ,var_ind)))+&
+         c32*(c21*(c11*this%table(i1,i2,i3+1,var_ind)+c12*this%table(i1+1,i2,i3+1,var_ind))+c22*(c11*this%table(i1,i2+1,i3+1,var_ind)+c12*this%table(i1+1,i2+1,i3+1,var_ind)))
+   end function lookup_rho_der
+
+   !< Return the interpolated min/max at the given location in Z1
+   subroutine prog_minmax(this,A1,A2,sc_min,sc_max)
+      implicit none
+      class(chemtable), intent(inout) :: this
+      real(WP), intent(in)  :: A1,A2
+      real(WP), intent(out) :: sc_min,sc_max
+      integer :: j
+
+      ! First direction
+      if (A1.lt.this%x1min) then
+         i1=1
+         w11=1.0_WP
+      else if (A1.ge.this%x1max) then
+         i1=this%n1-1
+         w11=0.0_WP
+      else
+         loop1: do j=1,this%n1-1
+            if (A1.lt.this%x1(j+1)) then
+               i1 = j
+               exit loop1
+            end if
+         end do loop1
+         w11=(this%x1(i1+1)-A1)/(this%x1(i1+1)-this%x1(i1))
+      end if
+      w12=1.0_WP-w11
+
+      ! Second direction
+      if (A2.lt.this%x2min) then
+         i2=1
+         w21=1.0_WP
+      else if (A2.ge.this%x2max) then
+         i2=this%n2-1
+         w21=0.0_WP
+      else
+         loop2: do j=1,this%n2-1
+            if (A2.lt.this%x2(j+1)) then
+               i2 = j
+               exit loop2
+            end if
+         end do loop2
+         w21=(this%x2(i2+1)-A2)/(this%x2(i2+1)-this%x2(i2))
+      end if
+      w22=1.0_WP-w21
+
+      ! Return the interpolated min and max
+      sc_min=w21*(w11*this%prog_min(i1,i2)+w12*this%prog_min(i1+1,i2))+w22*(w11*this%prog_min(i1,i2+1)+w12*this%prog_min(i1+1,i2+1))
+      sc_max=w21*(w11*this%prog_max(i1,i2)+w12*this%prog_max(i1+1,i2))+w22*(w11*this%prog_max(i1,i2+1)+w12*this%prog_max(i1+1,i2+1))
+      if (isnan(sc_min)) sc_min = 0.0_WP
+      if (isnan(sc_max)) sc_max = 0.0_WP
+   end subroutine prog_minmax
+
+   !< Find the maximum of a variable in the chemtable
+   subroutine lookup_max(this,tag,R)
+      implicit none
+      class(chemtable), intent(inout) :: this
+      character(len=*), intent(in) :: tag
+      real(WP), intent(out) :: R
+      integer :: var_ind
+
+      ! Get the index of the variable
+      var_ind=this%get_var_ind(tag)
+
+      ! Return the max
+      R = maxval(this%table(:,:,:,var_ind))
+   end subroutine lookup_max
+
+   !< Find the maximum of a variable in the chemtable
+   subroutine lookup_min(this,tag,R)
+      implicit none
+      class(chemtable), intent(inout) :: this
+      character(len=*), intent(in) :: tag
+      real(WP), intent(out) :: R
+      integer :: var_ind
+
+      ! Get the index of the variable
+      var_ind=this%get_var_ind(tag)
+
+      ! Return the min
+      R = minval(this%table(:,:,:,var_ind))
+   end subroutine lookup_min
+
+   function get_var_ind(this,tag) result(var_ind)
+      implicit none
+      class(chemtable), intent(inout) :: this
+      character(len=*), intent(in) :: tag
+      integer :: var_ind
+
+      ! Get the index of the variable
+      do var_ind=1,this%nvar
+         if (trim(this%chem_name(var_ind)).eq.trim(tag)) exit
+      end do
+      if (var_ind.gt.this%nvar) then
+         call die('[chemtable get_var_ind] unknown variable : '//trim(tag))
+      end if
+   end function
+end module chemtable_class

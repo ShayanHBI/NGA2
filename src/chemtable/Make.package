@@ -1,0 +1,4 @@
+f90EXE_sources += flameletLib_class.f90 diffusionTable_class.f90 createDiffusionChemTable.f90
+
+INCLUDE_LOCATIONS += $(NGA_HOME)/src/chemtable
+VPATH_LOCATIONS   += $(NGA_HOME)/src/chemtable

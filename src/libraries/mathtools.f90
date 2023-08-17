@@ -11,6 +11,7 @@ module mathtools
    public :: normalize
    public :: qrotate
    public :: arctan
+   public :: gamma,gammaln
    
    ! Trigonometric parameters
    real(WP), parameter :: Pi   =3.1415926535897932385_WP
@@ -168,4 +169,47 @@ contains
   end function arctan
    
    
+  ! Returns the gamma function
+  function gamma(xx)
+   implicit none
+   
+   real(WP) :: gamma
+   real(WP), intent(in) :: xx
+   
+   gamma=exp(gammaln(xx))
+   
+   return
+ end function gamma
+ 
+ 
+ ! Returns the log of the gamma function
+ function gammaln(xx)
+   implicit none
+ 
+   real(WP) :: gammaln
+   real(WP), intent(in) :: xx
+   
+   real(WP), parameter :: stp = 2.5066282746310005_WP
+   real(WP), dimension(6), parameter :: cof = (/ 76.18009172947146_WP, &
+        -86.50532032941677_WP, 24.01409824083091_WP,-1.231739572450155_WP, &
+        .1208650973866179E-2_WP, -.5395239384953E-5_WP /)
+   
+   real(WP) :: ser,tmp,x,y
+   integer :: j
+
+   x = xx
+   y = x
+   tmp = x + 5.5_WP
+   tmp = (x+0.5_WP)*log(tmp)-tmp
+   ser = 1.000000000190015_WP
+   do j=1,6
+      y = y + 1.0_WP
+      ser = ser+cof(j)/y
+   end do
+   gammaln = tmp + log(stp*ser/x)
+   
+   return
+ end function gammaln
+
+
 end module mathtools
