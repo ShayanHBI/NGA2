@@ -97,6 +97,8 @@ module vdscalar_class
       procedure :: solve_implicit                           !< Solve for the scalar residuals implicitly
       procedure :: rho_divide                               !< Divide rhoSC by rho to get SC
       procedure :: rho_multiply                             !< Multiply SC by rho to get rhoSC
+      procedure :: grad_mag_sq                              !< Get the square of the gradient magnitude
+      procedure :: filter                                   !< Apply volume filtering to field
    end type vdscalar
    
    
@@ -746,5 +748,87 @@ contains
       
    end subroutine scalar_print
    
-   
+   !> Compute the gradient of the scalar at the cell centers
+   function grad_mag_sq(this,itpr_x,itpr_y,itpr_z) result(SCgradMagSq)
+      implicit none
+      class(vdscalar), intent(in) :: this
+      real(WP), dimension(-1:0,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1), intent(in) :: itpr_x,itpr_y,itpr_z
+      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: SCgradx,SCgrady,SCgradz,SCgradMagSq
+      real(WP) :: SCf
+      integer :: i,j,k
+
+      ! Gauss gradient computation
+      SCgradx=0.0_WP; SCgrady=0.0_WP; SCgradz=0.0_WP
+      do k=this%cfg%kmin_,this%cfg%kmax_
+         do j=this%cfg%jmin_,this%cfg%jmax_
+            do i=this%cfg%imin_,this%cfg%imax_
+               SCf=sum(itpr_x(:,i,j,k)*this%SC(i-1:i,j,k))
+               SCgradx(i-1,j,k)=SCgradx(i-1,j,k)+SCf/this%cfg%dx(i-1)
+               SCgradx(i  ,j,k)=SCgradx(i  ,j,k)-SCf/this%cfg%dx(i  )
+               SCf=sum(itpr_y(:,i,j,k)*this%SC(i,j-1:j,k))
+               SCgrady(i,j-1,k)=SCgrady(i,j-1,k)+SCf/this%cfg%dy(j-1)
+               SCgrady(i,j  ,k)=SCgrady(i,j  ,k)-SCf/this%cfg%dy(j  )
+               SCf=sum(itpr_z(:,i,j,k)*this%SC(i,j,k-1:k))
+               SCgradz(i,j,k-1)=SCgradz(i,j,k-1)+SCf/this%cfg%dz(k-1)
+               SCgradz(i,j,k  )=SCgradz(i,j,k  )-SCf/this%cfg%dz(k  )
+            end do
+         end do
+      end do
+      ! Sync the components
+      call this%cfg%sync(SCgradx); call this%cfg%sync(SCgrady); call this%cfg%sync(SCgradz)
+
+      ! Take the magnitude squared
+      do k=this%cfg%kmin_,this%cfg%kmax_
+         do j=this%cfg%jmin_,this%cfg%jmax_
+            do i=this%cfg%imin_,this%cfg%imax_
+               SCgradMagSq(i,j,k)=SCgradx(i,j,k)**2+SCgrady(i,j,k)**2+SCgradz(i,j,k)**2
+            end do
+         end do
+      end do
+      ! Sync it
+      call this%cfg%sync(SCgradMagSq)
+   end function grad_mag_sq
+
+   !> Laplacian filtering operation of a scalar field
+   subroutine filter(this,A,filter_width)
+      implicit none
+      class(vdscalar), intent(in) :: this
+      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_), intent(inout) :: A
+      real(WP), intent(in) :: filter_width
+      real(WP) :: filter_coeff
+      integer :: i,j,k,n,nstep
+      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: FX,FY,FZ
+
+      ! Recompute filter coeff and number of explicit steps needed
+      filter_coeff=0.5_WP*(filter_width/(2.0_WP*sqrt(2.0_WP*log(2.0_WP))))**2
+      nstep=ceiling(6.0_WP*filter_coeff/this%cfg%min_meshsize**2)
+      filter_coeff=filter_coeff/real(nstep,WP)
+
+      ! Apply filter
+      do n=1,nstep
+         ! Diffusive flux of A
+         do k=this%cfg%kmin_,this%cfg%kmax_+1
+            do j=this%cfg%jmin_,this%cfg%jmax_+1
+               do i=this%cfg%imin_,this%cfg%imax_+1
+                  FX(i,j,k)=filter_coeff*sum(this%grdsc_x(:,i,j,k)*A(i-1:i,j,k))
+                  FY(i,j,k)=filter_coeff*sum(this%grdsc_y(:,i,j,k)*A(i,j-1:j,k))
+                  FZ(i,j,k)=filter_coeff*sum(this%grdsc_z(:,i,j,k)*A(i,j,k-1:k))
+               end do
+            end do
+         end do
+         ! Divergence of fluxes
+         do k=this%cfg%kmin_,this%cfg%kmax_
+            do j=this%cfg%jmin_,this%cfg%jmax_
+               do i=this%cfg%imin_,this%cfg%imax_
+                  A(i,j,k)=A(i,j,k)+sum(this%divsc_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%divsc_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%divsc_z(:,i,j,k)*FZ(i,j,k:k+1))
+               end do
+            end do
+         end do
+      end do
+
+      ! Sync A
+      call this%cfg%sync(A)
+   end subroutine filter
+
+
 end module vdscalar_class

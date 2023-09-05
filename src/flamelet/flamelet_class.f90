@@ -13,6 +13,7 @@ module flamelet_class
 
    ! List of known available flamelet models
    integer, parameter, public :: sfm=1                       !< Steady Flamelet Model (SFM)
+   integer, parameter, public :: bs =1                       !< Burke–Schumann
 
    !> flamelet object definition
    type :: flamelet
@@ -20,14 +21,14 @@ module flamelet_class
       ! This is our config
       class(config), pointer :: cfg                          !< This is the config the solver is build for
 
-      ! diffChemtable
+      ! chemtable
       type(chemtable) :: chmtbl
 
       ! This is the name of the flamelet object
       character(len=str_medium) :: name='UNNAMED_flamelet'   !< Name (default=UNNAMED_flamelet)
 
       ! flamelet model
-      integer :: diffmodel
+      integer :: flmModel
 
       ! Field variables
       real(WP), dimension(:,:,:), allocatable :: Zvar !< Favre-spatially-filtered variance of the mixture fraction
@@ -48,11 +49,11 @@ contains
 
 
    !> Default constructor for flamelet object
-   function constructor(cfg,diffmodel,tablefile,name) result(self)
+   function constructor(cfg,flmModel,tablefile,name) result(self)
       implicit none
       type(flamelet) :: self
       class(config), target, intent(in) :: cfg
-      integer, intent(in) :: diffmodel
+      integer, intent(in) :: flmModel
       character(len=*), intent(in) :: tablefile
       character(len=*), optional :: name
       integer :: i,j,k
@@ -67,9 +68,9 @@ contains
       self%chmtbl=chemtable(cfg=cfg,fdata=tablefile)
 
       ! Set the flamelet model
-      self%diffmodel=diffmodel
-      if (self%chmtbl%comb_model.ne.self%diffmodel) call die('[flamelet constructor] Chemtable model is incompatible with the flamelet model')
-      select case (self%diffmodel)
+      self%flmModel=flmModel
+      if (self%chmtbl%comb_model.ne.self%flmModel) call die('[flamelet constructor] Chemtable model is incompatible with the flamelet model')
+      select case (self%flmModel)
        case (sfm)
        case default
          call die('[flamelet constructor] Unknown flamelet model')
@@ -81,24 +82,24 @@ contains
    end function constructor
 
 
-   subroutine compute_Zvar(this,delta,Zgnorm,Z)
+   subroutine compute_Zvar(this,delta,ZgradMagSq,Z)
       class(flamelet), intent(inout) :: this
       real(WP), dimension(this%cfg%imin_:this%cfg%imax_,this%cfg%jmin_:this%cfg%jmax_,this%cfg%kmin_:this%cfg%kmax_), intent(in) :: delta
-      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_), intent(in) :: Zgnorm,Z
+      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_), intent(in) :: ZgradMagSq,Z
       real(WP), parameter :: Cz=0.15_WP**2/1.0_WP
       
-      this%Zvar=Cz*delta**2*Zgnorm**2
+      this%Zvar=Cz*delta**2*ZgradMagSq
       ! Clip the computed Variance
       this%Zvar=max(0.0_WP,min(Z*(1.0_WP-Z),this%Zvar))
    end subroutine compute_Zvar
 
 
-   subroutine compute_chi(this,mueff,rho,Zgnorm)
+   subroutine compute_chi(this,mueff,rho,ZgradMagSq)
       class(flamelet), intent(inout) :: this
-      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_), intent(in) :: mueff,rho,Zgnorm
+      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_), intent(in) :: mueff,rho,ZgradMagSq
       real(WP), parameter :: Cchi=2.0_WP
 
-      this%chi=Cchi*mueff/rho*Zgnorm**2
+      this%chi=Cchi*mueff/rho*ZgradMagSq
    end subroutine compute_chi
 
 

@@ -32,7 +32,6 @@ module diffusionTable_class
       integer :: nvar_out
       character(len=str_medium), dimension(:), allocatable :: output_name
       real(WP), dimension(:,:,:,:), allocatable :: output_data
-      integer,  dimension(:,:,:),   allocatable :: mask
 
       ! Variable after convolution
       real(WP), dimension(:,:,:,:), pointer :: postconv
@@ -335,8 +334,6 @@ contains
 
       ! Allocate final table
       allocate(this%output_data(this%nZMean,this%nZVar,this%n3,this%nvar_out))
-      allocate(this%mask(this%nZMean,this%nZVar,this%n3))
-      this%mask=0
 
       ! Create mesh in thrid direction
       call this%create_Z3
@@ -380,8 +377,6 @@ contains
                      alpha_down=0.0_WP
                      file_down=1
                   end if
-                  ! Mask it
-                  this%mask(izm,izv,i3)=1
                else
                   if (file_up.eq.file_down) then
                      alpha_up  =1.0_WP
@@ -454,8 +449,6 @@ contains
       write(iunit) this%ZMean
       write(iunit) this%ZVar
       write(iunit) this%Z3
-      ! Masks
-      ! write(iunit) this%mask
       ! Write additional stuff
       write(iunit) this%flmlib%combModel
       ! Write variable names
