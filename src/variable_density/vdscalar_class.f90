@@ -19,6 +19,7 @@ module vdscalar_class
    
    ! List of available advection schemes for scalar transport
    integer, parameter, public :: quick=1                    !< Quick scheme
+   integer, parameter, public :: bquick=2                   !< BQuick scheme
    
    
    !> Boundary conditions for the incompressible solver
@@ -74,6 +75,10 @@ module vdscalar_class
       real(WP), dimension(:,:,:,:), allocatable :: grdsc_x ,grdsc_y ,grdsc_z         !< Scalar gradient for SC
       real(WP), dimension(:,:,:,:), allocatable :: itp_x   ,itp_y   ,itp_z           !< Second order interpolation for SC diffusivity
       
+      ! Bquick requires additional storage
+	   real(WP), dimension(:,:,:,:), allocatable :: bitp_xp,bitp_yp,bitp_zp  !< Plus interpolation for SC  - backup
+      real(WP), dimension(:,:,:,:), allocatable :: bitp_xm,bitp_ym,bitp_zm  !< Minus interpolation for SC - backup
+
       ! Masking info for metric modification
       integer, dimension(:,:,:), allocatable :: mask        !< Integer array used for modifying SC metrics
       
@@ -90,6 +95,8 @@ module vdscalar_class
       procedure :: apply_bcond                              !< Apply all boundary conditions
       procedure :: init_metrics                             !< Initialize metrics
       procedure :: adjust_metrics                           !< Adjust metrics
+      procedure :: metric_reset                             !< Reset adaptive metrics like bquick
+      procedure :: metric_adjust                            !< Adjust adaptive metrics like bquick
       procedure :: get_drhoSCdt                             !< Calculate drhoSC/dt
       procedure :: get_max                                  !< Calculate maximum field values
       procedure :: get_int                                  !< Calculate integral field values
@@ -142,7 +149,7 @@ contains
       ! Prepare advection scheme
       self%scheme=scheme
       select case (self%scheme)
-      case (quick)
+      case (quick,bquick)
          ! Check current overlap
          if (self%cfg%no.lt.2) call die('[scalar constructor] vdscalar transport scheme requires larger overlap')
          ! Set interpolation stencil sizes
@@ -213,7 +220,7 @@ contains
       allocate(this%itpsc_zm(this%stm1:this%stm2,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1)) !< Z-face-centered
       ! Create scalar interpolation coefficients to cell faces
       select case (this%scheme)
-      case (quick)
+      case (quick,bquick)
          do k=this%cfg%kmin_,this%cfg%kmax_+1
             do j=this%cfg%jmin_,this%cfg%jmax_+1
                do i=this%cfg%imin_,this%cfg%imax_+1
@@ -376,6 +383,17 @@ contains
       ! Adjust metrics based on mask array
       call this%adjust_metrics()
       
+      ! Bquick needs to remember the quick coefficients
+	   select case (this%scheme)
+      case (bquick)
+         allocate(this%bitp_xp(this%stp1:this%stp2,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1)); this%bitp_xp=this%itpsc_xp
+         allocate(this%bitp_xm(this%stm1:this%stm2,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1)); this%bitp_xm=this%itpsc_xm
+         allocate(this%bitp_yp(this%stp1:this%stp2,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1)); this%bitp_yp=this%itpsc_yp
+         allocate(this%bitp_ym(this%stm1:this%stm2,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1)); this%bitp_ym=this%itpsc_ym
+         allocate(this%bitp_zp(this%stp1:this%stp2,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1)); this%bitp_zp=this%itpsc_zp
+         allocate(this%bitp_zm(this%stm1:this%stm2,this%cfg%imin_:this%cfg%imax_+1,this%cfg%jmin_:this%cfg%jmax_+1,this%cfg%kmin_:this%cfg%kmax_+1)); this%bitp_zm=this%itpsc_zm
+      end select
+
       ! Prepare implicit solver if it had been provided
       if (present(implicit_solver)) then
          
@@ -735,6 +753,53 @@ contains
    end subroutine solve_implicit
    
    
+   !> Metric resetting for adaptive discretization like bquick
+   subroutine metric_reset(this)
+      implicit none
+      class(vdscalar), intent(inout) :: this
+      select case (this%scheme)
+      case (bquick)
+         this%itpsc_xp=this%bitp_xp
+         this%itpsc_xm=this%bitp_xm
+         this%itpsc_yp=this%bitp_yp
+         this%itpsc_ym=this%bitp_ym
+         this%itpsc_zp=this%bitp_zp
+         this%itpsc_zm=this%bitp_zm
+      end select
+    end subroutine metric_reset
+
+
+    !> Adjust adaptive metrics like bquick
+   subroutine metric_adjust(this,SC,flag)
+      implicit none
+      class(vdscalar), intent(inout) :: this
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: SC   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      logical , dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: flag !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      integer :: i,j,k
+      select case (this%scheme)
+      case (bquick)
+         do k=this%cfg%kmin_,this%cfg%kmax_+1
+            do j=this%cfg%jmin_,this%cfg%jmax_+1
+               do i=this%cfg%imin_,this%cfg%imax_+1
+                  if (any(flag(i-1:i,j,k))) then
+                     this%itpsc_xp(:,i,j,k)=[0.0_WP,1.0_WP,0.0_WP]
+                     this%itpsc_xm(:,i,j,k)=[0.0_WP,1.0_WP,0.0_WP]
+                  end if
+                  if (any(flag(i,j-1:j,k))) then
+                     this%itpsc_yp(:,i,j,k)=[0.0_WP,1.0_WP,0.0_WP]
+                     this%itpsc_ym(:,i,j,k)=[0.0_WP,1.0_WP,0.0_WP]
+                  end if
+                  if (any(flag(i,j,k-1:k))) then
+                     this%itpsc_zp(:,i,j,k)=[0.0_WP,1.0_WP,0.0_WP]
+                     this%itpsc_zm(:,i,j,k)=[0.0_WP,1.0_WP,0.0_WP]
+                  end if
+               end do
+            end do
+         end do
+      end select
+   end subroutine metric_adjust
+
+
    !> Print out info for vdscalar solver
    subroutine scalar_print(this)
       use, intrinsic :: iso_fortran_env, only: output_unit
