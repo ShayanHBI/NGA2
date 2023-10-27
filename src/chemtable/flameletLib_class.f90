@@ -1,3 +1,4 @@
+!> Flamelet library class:
 module flameletLib_class
    use precision, only: WP
    use string,    only: str_medium,str_long

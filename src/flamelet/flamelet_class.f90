@@ -13,7 +13,6 @@ module flamelet_class
 
    ! List of known available flamelet models
    integer, parameter, public :: sfm=1                       !< Steady Flamelet Model (SFM)
-   integer, parameter, public :: bs =1                       !< Burke–Schumann
 
    !> flamelet object definition
    type :: flamelet

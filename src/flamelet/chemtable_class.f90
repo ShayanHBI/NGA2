@@ -239,8 +239,8 @@ contains
 
          ! Second direction
          if (A2(i).lt.this%x2min) then
-            i2 = 1
-            w21 = 1.0_WP
+            i2=1
+            w21=1.0_WP
          else if (A2(i).ge.this%x2max) then
             i2=this%n2-1
             w21=0.0_WP
@@ -361,7 +361,7 @@ contains
       real(WP) :: c11,c12,c21,c22,c31,c32
 
       ! Get the index of the variable
-      var_ind = this%index_rho
+      var_ind=this%index_rho
 
       ! Compute the coefficients
       c11=w11
@@ -402,7 +402,7 @@ contains
       var_ind=this%get_var_ind(tag)
 
       ! Return the max
-      R = maxval(this%table(:,:,:,var_ind))
+      R=maxval(this%table(:,:,:,var_ind))
    end subroutine lookup_max
 
    !< Find the maximum of a variable in the chemtable
@@ -417,7 +417,7 @@ contains
       var_ind=this%get_var_ind(tag)
 
       ! Return the min
-      R = minval(this%table(:,:,:,var_ind))
+      R=minval(this%table(:,:,:,var_ind))
    end subroutine lookup_min
 
    function get_var_ind(this,tag) result(var_ind)

@@ -1,3 +1,4 @@
+!> Creates chemistry table as a binary file
 program createDiffusionChemTable
    use param,                only: param_init,param_final,param_read
    use flameletlib_class,    only: flameletLib,sfm

@@ -1,3 +1,4 @@
+!> Diffusion table class:
 module diffusionTable_class
    use precision,         only: WP
    use string,            only: str_medium,str_long
