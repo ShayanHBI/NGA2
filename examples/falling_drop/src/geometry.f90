@@ -45,7 +45,7 @@ contains
          end do
          
          ! General serial grid object
-         grid=sgrid(coord=cartesian,no=3,x=x,y=y,z=z,xper=.false.,yper=.false.,zper=.true.,name='FallingDrop')
+         grid=sgrid(coord=cartesian,no=3,x=x,y=y,z=z,xper=.true.,yper=.false.,zper=.true.,name='FallingDrop')
          
       end block create_grid
       
@@ -71,8 +71,6 @@ contains
                do i=cfg%imino_,cfg%imaxo_
                   if (cfg%ym(j).lt.0.0_WP) then
                      cfg%VF(i,j,k)=0.0_WP
-                  !else if (cfg%ym(j).lt.0.001_WP.and.cos(10.0_WP*twoPi*cfg%xm(i)/cfg%xL).lt.0.0_WP) then
-                  !   cfg%VF(i,j,k)=0.0_WP
                   end if
                end do
             end do

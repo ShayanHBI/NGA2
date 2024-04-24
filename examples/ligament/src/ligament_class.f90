@@ -9,6 +9,8 @@ module ligament_class
    !use ddadi_class,       only: ddadi
    use vfs_class,         only: vfs
    use tpns_class,        only: tpns
+   use lpt_class,         only: lpt
+   !use breakup_class,     only: breakup
    use timetracker_class, only: timetracker
    use event_class,       only: event
    use monitor_class,     only: monitor
@@ -30,6 +32,10 @@ module ligament_class
       !type(ddadi)       :: vs    !< DDADI solver for velocity
       type(timetracker) :: time  !< Time info
       
+      !> Break-up modeling
+      type(lpt)         :: lp    !< Lagrangian particle solver
+      !type(breakup)     :: bu    !< SGS break-up model
+
       !> Ensight postprocessing
       type(surfmesh) :: smesh    !< Surface mesh for interface
       type(ensight)  :: ens_out  !< Ensight output for flow variables
@@ -112,7 +118,7 @@ contains
             z(k)=real(k-1,WP)/real(nz,WP)*Lz-0.5_WP*Lz
          end do
          ! General serial grid object
-         grid=sgrid(coord=cartesian,no=3,x=x,y=y,z=y,xper=.false.,yper=.true.,zper=.true.,name='Ligament')
+         grid=sgrid(coord=cartesian,no=3,x=x,y=y,z=z,xper=.false.,yper=.true.,zper=.true.,name='Ligament')
          ! Read in partition
          call param_read('Partition',partition,short='p')
          ! Create partitioned grid without walls
@@ -154,7 +160,6 @@ contains
          real(WP) :: vol,area
          integer, parameter :: amr_ref_lvl=4
          ! Create a VOF solver
-         !this%vf=vfs(cfg=this%cfg,reconstruction_method=r2p,name='VOF')
          call this%vf%initialize(cfg=this%cfg,reconstruction_method=r2p,name='VOF')
          ! Initialize to a ligament
          do k=this%vf%cfg%kmino_,this%vf%cfg%kmaxo_
@@ -249,6 +254,21 @@ contains
          ! Compute divergence
          call this%fs%get_div()
       end block create_flow_solver
+      
+      
+      ! Create lpt solver
+      create_lpt_solver: block
+         ! Create the solver
+         this%lp=lpt(cfg=this%cfg,name='spray')
+         ! Get particle density from the flow solver
+         this%lp%rho=this%fs%rho_l
+      end block create_lpt_solver
+      
+      
+      ! Create breakup model
+      !create_breakup: block
+      !   call this%bu%initialize(vf=this%vf,fs=this%fs,lp=this%lp)
+      !end block create_breakup
       
 
       ! Create surfmesh object for interface polygon output
@@ -405,6 +425,9 @@ contains
          this%fs%V=2.0_WP*this%fs%V-this%fs%Vold+this%resV/this%fs%rho_V
          this%fs%W=2.0_WP*this%fs%W-this%fs%Wold+this%resW/this%fs%rho_W
          
+         ! Apply boundary conditions
+         call this%fs%apply_bcond(this%time%t,this%time%dt)
+         
          ! Solve Poisson equation
          call this%fs%update_laplacian()
          !call this%fs%update_laplacian(pinpoint=[this%fs%cfg%imin,this%fs%cfg%jmin,this%fs%cfg%kmin])
@@ -424,6 +447,9 @@ contains
          this%fs%U=this%fs%U-this%time%dt*this%resU/this%fs%rho_U
          this%fs%V=this%fs%V-this%time%dt*this%resV/this%fs%rho_V
          this%fs%W=this%fs%W-this%time%dt*this%resW/this%fs%rho_W
+         
+         ! Apply boundary conditions
+         call this%fs%apply_bcond(this%time%t,this%time%dt)
          
          ! Increment sub-iteration counter
          this%time%it=this%time%it+1
