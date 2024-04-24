@@ -12,8 +12,11 @@ module sgsmodel_class
    
    ! List of SGS LES models available
    integer, parameter, public :: dynamic_smag =1    !< Dynamic Smagorinsky -- BROKEN
-   integer, parameter, public :: constant_smag=2    !< Constant Smagorinsky 
-   integer, parameter, public :: vreman       =3    !< Vreman 2004 
+   integer, parameter, public :: constant_smag=2    !< Constant Smagorinsky
+   integer, parameter, public :: vreman       =3    !< Vreman 2004
+
+   ! Diffusivity constant
+   real(WP), parameter, public :: Cs_diff=0.15_WP**2/1.0_WP
    
    !> SGS model object definition
    type :: sgsmodel
@@ -28,9 +31,11 @@ module sgsmodel_class
       ! Some clipping parameters
       real(WP) :: Cs_ref=0.17_WP
       
+      
       ! LM and MM tensor norms and eddy viscosity
       real(WP), dimension(:,:,:), allocatable :: LM,MM          !< LM and MM tensor norms
       real(WP), dimension(:,:,:), allocatable :: visc           !< Turbulent eddy viscosity
+      real(WP), dimension(:,:,:), allocatable :: diff           !< Turbulent eddy diffusivity
       
       ! Some information of the fields
       real(WP) :: max_visc                                      !< Maximum eddy viscosity
@@ -50,6 +55,8 @@ module sgsmodel_class
       procedure :: visc_dynamic                                 !< Calculate the SGS viscosity (Dynamic Smag)
       procedure :: visc_cst                                     !< Calculate the SGS viscosity (Constant Smag)
       procedure :: visc_vreman                                  !< Calculate the SGS viscosity (Vreman 2004)
+      procedure :: get_diff                                     !< Calls appropriate eddy diffusivity subroutine
+      procedure :: diff_cst                                     !< Calculate the SGS diffusivity (Constant Smag)
 
       procedure, private :: interpolate                         !< Helper function that interpolates a field to a point
       
@@ -243,8 +250,9 @@ contains
       allocate(self%LM(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%LM=0.0_WP
       allocate(self%MM(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%MM=0.0_WP
       
-      ! Allocate visc
+      ! Allocate visc and diff
       allocate(self%visc(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%visc=0.0_WP
+      allocate(self%diff(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%diff=0.0_WP
       
       ! Safe loop extents
       self%imin_in=self%cfg%imino_; if (self%cfg%iproc.eq.1           .and..not.self%cfg%xper) self%imin_in=self%cfg%imin
@@ -506,6 +514,60 @@ contains
       
    end subroutine visc_vreman
    
+
+   !> Calls appropriate eddy diffusivity subroutine according to SGSmodel%type
+   subroutine get_diff(this,type,diff_mol,rho,SR)
+      use messager, only: die
+      implicit none
+      class(sgsmodel), intent(inout) :: this
+      integer, intent(in) :: type !< Model type
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: diff_mol !< Molecular diffusivity
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: rho !< Density including all ghosts
+      real(WP), dimension(1:,this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: SR  !< Strain rate tensor
+
+      select case(type)
+      case(constant_smag)
+         if (.not.present(SR)) &
+              call die('[sgs get_diff] Constant Smagorinsky model requires SR')
+         call this%diff_cst(rho,SR)
+      end select
+
+      ! Clip
+      where (this%diff.lt.-diff_mol)
+         this%diff=-diff_mol
+      end where
+   end subroutine get_diff
+
+
+   !> Get subgrid scale dynamic diffusivity - Constant
+   subroutine diff_cst(this,rho,SR)
+      implicit none
+      class(sgsmodel), intent(inout) :: this
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: rho !< Density including all ghosts
+      real(WP), dimension(1:,this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: SR  !< Strain rate tensor
+      integer :: i,j,k
+      real(WP), dimension(:,:,:), allocatable :: S_
+      
+      ! Prepare magnitude of SR tensor
+      allocate(S_(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+      S_=sqrt(SR(1,:,:,:)**2+SR(2,:,:,:)**2+SR(3,:,:,:)**2+2.0_WP*(SR(4,:,:,:)**2+SR(5,:,:,:)**2+SR(6,:,:,:)**2))
+
+      ! Compute the eddy diffusivity
+      do k=this%cfg%kmin_,this%cfg%kmax_
+         do j=this%cfg%jmin_,this%cfg%jmax_
+            do i=this%cfg%imin_,this%cfg%imax_
+               this%diff(i,j,k)=this%Cs_ref*rho(i,j,k)*S_(i,j,k)*this%delta(i,j,k)**2
+            end do
+         end do
+      end do
+
+      ! Synchronize visc
+      call this%cfg%sync(this%diff)
+      
+      ! Deallocate work arrays
+      deallocate(S_)
+   end subroutine diff_cst
+
 
    !> Private function that performs an trilinear interpolation of a cell-centered
    !> field A to the provided position pos in the vicinity of cell i0,j0,k0

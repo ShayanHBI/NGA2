@@ -23,8 +23,8 @@ module diffusionTable_class
       character(len=str_long) :: Z3_scale
 
       ! Table parameters
-      integer :: nZMean, nZVar, n3
-      real(WP), dimension(:), allocatable :: ZMean, ZVar, Z3
+      integer :: nZMean,nZVar,n3
+      real(WP), dimension(:), allocatable :: ZMean,ZVar,Z3
 
       ! Beta pdf
       real(WP), dimension(:), pointer :: pdf
@@ -36,9 +36,6 @@ module diffusionTable_class
 
       ! Variable after convolution
       real(WP), dimension(:,:,:,:), pointer :: postconv
-
-      ! Name conversion
-      ! character(len=str_medium), dimension(:), allocatable :: conversion
 
       ! Binary file name of the table
       character(len=str_medium) :: filename
@@ -64,30 +61,33 @@ contains
 
 
    !> Default constructor for diffusionTable object
-   function constructor(flmlib) result(self)
+   function constructor(flmlib,filename) result(self)
+      use, intrinsic :: iso_fortran_env, only: output_unit
       use param, only: param_read
       implicit none
       type(diffusionTable) :: self
       class(flameletlib), target, intent(in) :: flmlib
-  
+      character(len=str_medium),  intent(in) :: filename
+
       ! Point to the flmlib object
       self%flmlib=>flmlib
+
+      ! Set the file name
+      self%filename=filename
 
       ! Read the dimension of the final table
       call param_read('Number of points for mean Z',self%nZMean)
       call param_read('Number of points for variance of Z',self%nZVar)
       call param_read('Number of points for third direction',self%n3)
+      if (self%n3.lt.self%flmlib%nfiles) write(output_unit,'("WARNING: No. points for the third direction is less than the number of flamelet files")')
 
+      ! Stoichiometric mixture fraction
       call param_read('Stoichiometric mixture fraction',self%Zst)
-
-      ! call param_read('Name conversion',self%conversion)
 
       ! Default name as in FlameMaster
       self%nvar_out=self%flmlib%nvar_in
       allocate(self%output_name(self%nvar_out))
       self%output_name=self%flmlib%input_name(1:self%flmlib%nvar_in)
-
-      call param_read('Table filename',self%filename)
 
       call param_read('Scale for third direction',self%Z3_scale)
 
@@ -97,13 +97,14 @@ contains
       allocate(self%Z3(self%n3))
 
       ! Create the first two directions of the table
-      call self%create_Zmean
-      call self%create_Zvar
+      call self%create_Zmean()
+      call self%create_Zvar()
 
       ! Allocate arrays
       allocate(self%postconv(self%flmlib%nvar_in,self%nZMean,self%nZVar,self%flmlib%nfiles))
    end function constructor
 
+   
    subroutine create_Zmean(this)
       implicit none
       class(diffusionTable), intent(inout) :: this
@@ -145,6 +146,7 @@ contains
       end do
    end subroutine create_Zmean
 
+
    subroutine create_Zvar(this)
       implicit none
       class(diffusionTable), intent(inout) :: this
@@ -154,6 +156,7 @@ contains
          this%ZVar(izv)=0.25_WP*(real(izv-1,WP)/real(this%nZVar-1,WP))**2
       end do
    end subroutine create_Zvar
+
 
    subroutine create_Z3(this)
       implicit none
@@ -165,20 +168,25 @@ contains
       max3=maxval(this%postconv(this%flmlib%nvar_in,:,:,:))
       min3=minval(this%postconv(this%flmlib%nvar_in,:,:,:))
 
-      ! Linear or log progression
-      select case(trim(this%Z3_scale))
-       case ('lin')
-         do i3=1,this%n3
-            this%Z3(i3)=min3+real(i3-1,WP)*(max3-min3)/real(this%n3-1,WP)
-         end do
-       case ('log')
-         do i3=1,this%n3
-            this%Z3(i3)=min3*(max3/min3)**(real(i3-1,WP)/real(this%n3-1,WP))
-         end do
-       case default
-         call die("[create_Z3] Unknown Scale for third direction")
-      end select
+      if ((this%n3.eq.1).and.(min3.eq.max3)) then
+         this%Z3=min3
+      else
+         ! Linear or log progression
+         select case(trim(this%Z3_scale))
+          case ('lin')
+            do i3=1,this%n3
+               this%Z3(i3)=min3+real(i3-1,WP)*(max3-min3)/real(this%n3-1,WP)
+            end do
+          case ('log')
+            do i3=1,this%n3
+               this%Z3(i3)=min3*(max3/min3)**(real(i3-1,WP)/real(this%n3-1,WP))
+            end do
+          case default
+            call die("[create_Z3] Unknown Scale for third direction")
+         end select
+      end if
    end subroutine create_Z3
+
 
    subroutine create_beta_pdf(this,zm,zv)
       use mathtools, only: gammaln
@@ -244,6 +252,7 @@ contains
       this%pdf=this%pdf/sum(this%pdf)
    end subroutine create_beta_pdf
 
+
    subroutine convolute(this,ifile)
       implicit none
       class(diffusionTable), intent(inout) :: this
@@ -253,7 +262,7 @@ contains
 
       ! Prepare the convolution
       allocate(this%pdf(this%flmlib%nPoints))
-      
+
       ! Convolution
       do izv=1,this%nZVar
          do izm=1,this%nZMean
@@ -282,33 +291,36 @@ contains
       nullify(this%pdf)
    end subroutine convolute
 
+   
    subroutine convert_names(this)
-      use flameletLib_class, only:modify_varname
+      use flameletLib_class, only: modify_varname
+      use param,             only: param_getsize,param_read
       implicit none
       class(diffusionTable), intent(inout) :: this
       character(len=str_medium) :: varname
+      character(len=str_medium), dimension(:), allocatable :: conversion
       integer :: i,n,var
 
-      ! ! Get the number of name conversions
-      !    call parser_getsize('Name conversion',n)
-      !    if (mod(n,3).ne.0) stop "diffusion_table_convert_names: Problem in the definition of conversion names"
-         
-      !    Allocate array and read
-      !    allocate(conversion(n))
-      !    call parser_read('Name conversion',conversion)
+      ! Get the number of name conversions
+      n=param_getsize('Name conversion')
+      if (mod(n,3).ne.0) call die("diffusion_table_convert_names: Problem in the definition of conversion names")
 
-      ! ! Convert the names
-      ! n = n / 3
-      ! do i=1,n
-      !    varname = trim(this%conversion((i-1)*3+3))
-      !    loop1:do var=1,this%flmlib%nvar_in
-      !       if (trim(this%flmlib%input_name(var)).eq.trim(varname)) exit loop1
-      !    end do loop1
-      !    if (var.eq.this%flmlib%nvar_in+1) then
-      !       call die("[diffusionTable convert_names] Unknown variable name : " // varname)
-      !    end if
-      !    this%output_name(var) = trim(this%conversion((i-1)*3+1))
-      ! end do
+      ! Allocate array and read
+      allocate(conversion(n))
+      call param_read('Name conversion',conversion)
+
+      ! Convert the names
+      n=n/3
+      do i=1,n
+         varname=trim(conversion((i-1)*3+3))
+         loop1:do var=1,this%flmlib%nvar_in
+            if (trim(this%flmlib%input_name(var)).eq.trim(varname)) exit loop1
+         end do loop1
+         if (var.eq.this%flmlib%nvar_in+1) then
+            call die("[diffusionTable convert_names] Unknown variable name : " // varname)
+         end if
+         this%output_name(var)=trim(conversion((i-1)*3+1))
+      end do
 
       ! Modify the mass fraction names
       do var=1,this%nvar_out
@@ -316,7 +328,9 @@ contains
       end do
    end subroutine convert_names
 
+
    subroutine setup(this)
+      use, intrinsic :: iso_fortran_env, only: output_unit
       implicit none
       class(diffusionTable), intent(inout) :: this
       integer  :: izm,izv,i3,var
@@ -328,16 +342,16 @@ contains
       ! Convert to a chi=0 flamelet
       if (this%flmlib%combModel.eq.sfm) then
          file=minloc(maxval(maxval(this%postconv(this%flmlib%nvar_in,:,:,:),dim=1),dim=1),dim=1)
-         print*,''
-         print*,'Flamelet #',file,'used as chi=0 flamelet'
-         this%postconv(this%flmlib%nvar_in,:,:,file) = 0.0_WP
+         write(output_unit,'(" ")')
+         write(output_unit,'("Flamelet # ",i2" used as chi=0 flamelet")') file
+         this%postconv(this%flmlib%nvar_in,:,:,file)=0.0_WP
       end if
 
       ! Allocate final table
       allocate(this%output_data(this%nZMean,this%nZVar,this%n3,this%nvar_out))
 
       ! Create mesh in thrid direction
-      call this%create_Z3
+      call this%create_Z3()
 
       ! Loop over the three mapping directions
       do i3=1,this%n3
@@ -405,10 +419,11 @@ contains
       end do
    end subroutine setup
 
+
    subroutine stats(this)
       implicit none
       class(diffusionTable), intent(inout) :: this
-      integer :: var
+      integer :: var,i,j,k
 
       print*,''
 
@@ -420,7 +435,7 @@ contains
       write(*,11) 'ZVAR        ', minval(this%ZVar), maxval(this%ZVar)
       write(*,11) this%flmlib%input_name(this%flmlib%nvar_in), minval(this%Z3), maxval(this%Z3)
       print*,''
-      
+
       ! Min and Max of all the mapped quantities
       print*, '** Mapped quantities **'
       write(*,10) 'Variable       ','Min       ','Max       '
@@ -438,6 +453,8 @@ contains
       implicit none
       class(diffusionTable), intent(inout) :: this
       integer :: ierr,var,iunit
+      ! Debug
+      integer :: ftest,i,j
 
       ! Open the data file
       open(newunit=iunit,file=trim(this%filename),form='unformatted',status='replace',access='stream',iostat=ierr)
@@ -462,5 +479,19 @@ contains
       end do
       ! Close the data file
       close(iunit)
+      ! Debug
+      open(newunit=ftest,file='T_tabulated.dat',status='replace',form='formatted',position='rewind')
+      do var=1,this%nvar_out
+         if (this%output_name(var).eq.'temperature') then
+            do j=1,this%nZVar
+               do i=1,this%nZmean
+                  write(ftest,'(3es12.5)') this%Zmean(i),this%Zvar(j),this%output_data(i,j,1,var)
+               end do
+            end do
+         end if
+      end do
+      close(ftest)
    end subroutine diffusionTable_write
+
+
 end module diffusionTable_class

@@ -1,0 +1,56 @@
+# Parallelization
+Partition : 8 1 1
+
+# Mesh definition
+Lx : 0.02
+Ly : 0.02
+Lz : 0.02
+nx : 64 # 128 # 200
+ny : 64 # 128 # 200
+nz : 64 # 128 # 200
+
+# Boundary conditions
+Z jet      : 1
+D jet      : 0.008
+U jet      : 42.15
+Z coflow   : 0.0
+D coflow   : 18.2
+U coflow   : 0.3
+Lateral BC : periodic
+
+# Combustion
+Filtering levels                     : 1 # 2
+Density limiter                      : true
+Chemtable file name                  : chemtable
+Create chemtable                     : true
+Number of points for mean Z          : 100
+Number of points for variance of Z   : 100
+Number of points for third direction : 22
+Stoichiometric mixture fraction      : 0.14276
+Scale for third direction            : lin
+FlameMaster variables                : density viscosity diffusivity Y_CH4 Y_OH Y_O2 temperature
+Name conversion                      : viscosity = mu
+List of Flamelets                    : CH4_p01_0chi00003tf0300to0300 CH4_p01_0chi00005tf0300to0300 CH4_p01_0chi00007tf0300to0300 CH4_p01_0chi00020tf0300to0300 CH4_p01_0chi00010tf0300to0300 CH4_p01_0chi00015tf0300to0300 CH4_p01_0chi00020tf0300to0300 CH4_p01_0chi004.5tf0300to0300 CH4_p01_0chi022.5tf0300to0300 CH4_p01_0chi24.375tf0300to0300 CH4_p01_0chi25.7812tf0300to0300 CH4_p01_0chi26.8359tf0300to0300 CH4_p01_0chi27.627tf0300to0300 CH4_p01_0chi28.2202tf0300to0300 CH4_p01_0chi28.6652tf0300to0300 CH4_p01_0chi28.9989tf0300to0300 CH4_p01_0chi29.703tf0300to0300 CH4_p01_0chi29.2492tf0300to0300 CH4_p01_0chi29.4369tf0300to0300 CH4_p01_0chi29.5776tf0300to0300 CH4_p01_0chi29.6832tf0300to0300 CH4_p01_0chi29.6882tf0300to0300
+! CH4_p01_0chi00003tf0300to0300 CH4_p01_0chi00005tf0300to0300 CH4_p01_0chi00007tf0300to0300 CH4_p01_0chi00020tf0300to0300 CH4_p01_0chi00010tf0300to0300 CH4_p01_0chi00015tf0300to0300 CH4_p01_0chi00020tf0300to0300 CH4_p01_0chi004.5tf0300to0300 CH4_p01_0chi022.5tf0300to0300 CH4_p01_0chi24.375tf0300to0300 CH4_p01_0chi25.7812tf0300to0300 CH4_p01_0chi26.8359tf0300to0300 CH4_p01_0chi27.627tf0300to0300 CH4_p01_0chi28.2202tf0300to0300 CH4_p01_0chi28.6652tf0300to0300 CH4_p01_0chi28.9989tf0300to0300 CH4_p01_0chi29.703tf0300to0300 CH4_p01_0chi29.2492tf0300to0300 CH4_p01_0chi29.4369tf0300to0300 CH4_p01_0chi29.5776tf0300to0300 CH4_p01_0chi29.6832tf0300to0300 CH4_p01_0chi29.6882tf0300to0300
+
+# Turbulence
+! SGS Schmidt number : 1
+
+# Time integration
+Time stepping     : implicit
+Max timestep size : 7e-6 # 3.5e-6 # 2e-6
+Max cfl number    : 0.9
+Sub iterations    : 3
+Max time          : 3e-4
+
+# Pressure solver
+Pressure tolerance : 1e-10
+Pressure iteration : 50
+
+# Implicit velocity solver
+Implicit tolerance : 1e-8
+Implicit iteration : 50
+
+# Ensight output
+Ensight output period  : 1e-5
+Ensight output species : CH4, O2, OH

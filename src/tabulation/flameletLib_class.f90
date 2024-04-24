@@ -44,6 +44,7 @@ module flameletLib_class
       procedure constructor
    end interface flameletLib
 
+   
 contains
 
 
@@ -73,18 +74,21 @@ contains
          call die('[flameletlib constructor] Unknown combustion model')
       end select
 
-      ! Make the mass fraction names compatible with FlameMaster files
+      ! Make the mass fraction names and viscosity compatible with FlameMaster files
       do var=1,self%nvar_in
          call modify_varname(self%input_name(var),'Y_','massfraction-')
          call modify_varname(self%input_name(var),'Y-','massfraction-')
          call modify_varname(self%input_name(var),'massfraction_','massfraction-')
+         call modify_varname(self%input_name(var),'viscosity','mu')
       end do
 
       ! Allocate array to specify wether the variables have been found
       allocate(self%found(self%nvar_in))
    end function constructor
 
+
    subroutine readfile(this,ifile)
+      use, intrinsic :: iso_fortran_env, only: output_unit
       implicit none
       class(flameletLib), intent(inout) :: this
       integer, intent(in) :: ifile
@@ -95,15 +99,15 @@ contains
       real(WP), dimension(:), pointer :: tmp
 
       ! Open the file
-      open(newunit=iunit,file=trim(this%files(ifile)),form='formatted',status='old',iostat=ierr)
+      open(newunit=iunit,file=trim('flamelets/'//this%files(ifile)),form='formatted',status='old',iostat=ierr)
       if (ierr.ne.0) then
          call die("[flameletLib readfile] Error opening the file : " // trim(this%files(ifile)))
       end if
 
-      nlines = 0
-      this%found = .false.
-      ierr = 0
-      buffer = ''
+      nlines=0
+      this%found=.false.
+      ierr=0
+      buffer=''
       do while(index(buffer,'body').eq.0)
 
          ! First get some parameters
@@ -128,7 +132,7 @@ contains
       loop0: do var=1,this%nvar_in
          if (trim(this%input_name(var)).eq.'diffusivity') exit loop0
       end do loop0
-      if (var.le.this%nvar_in) this%input_data(:,var) = 1.0_WP
+      if (var.le.this%nvar_in) this%input_data(:,var)=1.0_WP
 
       loop1:do while (ierr.eq.0)
 
@@ -142,7 +146,7 @@ contains
          if (index1.ne.0) varname(index1:)=''
 
          ! Read the array
-         line = ''
+         line=''
          do n=1,nlines
             read(iunit,'(a)',iostat=ierr) buffer
             line=trim(line)//adjustl(trim(buffer))
@@ -179,7 +183,7 @@ contains
          loop3:do var=1,this%nvar_in
             if (trim(this%input_name(var)).eq.varname) then
                read(line,*) this%input_data(:,var)
-               this%found(var) = .true.
+               this%found(var)=.true.
                exit loop3
             end if
          end do loop3
@@ -188,10 +192,7 @@ contains
 
       ! Do we have all the variables?
       do var=1,this%nvar_in
-         if (.not.this%found(var)) then
-            print*,"Variable ",trim(this%input_name(var))," not found in flamelet file"
-            stop
-         end if
+         if (.not.this%found(var)) call die("[flameletLib readfile] Variable "//trim(this%input_name(var))//" not found in flamelet file")
       end do
 
       ! Force 0 at Z=1 for chi
@@ -205,6 +206,7 @@ contains
       close(iunit)
    end subroutine readfile
 
+
    subroutine cleanup(this)
       implicit none
       class(flameletLib), intent(inout) :: this
@@ -214,6 +216,7 @@ contains
       nullify(this%input_data)
       nullify(this%Z)
    end subroutine cleanup
+
 
    subroutine modify_varname(input_str,search_str,replace_str)
       character(len=*), intent(inout) :: input_str
@@ -226,4 +229,6 @@ contains
          input_str=trim(replace_str//input_str(pos_sub+len_search:len_input))
       end if
    end subroutine
+
+   
 end module flameletLib_class

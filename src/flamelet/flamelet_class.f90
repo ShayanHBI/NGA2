@@ -8,11 +8,10 @@ module flamelet_class
    implicit none
    private
 
+   real(WP), parameter :: Cs=0.15_WP**2/1.0_WP
+
    ! Expose type/constructor/methods
    public :: flamelet
-
-   ! List of known available flamelet models
-   integer, parameter, public :: sfm=1                       !< Steady Flamelet Model (SFM)
 
    !> flamelet object definition
    type :: flamelet
@@ -30,11 +29,12 @@ module flamelet_class
       integer :: flmModel
 
       ! Field variables
-      real(WP), dimension(:,:,:), allocatable :: Zvar !< Favre-spatially-filtered variance of the mixture fraction
-      real(WP), dimension(:,:,:), allocatable :: chi  !< Favre-spatially-filtered scalar dissipation rate
+      real(WP), dimension(:,:,:), allocatable :: Zvar        !< Favre-spatially-filtered variance of the mixture fraction
+      real(WP), dimension(:,:,:), allocatable :: chi         !< Favre-spatially-filtered scalar dissipation rate
+
    contains
-      procedure :: compute_Zvar
-      procedure :: compute_chi
+      procedure :: get_Zvar
+      procedure :: get_chi
       procedure :: print=>flamelet_print
    end type flamelet
 
@@ -44,11 +44,13 @@ module flamelet_class
       procedure constructor
    end interface flamelet
 
+
 contains
 
 
    !> Default constructor for flamelet object
    function constructor(cfg,flmModel,tablefile,name) result(self)
+      use flameletLib_class, only: sfm
       implicit none
       type(flamelet) :: self
       class(config), target, intent(in) :: cfg
@@ -81,25 +83,41 @@ contains
    end function constructor
 
 
-   subroutine compute_Zvar(this,delta,ZgradMagSq,Z)
+   subroutine get_Zvar(this,delta,ZgradMagSq,Z)
+      use sgsmodel_class, only: Cs_diff
       class(flamelet), intent(inout) :: this
       real(WP), dimension(this%cfg%imin_:this%cfg%imax_,this%cfg%jmin_:this%cfg%jmax_,this%cfg%kmin_:this%cfg%kmax_), intent(in) :: delta
       real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_), intent(in) :: ZgradMagSq,Z
-      real(WP), parameter :: Cz=0.15_WP**2/1.0_WP
-      
-      this%Zvar=Cz*delta**2*ZgradMagSq
+      integer :: i,j,k
+      do k=this%cfg%kmin_,this%cfg%kmax_
+         do j=this%cfg%jmin_,this%cfg%jmax_
+            do i=this%cfg%imin_,this%cfg%imax_
+               this%Zvar(i,j,k)=Cs_diff*delta(i,j,k)**2*ZgradMagSq(i,j,k)
+            end do
+         end do
+      end do
+      ! Sync it
+      call this%cfg%sync(this%Zvar)
       ! Clip the computed Variance
       this%Zvar=max(0.0_WP,min(Z*(1.0_WP-Z),this%Zvar))
-   end subroutine compute_Zvar
+   end subroutine get_Zvar
 
 
-   subroutine compute_chi(this,mueff,rho,ZgradMagSq)
+   subroutine get_chi(this,mueff,rho,ZgradMagSq)
       class(flamelet), intent(inout) :: this
       real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_), intent(in) :: mueff,rho,ZgradMagSq
       real(WP), parameter :: Cchi=2.0_WP
-
-      this%chi=Cchi*mueff/rho*ZgradMagSq
-   end subroutine compute_chi
+      integer :: i,j,k
+      do k=this%cfg%kmin_,this%cfg%kmax_
+         do j=this%cfg%jmin_,this%cfg%jmax_
+            do i=this%cfg%imin_,this%cfg%imax_
+               this%chi(i,j,k)=Cchi*mueff(i,j,k)/rho(i,j,k)*ZgradMagSq(i,j,k)
+            end do
+         end do
+      end do
+      ! Sync it
+      call this%cfg%sync(this%chi)
+   end subroutine get_chi
 
 
    !> Print out info for flamelet model
@@ -107,12 +125,10 @@ contains
       use, intrinsic :: iso_fortran_env, only: output_unit
       implicit none
       class(flamelet), intent(in) :: this
-      
       ! Output
       if (this%cfg%amRoot) then
          write(output_unit,'("Flamelet model [",a,"] for config [",a,"]")') trim(this%name),trim(this%cfg%name)
       end if
-      
    end subroutine flamelet_print
 
    

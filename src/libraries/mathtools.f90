@@ -2,7 +2,7 @@ module mathtools
    use precision, only: WP
    implicit none
    private
-   
+
    ! Make public what is useful outside
    public :: Pi,twoPi
    public :: fv_itp_build,fd_itp_build
@@ -12,22 +12,22 @@ module mathtools
    public :: qrotate
    public :: arctan
    public :: gamma,gammaln
-   
+
    ! Trigonometric parameters
    real(WP), parameter :: Pi   =3.1415926535897932385_WP
    real(WP), parameter :: twoPi=6.2831853071795864770_WP
-   
+
    ! Bessel first zero
    !real(WP), parameter :: bessj1_zero=3.8317059702075123115_WP
-   
+
    ! Blasius data points
    !real(WP), dimension(0:9) :: by0=[0.000000000000000_WP,0.165571818583440_WP,0.650024518764203_WP,1.39680822972500_WP,2.30574664618049_WP,3.28327391871370_WP,4.27962110517696_WP,5.27923901129384_WP,6.27921363832835_WP,7.27921257797747_WP]
    !real(WP), dimension(0:9) :: by1=[0.000000000000000_WP,0.329780063306651_WP,0.629765721178679_WP,0.84604458266019_WP,0.95551827831671_WP,0.99154183259084_WP,0.99897290050990_WP,0.9999216098795_WP,0.99999627301467_WP,0.99999989265063_WP]
    !real(WP), dimension(0:9) :: by2=[0.332057384255589_WP,0.323007152241930_WP,0.266751564401387_WP,0.161360240845588_WP,0.06423404047594_WP,0.01590689966410_WP,0.00240199722109_WP,0.00022016340923_WP,0.00001224984692_WP,0.00000041090325_WP]
-   
+
 contains
-   
-   
+
+
    !> Returns cross product in 3 dimensions: z=cross(x,y)
    pure function cross_product(x,y) result(z)
       implicit none
@@ -37,8 +37,8 @@ contains
       z(2)=x(3)*y(1)-x(1)*y(3)
       z(3)=x(1)*y(2)-x(2)*y(1)
    end function cross_product
-   
-   
+
+
    !> Finite volume interpolation metric builder
    subroutine fv_itp_build(n,x,xp,coeff)
       implicit none
@@ -68,8 +68,8 @@ contains
       ! Deallocate the work arrays
       deallocate(A,B)
    end subroutine fv_itp_build
-   
-   
+
+
    !> Finite difference interpolation metric builder
    subroutine fd_itp_build(n,x,xp,coeff)
       implicit none
@@ -94,8 +94,8 @@ contains
       ! Deallocate the work arrays
       deallocate(A,B)
    end subroutine fd_itp_build
-   
-   
+
+
    !> Inverse matrix using Gauss elimination
    subroutine inverse_matrix(A,B,n)
       implicit none
@@ -122,8 +122,8 @@ contains
          end do
       end do
    end subroutine inverse_matrix
-   
-   
+
+
    ! Returns normalized vector: w=v/|v|
    pure function normalize(v) result(w)
       implicit none
@@ -131,8 +131,8 @@ contains
       real(WP), dimension(3)             :: w
       w=v/(norm2(v)+tiny(1.0_WP))
    end function normalize
-   
-   
+
+
    ! Rotates a vector v by a specified quaternion q: w=q*v*conj(q)
    pure function qrotate(v,q) result(w)
       implicit none
@@ -148,11 +148,11 @@ contains
       w(3)= 2.0_WP*(q(2)*q(4)-q(1)*q(3))        *v(1)+&
       &     2.0_WP*(q(3)*q(4)+q(1)*q(2))        *v(2)+&
       &    (2.0_WP*(q(1)*q(1)+q(4)*q(4))-1.0_WP)*v(3)
-    end function qrotate
+   end function qrotate
 
-    
-    ! Safe arctan
-    function arctan(dx,dy)
+
+   ! Safe arctan
+   function arctan(dx,dy)
       implicit none
       real(WP), intent(in) :: dx,dy
       real(WP) :: arctan
@@ -166,50 +166,50 @@ contains
       elseif (dy.le.0.0_WP .and. dx.gt.0.0_WP) then
          arctan = twoPi+arctan
       end if
-  end function arctan
-   
-   
-  ! Returns the gamma function
-  function gamma(xx)
-   implicit none
-   
-   real(WP) :: gamma
-   real(WP), intent(in) :: xx
-   
-   gamma=exp(gammaln(xx))
-   
-   return
- end function gamma
- 
- 
- ! Returns the log of the gamma function
- function gammaln(xx)
-   implicit none
- 
-   real(WP) :: gammaln
-   real(WP), intent(in) :: xx
-   
-   real(WP), parameter :: stp = 2.5066282746310005_WP
-   real(WP), dimension(6), parameter :: cof = (/ 76.18009172947146_WP, &
-        -86.50532032941677_WP, 24.01409824083091_WP,-1.231739572450155_WP, &
-        .1208650973866179E-2_WP, -.5395239384953E-5_WP /)
-   
-   real(WP) :: ser,tmp,x,y
-   integer :: j
+   end function arctan
 
-   x = xx
-   y = x
-   tmp = x + 5.5_WP
-   tmp = (x+0.5_WP)*log(tmp)-tmp
-   ser = 1.000000000190015_WP
-   do j=1,6
-      y = y + 1.0_WP
-      ser = ser+cof(j)/y
-   end do
-   gammaln = tmp + log(stp*ser/x)
-   
-   return
- end function gammaln
+
+   ! Returns the gamma function
+   function gamma(xx)
+      implicit none
+
+      real(WP) :: gamma
+      real(WP), intent(in) :: xx
+
+      gamma=exp(gammaln(xx))
+
+      return
+   end function gamma
+
+
+   ! Returns the log of the gamma function
+   function gammaln(xx)
+      implicit none
+
+      real(WP) :: gammaln
+      real(WP), intent(in) :: xx
+
+      real(WP), parameter :: stp = 2.5066282746310005_WP
+      real(WP), dimension(6), parameter :: cof = (/ 76.18009172947146_WP, &
+         -86.50532032941677_WP, 24.01409824083091_WP,-1.231739572450155_WP, &
+         .1208650973866179E-2_WP, -.5395239384953E-5_WP /)
+
+      real(WP) :: ser,tmp,x,y
+      integer :: j
+
+      x = xx
+      y = x
+      tmp = x + 5.5_WP
+      tmp = (x+0.5_WP)*log(tmp)-tmp
+      ser = 1.000000000190015_WP
+      do j=1,6
+         y = y + 1.0_WP
+         ser = ser+cof(j)/y
+      end do
+      gammaln = tmp + log(stp*ser/x)
+
+      return
+   end function gammaln
 
 
 end module mathtools
