@@ -1,0 +1,4 @@
+f90EXE_sources += ann_class.f90
+
+INCLUDE_LOCATIONS += $(NGA_HOME)/src/ann
+VPATH_LOCATIONS   += $(NGA_HOME)/src/ann

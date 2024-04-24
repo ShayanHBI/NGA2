@@ -1,0 +1,44 @@
+0# Parallelization
+Partition : 4 2 1
+
+# Mesh definition
+Lx : 2e-3
+Ly : 2e-3
+Lz : 1e-5
+nx : 200
+ny : 200
+nz : 1
+
+# Initial conditions
+ks/ko                   : 3
+kc/ks                   : 3
+Buffer region length    : 5e-4
+Instance number         : 42
+Velocity fluctuation    : 0.5
+Energetic scale         : 0.0004
+Temperature range       : 300
+Temperature lower bound : 800
+Buffer temperature      : 650
+Initial HMN             : 1.0810837e-02
+Initial XC12H26         : 5.2061660e-02
+Initial N2              : 7.1877706e-01
+Initial O2              : 2.1835044e-01
+
+# Neural network data files
+Auto encoder         : auto_encoder
+Chemical source      : chem_sources
+Transport properties : fluid_trnspt
+
+# Time integration
+Max timestep size : 1e-6
+Max time          : 1e-2
+Max cfl number    : 0.05
+Inner iterations  : 4
+
+# Pressure solver
+Pressure tolerance : 1e-10
+Pressure iteration : 100
+
+# Ensight output
+Ensight output period  : 1e-4
+Ensight output species : XC12H26, HMN, OH, O2

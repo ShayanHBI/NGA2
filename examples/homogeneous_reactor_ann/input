@@ -1,0 +1,29 @@
+# Parallelization
+Partition :	1 1 1
+
+# Mesh definition
+Lx : 1
+Ly : 1
+Lz : 1
+nx : 1
+ny : 1
+nz : 1
+
+# Neural network data files
+Auto encoder    : auto_encoder
+Chemical source : chem_sources
+
+# Combustion
+Initial temperature : 750
+Initial enthalpy    : 4.0315255e+05
+Initial HMN         : 1.0810837e-02
+Initial XC12H26     : 5.2061660e-02
+Initial N2          : 7.1877706e-01
+Initial O2          : 2.1835044e-01
+
+# Time integration
+Max timestep size :	1e-5
+Max time          : 1e-2
+
+# Ensight output
+Ensight output period : 1e-1
