@@ -678,6 +678,8 @@ contains
             ! ========================================= !
 
             ! ============ UPDATE DENSITY ============ !
+            ! Backup rhoSC
+            resSC=sc%rho*sc%SC
             ! Lookup density
             call flm%chmtbl%lookup('density',sc%rho,sc%SC,flm%Zvar,flm%chi,ncells)
             ! Smooth density
@@ -694,6 +696,8 @@ contains
                   call sc%cfg%sync(sc%rho)
                end if
             end if
+            ! Rescale scalar for conservation
+            sc%SC=resSC/sc%rho
             ! ========================================= !
 
             ! ============ VELOCITY SOLVER ============ !
