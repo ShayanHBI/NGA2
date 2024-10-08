@@ -5,7 +5,7 @@ module simulation
    use ddadi_class,       only: ddadi
    use tpns_class,        only: tpns
    use vfs_class,         only: vfs
-   use tpscalar_class,    only: tpscalar
+   use tpscalar_class,    only: tpscalar,Lphase,Gphase
    use evap_class,        only: evap
    use timetracker_class, only: timetracker
    use ensight_class,     only: ensight
@@ -39,11 +39,12 @@ module simulation
    real(WP), dimension(:,:,:),   allocatable :: resU,resV,resW
    real(WP), dimension(:,:,:),   allocatable :: Ui,Vi,Wi
    real(WP), dimension(:,:,:),   allocatable :: Ui_L,Vi_L,Wi_L
+   real(WP), dimension(:,:,:),   allocatable :: T
    
    !> Problem definition
    real(WP), dimension(3) :: center
    real(WP) :: radius
-   integer  :: iTl,iYv
+   integer  :: iTl,iTg,iYv
    real(WP) :: mdotdp
    real(WP) :: rad_drop
    
@@ -168,7 +169,7 @@ contains
       
       ! Allocate work arrays
       allocate_work_arrays: block
-         allocate(resSC(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:2))
+         allocate(resSC(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3))
          allocate(resU (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(resV (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(resW (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
@@ -178,6 +179,7 @@ contains
          allocate(Ui_L (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(Vi_L (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(Wi_L (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate(T    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       end block allocate_work_arrays
       
       
@@ -352,12 +354,12 @@ contains
       ! Create a one-sided scalar solver
       create_scalar: block
          use param, only: param_read
-         use tpscalar_class, only: Lphase,Gphase,neumann
+         use tpscalar_class,  only: neumann
          use hypre_str_class, only: pcg_pfmg2,pfmg,gmres_pfmg
          integer :: i,j,k
-         real(WP) :: LTdiff,Yvdiff
+         real(WP) :: LTdiff,GTdiff,vapor_diff
          ! Create scalar solver
-         call sc%initialize(cfg=cfg,nscalar=2,name='tpscalar')
+         call sc%initialize(cfg=cfg,nscalar=3,name='tpscalar')
          ! Boundary conditinos
          call sc%add_bcond(name='xm',type=neumann,locator=xm_locator_sc,dir='-x')
          call sc%add_bcond(name='xp',type=neumann,locator=xp_locator   ,dir='+x')
@@ -365,35 +367,36 @@ contains
          call sc%add_bcond(name='yp',type=neumann,locator=yp_locator   ,dir='+y')
          ! call sc%add_bcond(name='zm',type=neumann,locator=zm_locator_sc,dir='-z')
          ! call sc%add_bcond(name='zp',type=neumann,locator=zp_locator   ,dir='+z')
-         ! Initialize the phase specific VOF
-         sc%PVF(:,:,:,Lphase)=vf%VF
-         sc%PVF(:,:,:,Gphase)=1.0_WP-vf%VF
-         ! Initialize the phase specific density
-         sc%Prho(Lphase)=fs%rho_l
-         sc%Prho(Gphase)=fs%rho_g
          ! Temperature on the liquid and water vapor on the gas side
-         sc%SCname=[  'Tl',  'Yv']; iTl=1; iYv=2
-         sc%phase =[Lphase,Gphase]
+         sc%SCname=[  'Tl',  'Tg',  'Yv']; iTl=1; iTg=2; iYv=3
+         sc%phase =[Lphase,Gphase,Gphase]
          ! Read diffusivity
          call param_read('Liquid thermal diffusivity',LTdiff)
          sc%diff(:,:,:,iTl)=LTdiff
-         call param_read('Vapor diffusivity',Yvdiff)
-         sc%diff(:,:,:,iYv)=Yvdiff
+         call param_read('Gas thermal diffusivity',GTdiff)
+         sc%diff(:,:,:,iTg)=GTdiff
+         call param_read('Vapor diffusivity',vapor_diff)
+         sc%diff(:,:,:,iYv)=vapor_diff
          ! Configure implicit scalar solver
          ss=ddadi(cfg=cfg,name='Scalar',nst=7)
          ! Setup the solver
          call sc%setup(implicit_solver=ss)
          ! Initialize scalar fields
-         do k=cfg%kmino_,cfg%kmaxo_
-            do j=cfg%jmino_,cfg%jmaxo_
-               do i=cfg%imino_,cfg%imaxo_
-                  ! Liquid scalar
-                  if (vf%VF(i,j,k).gt.0.0_WP) sc%SC(i,j,k,iTl)=1.0_WP
-                  ! Gas scalar
-                  sc%SC(i,j,k,iYv)=0.0_WP
+         do i=sc%cfg%imino_,sc%cfg%imaxo_
+            do j=sc%cfg%jmino_,sc%cfg%jmaxo_
+               do k=sc%cfg%kmino_,sc%cfg%kmaxo_
+                  if (vf%VF(i,j,k).gt.0.0_WP) sc%SC(i,j,k,iTl)=300.0_WP
+                  if (vf%VF(i,j,k).lt.1.0_WP) sc%SC(i,j,k,iTg)=400.0_WP
                end do
             end do
          end do
+         ! Initialize the phase specific density and VOF
+         sc%Prho(Lphase)=fs%rho_l
+         sc%Prho(Gphase)=fs%rho_g
+         sc%PVF(:,:,:,Lphase)=vf%VF
+         sc%PVF(:,:,:,Gphase)=1.0_WP-vf%VF
+         ! Post process
+         T=sc%PVF(:,:,:,Lphase)*sc%SC(:,:,:,iTl)+sc%PVF(:,:,:,Gphase)*sc%SC(:,:,:,iTg)
       end block create_scalar
       
 
@@ -454,9 +457,10 @@ contains
          call ens_out%add_scalar('pressure',fs%P)
          call ens_out%add_scalar('curvature',vf%curv)
          call ens_out%add_surface('plic',smesh)
-         do nsc=1,sc%nscalar
-           call ens_out%add_scalar(trim(sc%SCname(nsc)),sc%SC(:,:,:,nsc))
-         end do
+         ! do nsc=1,sc%nscalar
+         !   call ens_out%add_scalar(trim(sc%SCname(nsc)),sc%SC(:,:,:,nsc))
+         ! end do
+         call ens_out%add_scalar(trim(sc%SCname(iYv)),sc%SC(:,:,:,iYv))
          call ens_out%add_scalar('mflux',evp%mflux)
          call ens_out%add_scalar('evp_div',evp%evp_div)
          call ens_out%add_scalar('mdotdp',evp%mdotdp)
@@ -465,6 +469,7 @@ contains
          call ens_out%add_scalar('divergence',fs%div)
          call ens_out%add_vector('vel_itf',evp%U_itf,evp%V_itf,evp%W_itf)
          call ens_out%add_vector('vel_L',Ui_L,Vi_L,Wi_L)
+         call ens_out%add_scalar('Temperature',T)
          ! Output to ensight
          if (ens_evt%occurs()) call ens_out%write_data(time%t)
       end block create_ensight
@@ -598,8 +603,11 @@ contains
             evp%mflux =0.0_WP
          end where
 
+         ! Get the interface normal
+         call evp%get_normal(vf=vf)
+
          ! Update interface velocity
-         call evp%get_vel_pc(vf=vf)
+         call evp%get_vel_pc(VF=vf%VF)
          evp%U_itf=fsL%U-evp%vel_pc(:,:,:,1)
          evp%V_itf=fsL%V-evp%vel_pc(:,:,:,2)
          evp%W_itf=fsL%W-evp%vel_pc(:,:,:,3)
@@ -609,17 +617,16 @@ contains
          call vf%apply_bcond(time%t,time%dt)
 
          ! Shift the evaporation mass flux
-         call evp%shift_mflux(vf=vf)
+         call evp%shift_mflux(VF=vf%VF)
          
          ! Get the phase-change induced divergence
-         call evp%get_evp_div()
+         call evp%get_div()
 
          ! Transport scalars
          advance_scalar: block
-            use tpscalar_class, only: Lphase,Gphase
             integer :: nsc
             
-            ! Get the phas-specific VOF
+            ! Update the phas-specific VOF
             sc%PVF(:,:,:,Lphase)=vf%VF
             sc%PVF(:,:,:,Gphase)=1.0_WP-vf%VF
             
@@ -631,17 +638,20 @@ contains
                where (sc%mask.eq.0.and.sc%PVF(:,:,:,sc%phase(nsc)).gt.0.0_WP) sc%SC(:,:,:,nsc)=((sc%PVFold(:,:,:,sc%phase(nsc)))*sc%SCold(:,:,:,nsc)+time%dt*resSC(:,:,:,nsc))/(sc%PVF(:,:,:,sc%phase(nsc)))
                where (sc%PVF(:,:,:,sc%phase(nsc)).eq.0.0_WP) sc%SC(:,:,:,nsc)=0.0_WP
             end do
-
+            
             ! Apply the mass/energy transfer term for the species/temperature
             nsc=iYv
-            where (sc%PVF(:,:,:,sc%phase(nsc)).gt.0.0_WP.and.sc%PVF(:,:,:,sc%phase(nsc)).lt.1.0_WP) sc%SC(:,:,:,nsc)=sc%SC(:,:,:,nsc)+mflux/sc%Prho(sc%phase(nsc))*time%dt
-               
+            where (sc%PVF(:,:,:,sc%phase(nsc)).gt.0.0_WP.and.sc%PVF(:,:,:,sc%phase(nsc)).lt.1.0_WP) sc%SC(:,:,:,nsc)=sc%SC(:,:,:,nsc)+evp%mflux/sc%Prho(sc%phase(nsc))*time%dt
+            
             ! Advance diffusion
             call sc%solve_implicit(time%dt,sc%SC)
             
             ! Apply boundary conditions
             call sc%apply_bcond(time%t,time%dt)
-               
+            
+            ! Post process
+            T=sc%PVF(:,:,:,Lphase)*sc%SC(:,:,:,iTl)+sc%PVF(:,:,:,Gphase)*sc%SC(:,:,:,iTg)
+
          end block advance_scalar         
 
          ! Advance flow
@@ -809,7 +819,7 @@ contains
       ! timetracker
       
       ! Deallocate work arrays
-      deallocate(resU,resV,resW,Ui,Vi,Wi,Ui_L,Vi_L,Wi_L,resSC)
+      deallocate(resU,resV,resW,Ui,Vi,Wi,Ui_L,Vi_L,Wi_L,resSC,T)
 
    end subroutine simulation_final
    

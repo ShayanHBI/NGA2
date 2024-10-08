@@ -40,6 +40,7 @@ module evap_class
       type(timetracker), public :: pseudo_time
 
       ! Phase-change and interfacial velocity
+      real(WP), dimension(:,:,:,:), allocatable :: normal              !< Interface normal vector
       real(WP), dimension(:,:,:,:), allocatable :: vel_pc              !< Phase-change velocity
       real(WP), dimension(:,:,:),   allocatable :: U_itf,V_itf,W_itf   !< Interfacial velocity components
       real(WP), dimension(:,:,:,:), allocatable :: pseudo_vel          !< Pseudo velocity for shifting mflux
@@ -59,12 +60,13 @@ module evap_class
       
    contains
 
+      procedure :: get_normal                                          !< Get the interface normal vector
       procedure :: get_vel_pc                                          !< Get the phase-change velocity
       procedure :: get_max_vel_pc                                      !< Calculate maximum field values
       procedure :: get_pseudo_vel                                      !< Get the face-centered normilized gradient of VOF
       procedure :: get_dmfluxdt                                        !< Get the time derivative of the evaporation mass fllux
       procedure :: shift_mflux                                         !< Shift the evaporation mass flux
-      procedure :: get_evp_div                                         !< Get the evaporation source term
+      procedure :: get_div                                             !< Get the evaporation source term
       procedure :: get_cfl                                             !< Get the CFL
 
    end type evap
@@ -107,6 +109,7 @@ contains
       allocate(self%mfluxL_old(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     self%mfluxL_old=0.0_WP
       allocate(self%mfluxG_old(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     self%mfluxG_old=0.0_WP
       allocate(self%evp_div   (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     self%evp_div   =0.0_WP
+      allocate(self%normal    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3)); self%normal    =0.0_WP
       allocate(self%vel_pc    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3)); self%vel_pc    =0.0_WP
       allocate(self%pseudo_vel(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3)); self%pseudo_vel=0.0_WP
       allocate(self%U_itf     (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     self%U_itf     =0.0_WP
@@ -133,15 +136,40 @@ contains
 
    end function constructor
    
-   
-   !> Calculate the face-centered phase-change velocity
-   subroutine get_vel_pc(this,vf)
+
+   !> Calculate the interfacial normal vector
+   subroutine get_normal(this,vf)
       use vfs_class, only: vfs
       use irl_fortran_interface, only: calculateNormal,getNumberOfVertices
       implicit none
       class(evap), intent(inout) :: this
       class(vfs), intent(in) :: vf
-      real(WP), dimension(3) :: normalm,normalp,normal_tmp
+      real(WP), dimension(3) :: n1,n2
+      integer :: i,j,k,dir
+      ! Loop over cells
+      do k=this%cfg%kmino_,this%cfg%kmaxo_
+         do j=this%cfg%jmino_,this%cfg%jmaxo_
+            do i=this%cfg%imino_,this%cfg%imaxo_
+               n1=calculateNormal(vf%interface_polygon(1,i,j,k))
+               if (getNumberOfVertices(vf%interface_polygon(2,i,j,k)).gt.0) then
+                  n2=calculateNormal(vf%interface_polygon(2,i,j,k))
+                  n1=0.5_WP*(n1+n2)
+               end if
+               do dir=1,3
+                  this%normal(i,j,k,dir)=n1(dir)
+               end do
+            end do
+         end do
+      end do
+   end subroutine get_normal
+
+   
+   !> Calculate the face-centered phase-change velocity
+   subroutine get_vel_pc(this,VF)
+      use vfs_class, only: vfs
+      implicit none
+      class(evap), intent(inout) :: this
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: VF  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP) :: VFm,VFp
       logical  :: is_interfacial_m,is_interfacial_p
       integer  :: i,j,k,dir
@@ -164,41 +192,23 @@ contains
                   jm=j-ind_shift(2,dir); jp=j
                   km=k-ind_shift(3,dir); kp=k
                   ! Get the corresponding VOF values
-                  VFm=vf%VF(im,jm,km)
-                  VFp=vf%VF(ip,jp,kp)
+                  VFm=VF(im,jm,km)
+                  VFp=VF(ip,jp,kp)
                   ! Check if the adjacent cells are interfacial
                   is_interfacial_m=VFm.gt.0.0_WP.and.VFm.lt.1.0_WP
                   is_interfacial_p=VFp.gt.0.0_WP.and.VFp.lt.1.0_WP
                   if (is_interfacial_m) then
-                     ! Get the interface normal of the minus cell
-                     normalm=calculateNormal(vf%interface_polygon(1,im,jm,km))
-                     if (getNumberOfVertices(vf%interface_polygon(2,im,jm,km)).gt.0) then
-                        normal_tmp=calculateNormal(vf%interface_polygon(2,im,jm,km))
-                        normalm=0.5_WP*(normalm+normal_tmp)
-                     end if
                      if (is_interfacial_p) then
-                        ! Get the interface normal of the plus cell
-                        normalp=calculateNormal(vf%interface_polygon(1,ip,jp,kp))
-                        if (getNumberOfVertices(vf%interface_polygon(2,ip,jp,kp)).gt.0) then
-                           normal_tmp=calculateNormal(vf%interface_polygon(2,ip,jp,kp))
-                           normalp=0.5_WP*(normalp+normal_tmp)
-                        end if
                         ! Both cells are interfacial, linear interpolation of the phase-change velocity
-                        this%vel_pc(i,j,k,dir)=(this%itp(dir)%arr(-1,i,j,k)*this%mdotdp(im,jm,km)*normalm(dir) &
-                        &                      +this%itp(dir)%arr( 0,i,j,k)*this%mdotdp(ip,jp,kp)*normalp(dir))/this%rho_l
+                        this%vel_pc(i,j,k,dir)=(this%itp(dir)%arr(-1,i,j,k)*this%mdotdp(im,jm,km)*this%normal(im,jm,km,dir) &
+                        &                      +this%itp(dir)%arr( 0,i,j,k)*this%mdotdp(ip,jp,kp)*this%normal(ip,jp,kp,dir))/this%rho_l
                      else
                         ! The plus cell is not interfacial, use the minus cell's phase-change velocity
-                        this%vel_pc(i,j,k,dir)=this%mdotdp(im,jm,km)*normalm(dir)/this%rho_l
+                        this%vel_pc(i,j,k,dir)=this%mdotdp(im,jm,km)*this%normal(im,jm,km,dir)/this%rho_l
                      end if
                   else if (is_interfacial_p) then
-                     ! Get the interface normal of the plus cell
-                     normalp=calculateNormal(vf%interface_polygon(1,ip,jp,kp))
-                     if (getNumberOfVertices(vf%interface_polygon(2,ip,jp,kp)).gt.0) then
-                        normal_tmp=calculateNormal(vf%interface_polygon(2,ip,jp,kp))
-                        normalp=0.5_WP*(normalp+normal_tmp)
-                     end if
                      ! The minus cell is not interfacial, use the plus cell's phase-change velocity
-                     this%vel_pc(i,j,k,dir)=this%mdotdp(ip,jp,kp)*normalp(dir)/this%rho_l
+                     this%vel_pc(i,j,k,dir)=this%mdotdp(ip,jp,kp)*this%normal(ip,jp,kp,dir)/this%rho_l
                   end if
                end do
             end do
@@ -210,63 +220,19 @@ contains
    end subroutine get_vel_pc
 
 
-   !> Calculate the maximum of the phase-change velocity
-   subroutine get_max_vel_pc(this)
-      use mpi_f08,  only: MPI_ALLREDUCE,MPI_MAX,MPI_MIN
-      use parallel, only: MPI_REAL_WP
-      implicit none
-      class(evap), intent(inout) :: this
-      real(WP) :: my_Upcmax,my_Vpcmax,my_Wpcmax
-      integer  :: i,j,k,ierr
-      ! Set all to zero
-      my_Upcmax=0.0_WP; my_Vpcmax=0.0_WP; my_Wpcmax=0.0_WP
-      do k=this%cfg%kmin_,this%cfg%kmax_
-         do j=this%cfg%jmin_,this%cfg%jmax_
-            do i=this%cfg%imin_,this%cfg%imax_
-               my_Upcmax=max(my_Upcmax,abs(this%vel_pc(i,j,k,1)))
-               my_Vpcmax=max(my_Vpcmax,abs(this%vel_pc(i,j,k,2)))
-               my_Wpcmax=max(my_Wpcmax,abs(this%vel_pc(i,j,k,3)))
-            end do
-         end do
-      end do
-      ! Get the parallel max
-      call MPI_ALLREDUCE(my_Upcmax,this%Upcmax,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
-      call MPI_ALLREDUCE(my_Vpcmax,this%Vpcmax,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
-      call MPI_ALLREDUCE(my_Wpcmax,this%Wpcmax,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
-   end subroutine get_max_vel_pc
-
-
    !> Calculate the pseudo velocity used to shift the evaporation mass flux
-   subroutine get_pseudo_vel(this,vf)
-      use vfs_class, only: vfs
-      use irl_fortran_interface, only: calculateNormal,getNumberOfVertices
+   subroutine get_pseudo_vel(this,VF)
       implicit none
       class(evap), intent(inout) :: this
-      class(vfs), intent(in) :: vf
-      real(WP), dimension(:,:,:,:), allocatable :: normal
-      real(WP), dimension(3) :: n1,n2
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: VF  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       integer :: i,j,k,dir
       integer :: im,jm,km
       integer :: ip,jp,kp
-            
-      ! Allocate memory for the normal vector field
-      allocate(normal(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_,1:3))
+      real(WP):: VFm,VFp
+      logical :: is_interfacial_m,is_interfacial_p
       
-      ! Get the interface normal vector at the cell centers
-      do k=this%cfg%kmino_,this%cfg%kmaxo_
-         do j=this%cfg%jmino_,this%cfg%jmaxo_
-            do i=this%cfg%imino_,this%cfg%imaxo_
-               n1=calculateNormal(vf%interface_polygon(1,i,j,k))
-               if (getNumberOfVertices(vf%interface_polygon(2,i,j,k)).gt.0) then
-                  n2=calculateNormal(vf%interface_polygon(2,i,j,k))
-                  n1=0.5_WP*(n1+n2)
-               end if
-               do dir=1,3
-                  normal(i,j,k,dir)=-n1(dir)
-               end do
-            end do
-         end do
-      end do
+      ! Initialize with zeros
+      this%pseudo_vel=0.0_WP
 
       ! Loop over directions
       do dir=1,3
@@ -280,16 +246,29 @@ contains
                   im=i-ind_shift(1,dir); ip=i
                   jm=j-ind_shift(2,dir); jp=j
                   km=k-ind_shift(3,dir); kp=k
-                  ! Linear interpolation
-                  this%pseudo_vel(i,j,k,dir)=this%itp(dir)%arr(-1,i,j,k)*normal(im,jm,km,dir) &
-                  &                          +this%itp(dir)%arr( 0,i,j,k)*normal(ip,jp,kp,dir)
+                  ! Get the corresponding VOF values
+                  VFm=VF(im,jm,km)
+                  VFp=VF(ip,jp,kp)
+                  ! Check if the adjacent cells are interfacial
+                  is_interfacial_m=VFm.gt.0.0_WP.and.VFm.lt.1.0_WP
+                  is_interfacial_p=VFp.gt.0.0_WP.and.VFp.lt.1.0_WP
+                  if (is_interfacial_m) then
+                     if (is_interfacial_p) then
+                        ! Both cells are interfacial, linear interpolation of the normal vector
+                        this%pseudo_vel(i,j,k,dir)=-this%itp(dir)%arr(-1,i,j,k)*this%normal(im,jm,km,dir) &
+                        &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
+                     else
+                        ! The plus cell is not interfacial, use the minus cell's normal vector
+                        this%pseudo_vel(i,j,k,dir)=-this%normal(im,jm,km,dir)
+                     end if
+                  else if (is_interfacial_p) then
+                     ! The minus cell is not interfacial, use the plus cell's normal vector
+                     this%pseudo_vel(i,j,k,dir)=-this%normal(ip,jp,kp,dir)
+                  end if
                end do
             end do
          end do
       end do
-      
-      ! Deallocate the normal
-      deallocate(normal)
 
    end subroutine get_pseudo_vel
    
@@ -333,13 +312,13 @@ contains
 
 
    !> Shift mflux away from the interface
-   subroutine shift_mflux(this,vf)
+   subroutine shift_mflux(this,VF)
       use mpi_f08,   only: MPI_ALLREDUCE,MPI_MAX
       use parallel,  only: MPI_REAL_WP
       use vfs_class, only: vfs
       implicit none
       class(evap), intent(inout) :: this
-      class(vfs), intent(in) :: vf
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: VF  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(:,:,:), allocatable :: resmfluxL,resmfluxG
       integer  :: ierr
       real(WP) :: mflux_max,my_mflux_max,mflux_err,my_mflux_err
@@ -349,7 +328,7 @@ contains
       allocate(resmfluxG(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
 
       ! Get the normalized gradient of VOF
-      call this%get_pseudo_vel(vf=vf)
+      call this%get_pseudo_vel(VF=VF)
 
       ! Get the CFL based on the gradient of the VOF
       call this%get_cfl(this%pseudo_time%dt,this%pseudo_vel(:,:,:,1),this%pseudo_vel(:,:,:,2),this%pseudo_vel(:,:,:,3),this%pseudo_time%cfl)
@@ -413,11 +392,11 @@ contains
 
 
    !> Calculate the divergence induced by phase change
-   subroutine get_evp_div(this)
+   subroutine get_div(this)
       implicit none
       class(evap), intent(inout) :: this
       this%evp_div=(this%mfluxG/this%rho_g-this%mfluxL/this%rho_l)
-   end subroutine get_evp_div
+   end subroutine get_div
 
 
    !> Calculate the CFL
@@ -451,6 +430,32 @@ contains
       call MPI_ALLREDUCE(my_CFL,cfl,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
       
    end subroutine get_cfl
+
+
+   !> Calculate the maximum of the phase-change velocity
+   subroutine get_max_vel_pc(this)
+      use mpi_f08,  only: MPI_ALLREDUCE,MPI_MAX,MPI_MIN
+      use parallel, only: MPI_REAL_WP
+      implicit none
+      class(evap), intent(inout) :: this
+      real(WP) :: my_Upcmax,my_Vpcmax,my_Wpcmax
+      integer  :: i,j,k,ierr
+      ! Set all to zero
+      my_Upcmax=0.0_WP; my_Vpcmax=0.0_WP; my_Wpcmax=0.0_WP
+      do k=this%cfg%kmin_,this%cfg%kmax_
+         do j=this%cfg%jmin_,this%cfg%jmax_
+            do i=this%cfg%imin_,this%cfg%imax_
+               my_Upcmax=max(my_Upcmax,abs(this%vel_pc(i,j,k,1)))
+               my_Vpcmax=max(my_Vpcmax,abs(this%vel_pc(i,j,k,2)))
+               my_Wpcmax=max(my_Wpcmax,abs(this%vel_pc(i,j,k,3)))
+            end do
+         end do
+      end do
+      ! Get the parallel max
+      call MPI_ALLREDUCE(my_Upcmax,this%Upcmax,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
+      call MPI_ALLREDUCE(my_Vpcmax,this%Vpcmax,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
+      call MPI_ALLREDUCE(my_Wpcmax,this%Wpcmax,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
+   end subroutine get_max_vel_pc
 
 
 end module evap_class
