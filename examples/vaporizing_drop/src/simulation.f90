@@ -375,6 +375,10 @@ contains
          call cfg%integrate(evp%mflux, evp%mflux_int)
          call cfg%integrate(evp%mfluxL,evp%mfluxL_int)
          call cfg%integrate(evp%mfluxG,evp%mfluxG_int)
+         ! Debug
+         ! call evp%mfile%write()
+         ! call evp%ens_out%add_scalar('VOF',vf%VF)
+         ! call evp%ens_out%write_data(evp%pseudo_time%t)
       end block create_evp
       
 

@@ -5,6 +5,9 @@ module evap_class
    use config_class,      only: config
    use timetracker_class, only: timetracker
    use vfs_class,         only: vfs
+   ! Debug
+   use monitor_class,     only: monitor
+   use ensight_class,     only: ensight
    implicit none
    private
    
@@ -21,6 +24,11 @@ module evap_class
    !> Evaporation object definition
    type :: evap
       
+      ! Debug
+      type(monitor) :: mfile
+      type(ensight) :: ens_out
+      real(WP), dimension(:,:,:), allocatable :: mfluxL_errField,mfluxG_errField
+
       ! This is our config
       class(config), pointer :: cfg                                    !< This is the config the object is build for
       
@@ -120,6 +128,9 @@ contains
       allocate(this%W_itf     (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     this%W_itf     =0.0_WP
       allocate(this%itp(3))
       allocate(this%div(3))
+      ! Debug
+      allocate(this%mfluxL_errField(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); this%mfluxL_errField=0.0_WP
+      allocate(this%mfluxG_errField(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); this%mfluxG_errField=0.0_WP
 
       ! Set metrics
       this%itp(1)%arr=>itp_x
@@ -136,6 +147,19 @@ contains
 
       ! Create a pseudo time
       this%pseudo_time=timetracker(amRoot=this%cfg%amRoot,name='Pseudo',print_info=.false.)
+
+      ! Debug
+      ! this%mfile=monitor(cfg%amRoot,'mflux')
+      ! call this%mfile%add_column(this%pseudo_time%n,'Pseudo time step')
+      ! call this%mfile%add_column(this%pseudo_time%t,'Pseudo time')
+      ! call this%mfile%add_column(this%mfluxL_err,'Liquid error')
+      ! call this%mfile%add_column(this%mfluxG_err,'Gas error')
+      ! this%ens_out=ensight(cfg=cfg,name='mflux')
+      ! call this%ens_out%add_scalar('mflux',this%mflux)
+      ! call this%ens_out%add_scalar('mfluxL',this%mfluxL)
+      ! call this%ens_out%add_scalar('mfluxG',this%mfluxG)
+      ! call this%ens_out%add_scalar('mfluxL_err',this%mfluxL_errField)
+      ! call this%ens_out%add_scalar('mfluxG_err',this%mfluxG_errField)
 
    end subroutine initialize
    
@@ -369,6 +393,12 @@ contains
          ! Calculate the error on the gas side
          my_mflux_err=maxval(abs((this%mfluxG-this%mfluxG_old)/mflux_max))
          call MPI_ALLREDUCE(my_mflux_err,this%mfluxG_err,1,MPI_REAL_WP,MPI_Max,this%cfg%comm,ierr)
+
+         ! Debug
+         ! this%mfluxL_errField=abs((this%mfluxL-this%mfluxL_old)/mflux_max)
+         ! this%mfluxG_errField=abs((this%mfluxG-this%mfluxG_old)/mflux_max)
+         ! call this%mfile%write()
+         ! call this%ens_out%write_data(this%pseudo_time%t)
 
          ! Check convergence
          mflux_err=max(this%mfluxL_err,this%mfluxG_err)
