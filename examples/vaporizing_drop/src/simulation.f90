@@ -188,7 +188,7 @@ contains
       ! Initialize our VOF solver and field
       create_and_initialize_vof: block
          use mms_geom,  only: cube_refine_vol
-         use vfs_class, only: lvira,VFhi,VFlo,remap,neumann
+         use vfs_class, only: lvira,VFhi,VFlo,flux,neumann
          use mathtools, only: Pi
          integer :: i,j,k,n,si,sj,sk
          real(WP), dimension(3,8) :: cube_vertex
@@ -196,7 +196,7 @@ contains
          real(WP) :: vol,area
          integer, parameter :: amr_ref_lvl=4
          ! Create a VOF solver
-         call vf%initialize(cfg=cfg,reconstruction_method=lvira,transport_method=remap,name='VOF')
+         call vf%initialize(cfg=cfg,reconstruction_method=lvira,transport_method=flux,name='VOF')
          vf%cons_correct=.false.
          ! Boundary conditinos
          call vf%add_bcond(name='xm',type=neumann,locator=xm_locator_sc,dir='-x')

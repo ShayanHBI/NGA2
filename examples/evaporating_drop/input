@@ -19,7 +19,7 @@ Liquid dynamic viscosity    : 1.05e-3
 Gas dynamic viscosity       : 1.46e-5
 Liquid density              : 1000
 Gas density                 : 1.8
-Surface tension coefficient : 0.0 ! 0.072
+Surface tension coefficient : 0.072
 Static contact angle        : 140
 Liquid thermal diffusivity  : 1.137e-06
 Gas thermal diffusivity     : 1.137e-06
