@@ -540,6 +540,9 @@ contains
          call vf%advance(dt=time%dt,U=evp%U_itf,V=evp%V_itf,W=evp%W_itf)
          call vf%apply_bcond(time%t,time%dt)
 
+         ! Update the interface normal
+         call evp%get_normal()
+         
          ! Shift the evaporation mass flux
          call evp%shift_mflux()
          
