@@ -22,7 +22,6 @@ Gas density                 : 1.8
 Surface tension coefficient : 0.072
 Static contact angle        : 140
 
-
 # Time integration
 Max timestep size : 3e-5
 Max cfl number    : 0.9

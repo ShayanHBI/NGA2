@@ -278,7 +278,7 @@ contains
 
                   ! Debug
                   this%pseudo_vel(i,j,k,dir)=-this%itp(dir)%arr(-1,i,j,k)*this%normal(im,jm,km,dir) &
-                     &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
+                  &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
                   ! if (is_interfacial_m) then
                   !    if (is_interfacial_p) then
                   !       ! Both cells are interfacial, linear interpolation of the normal vector
