@@ -275,19 +275,23 @@ contains
                   ! Check if the adjacent cells are interfacial
                   is_interfacial_m=VFm.gt.0.0_WP.and.VFm.lt.1.0_WP
                   is_interfacial_p=VFp.gt.0.0_WP.and.VFp.lt.1.0_WP
-                  if (is_interfacial_m) then
-                     if (is_interfacial_p) then
-                        ! Both cells are interfacial, linear interpolation of the normal vector
-                        this%pseudo_vel(i,j,k,dir)=-this%itp(dir)%arr(-1,i,j,k)*this%normal(im,jm,km,dir) &
-                        &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
-                     else
-                        ! The plus cell is not interfacial, use the minus cell's normal vector
-                        this%pseudo_vel(i,j,k,dir)=-this%normal(im,jm,km,dir)
-                     end if
-                  else if (is_interfacial_p) then
-                     ! The minus cell is not interfacial, use the plus cell's normal vector
-                     this%pseudo_vel(i,j,k,dir)=-this%normal(ip,jp,kp,dir)
-                  end if
+
+                  ! Debug
+                  this%pseudo_vel(i,j,k,dir)=-this%itp(dir)%arr(-1,i,j,k)*this%normal(im,jm,km,dir) &
+                     &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
+                  ! if (is_interfacial_m) then
+                  !    if (is_interfacial_p) then
+                  !       ! Both cells are interfacial, linear interpolation of the normal vector
+                  !       this%pseudo_vel(i,j,k,dir)=-this%itp(dir)%arr(-1,i,j,k)*this%normal(im,jm,km,dir) &
+                  !       &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
+                  !    else
+                  !       ! The plus cell is not interfacial, use the minus cell's normal vector
+                  !       this%pseudo_vel(i,j,k,dir)=-this%normal(im,jm,km,dir)
+                  !    end if
+                  ! else if (is_interfacial_p) then
+                  !    ! The minus cell is not interfacial, use the plus cell's normal vector
+                  !    this%pseudo_vel(i,j,k,dir)=-this%normal(ip,jp,kp,dir)
+                  ! end if
                end do
             end do
          end do
@@ -306,9 +310,11 @@ contains
       integer :: i,j,k,dir
       integer :: im,jm,km
       integer :: ip,jp,kp
-      real(WP) :: F
+      real(WP), dimension(:,:,:,:), allocatable :: F
       ! Zero out dmflux/dt array
       dmfluxdt=0.0_WP
+      ! Allocate flux arrays
+      allocate(F(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_,1:3))
       ! Fluxes of mflux
       do dir=1,3
          ! Loop over cell faces
@@ -320,15 +326,27 @@ contains
                   jm=j-ind_shift(2,dir); jp=j
                   km=k-ind_shift(3,dir); kp=k
                   ! Compute the face flux
-                  F=-0.5_WP*(vel(i,j,k,dir)+abs(vel(i,j,k,dir)))*mflux_old(im,jm,km) &
-                  & -0.5_WP*(vel(i,j,k,dir)-abs(vel(i,j,k,dir)))*mflux_old(ip,jp,kp)
-                  ! Add it to the time derivative of mflux
-                  dmfluxdt(im,jm,km)=dmfluxdt(im,jm,km)+this%div(dir)%arr(1,im,jm,km)*F
-                  dmfluxdt(ip,jp,kp)=dmfluxdt(ip,jp,kp)+this%div(dir)%arr(0,ip,jp,kp)*F
+                  F(i,j,k,dir)=-0.5_WP*(vel(i,j,k,dir)+abs(vel(i,j,k,dir)))*mflux_old(im,jm,km) &
+                  &            -0.5_WP*(vel(i,j,k,dir)-abs(vel(i,j,k,dir)))*mflux_old(ip,jp,kp)
                end do
             end do
          end do
       end do
+      ! Time derivative of mflux
+      do dir=1,3
+         ! Loop over the cells
+         do k=this%cfg%kmin_,this%cfg%kmax_
+            do j=this%cfg%jmin_,this%cfg%jmax_
+               do i=this%cfg%imin_,this%cfg%imax_
+                  dmfluxdt(i,j,k)=dmfluxdt(i,j,k)                                                                            &
+                  &              +this%div(dir)%arr(0,i,j,k)*F(i,j,k,dir)                                                    &
+                  &              +this%div(dir)%arr(1,i,j,k)*F(i+ind_shift(1,dir),j+ind_shift(2,dir),k+ind_shift(3,dir),dir)
+               end do
+            end do
+         end do
+      end do
+      ! Deallocate flux arrays
+      deallocate(F)
       ! Sync residual
       call this%cfg%sync(dmfluxdt)
    end subroutine get_dmfluxdt
@@ -423,7 +441,7 @@ contains
    subroutine get_div(this)
       implicit none
       class(evap), intent(inout) :: this
-      this%evp_div=(this%mfluxG/this%rho_g-this%mfluxL/this%rho_l)
+      this%evp_div=this%mfluxG/this%rho_g-this%mfluxL/this%rho_l
    end subroutine get_div
 
 
