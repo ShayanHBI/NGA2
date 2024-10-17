@@ -91,8 +91,6 @@ module tpscalar_class
       procedure :: get_dSCdt                              !< Calculate drhoSC/dt from advective fluxes
       procedure :: get_max                                !< Calculate maximum and integral field values
       procedure :: solve_implicit_diff                    !< Solve for the diffusive scalar residuals implicitly
-      ! procedure :: cellVec_to_face                        !< Interpolate a cell-centered vector to a face-centered one FROM THE WORKING VERSION OF THE CODE
-      ! procedure :: get_dmfluxdtau                         !< Calculate dmflux/dtau FROM THE WORKING VERSION OF THE CODE
    end type tpscalar
    
    
@@ -710,99 +708,6 @@ contains
          write(output_unit,'("Two-phase scalar solver [",a,"] with [",i3,"] scalars for config [",a,"]")') trim(this%name),this%nscalar,trim(this%cfg%name)
       end if
    end subroutine tpscalar_print
-
-
-   ! ! Interpolate a cell-centered vector field to three face-centered fields (x-face, y-face, and z-face) FROM THE WORKING VERSION OF THE CODE
-   ! subroutine cellVec_to_face(this,ccf_x,ccf_y,ccf_z,fcf_x,fcf_y,fcf_z)
-   !    implicit none
-   !    class(tpscalar), intent(in) :: this
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in)  :: ccf_x !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in)  :: ccf_y !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in)  :: ccf_z !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(out) :: fcf_x !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(out) :: fcf_y !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(out) :: fcf_z !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    integer :: i,j,k
-   !    ! Linear interpolation x-face
-   !    if (this%cfg%nx.ne.1) then
-   !       do k=this%cfg%kmin_,this%cfg%kmax_
-   !          do j=this%cfg%jmin_,this%cfg%jmax_
-   !             do i=this%cfg%imin_,this%cfg%imax_+1
-   !                fcf_x(i,j,k)=sum(this%itp_x(:,i,j,k)*ccf_x(i-1:i,j,k))
-   !             end do
-   !          end do
-   !       end do
-   !    end if
-   !    ! Linear interpolation y-face
-   !    if (this%cfg%ny.ne.1) then
-   !       do k=this%cfg%kmin_,this%cfg%kmax_
-   !          do j=this%cfg%jmin_,this%cfg%jmax_+1
-   !             do i=this%cfg%imin_,this%cfg%imax_
-   !                fcf_y(i,j,k)=sum(this%itp_y(:,i,j,k)*ccf_y(i,j-1:j,k))
-   !             end do
-   !          end do
-   !       end do
-   !    end if
-   !    ! Linear interpolation z-face
-   !    if (this%cfg%nz.ne.1) then
-   !       do k=this%cfg%kmin_,this%cfg%kmax_+1
-   !          do j=this%cfg%jmin_,this%cfg%jmax_
-   !             do i=this%cfg%imin_,this%cfg%imax_
-   !                fcf_z(i,j,k)=sum(this%itp_z(:,i,j,k)*ccf_z(i,j,k-1:k))
-   !             end do
-   !          end do
-   !       end do
-   !    end if
-   ! end subroutine cellVec_to_face
-
-   ! !> Calculate the explicit mflux time derivative FROM THE WORKING VERSION OF THE CODE
-   ! subroutine get_dmfluxdtau(this,U,V,W,mflux,dmfluxdtau)
-   !    implicit none
-   !    class(tpscalar), intent(inout) :: this
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in)  :: U          !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in)  :: V          !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in)  :: W          !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in)  :: mflux      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(out) :: dmfluxdtau !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    integer :: i,j,k
-   !    real(WP), dimension(:,:,:), allocatable :: FX,FY,FZ
-   !    ! Zero out dmfluxd/dtau array
-   !    dmfluxdtau=0.0_WP
-   !    ! Allocate flux arrays
-   !    allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-   !    allocate(FY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-   !    allocate(FZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-   !    ! Fluxes of mflux
-   !    do k=this%cfg%kmin_,this%cfg%kmax_+1
-   !       do j=this%cfg%jmin_,this%cfg%jmax_+1
-   !          do i=this%cfg%imin_,this%cfg%imax_+1
-   !             ! Fluxes on x-face
-   !             FX(i,j,k)=-0.5_WP*(U(i,j,k)+abs(U(i,j,k)))*mflux(i-1,j,k) &
-   !             &         -0.5_WP*(U(i,j,k)-abs(U(i,j,k)))*mflux(i  ,j,k)
-   !             ! Fluxes on y-face
-   !             FY(i,j,k)=-0.5_WP*(V(i,j,k)+abs(V(i,j,k)))*mflux(i,j-1,k) &
-   !             &         -0.5_WP*(V(i,j,k)-abs(V(i,j,k)))*mflux(i,j  ,k)
-   !             ! Fluxes on z-face
-   !             FZ(i,j,k)=-0.5_WP*(W(i,j,k)+abs(W(i,j,k)))*mflux(i,j,k-1) &
-   !             &         -0.5_WP*(W(i,j,k)-abs(W(i,j,k)))*mflux(i,j,k  )
-   !          end do
-   !       end do
-   !    end do
-   !    ! Time derivative of mflux
-   !    do k=this%cfg%kmin_,this%cfg%kmax_
-   !       do j=this%cfg%jmin_,this%cfg%jmax_
-   !          do i=this%cfg%imin_,this%cfg%imax_
-   !             dmfluxdtau(i,j,k)=sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+&
-   !             &                 sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+&
-   !             &                 sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1))
-   !          end do
-   !       end do
-   !    end do
-   !    ! Deallocate flux arrays
-   !    deallocate(FX,FY,FZ)
-   !    ! Sync residual
-   !    call this%cfg%sync(dmfluxdtau)
-   ! end subroutine get_dmfluxdtau
    
    
 end module tpscalar_class

@@ -462,7 +462,7 @@ contains
          ! end do
          call ens_out%add_scalar(trim(sc%SCname(iYv)),sc%SC(:,:,:,iYv))
          call ens_out%add_scalar('mflux',evp%mflux)
-         call ens_out%add_scalar('evp_div',evp%evp_div)
+         call ens_out%add_scalar('evp_div',evp%div_src)
          call ens_out%add_scalar('mdotdp',evp%mdotdp)
          call ens_out%add_scalar('mfluxL',evp%mfluxL)
          call ens_out%add_scalar('mfluxG',evp%mfluxG)
@@ -603,9 +603,6 @@ contains
             evp%mflux =0.0_WP
          end where
 
-         ! Get the interface normal
-         call evp%get_normal()
-
          ! Update interface velocity
          call evp%get_vel_pc()
          evp%U_itf=fsL%U-evp%vel_pc(:,:,:,1)
@@ -691,8 +688,8 @@ contains
                
                ! Solve Poisson equation
                call fs%update_laplacian()
-               call fs%correct_mfr(src=evp%evp_div)
-               call fs%get_div(src=evp%evp_div)
+               call fs%correct_mfr(src=evp%div_src)
+               call fs%get_div(src=evp%div_src)
                ! call fs%add_surface_tension_jump(dt=time%dt,div=fs%div,vf=vf,contact_model=static_contact)
                call fs%add_surface_tension_jump(dt=time%dt,div=fs%div,vf=vf)
                fs%psolv%rhs=-fs%cfg%vol*fs%div/time%dt
@@ -714,7 +711,7 @@ contains
             
             ! Recompute interpolated velocity and divergence
             call fs%interp_vel(Ui,Vi,Wi)
-            call fs%get_div(src=evp%evp_div)
+            call fs%get_div(src=evp%div_src)
 
          end block advance_flow
 

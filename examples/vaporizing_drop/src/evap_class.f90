@@ -5,9 +5,6 @@ module evap_class
    use config_class,      only: config
    use timetracker_class, only: timetracker
    use vfs_class,         only: vfs
-   ! Debug
-   use monitor_class,     only: monitor
-   use ensight_class,     only: ensight
    implicit none
    private
    
@@ -23,11 +20,6 @@ module evap_class
 
    !> Evaporation object definition
    type :: evap
-      
-      ! Debug
-      type(monitor) :: mfile
-      type(ensight) :: ens_out
-      real(WP), dimension(:,:,:), allocatable :: mfluxL_errField,mfluxG_errField
 
       ! This is our config
       class(config), pointer :: cfg                                    !< This is the config the object is build for
@@ -46,7 +38,7 @@ module evap_class
       real(WP), dimension(:,:,:), allocatable :: mflux                 !< Evaporation mass flux scaled by the surface density
       real(WP), dimension(:,:,:), allocatable :: mfluxL,mfluxL_old     !< Liquid side shifted evaporation mass flux scaled by the surface density
       real(WP), dimension(:,:,:), allocatable :: mfluxG,mfluxG_old     !< Gas side shifted evaporation mass flux scaled by the surface density
-      real(WP), dimension(:,:,:), allocatable :: evp_div               !< Evaporatin source term (div(U) = evp_div)
+      real(WP), dimension(:,:,:), allocatable :: div_src               !< Evaporatin source term (div(U) = div_src)
 
       ! Pseudo time over which the mflux is being shifted
       type(timetracker), public :: pseudo_time
@@ -119,7 +111,7 @@ contains
       allocate(this%mfluxG    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     this%mfluxG    =0.0_WP
       allocate(this%mfluxL_old(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     this%mfluxL_old=0.0_WP
       allocate(this%mfluxG_old(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     this%mfluxG_old=0.0_WP
-      allocate(this%evp_div   (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     this%evp_div   =0.0_WP
+      allocate(this%div_src   (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     this%div_src   =0.0_WP
       allocate(this%normal    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3)); this%normal    =0.0_WP
       allocate(this%vel_pc    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3)); this%vel_pc    =0.0_WP
       allocate(this%pseudo_vel(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3)); this%pseudo_vel=0.0_WP
@@ -128,9 +120,6 @@ contains
       allocate(this%W_itf     (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));     this%W_itf     =0.0_WP
       allocate(this%itp(3))
       allocate(this%div(3))
-      ! Debug
-      allocate(this%mfluxL_errField(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); this%mfluxL_errField=0.0_WP
-      allocate(this%mfluxG_errField(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); this%mfluxG_errField=0.0_WP
 
       ! Set metrics
       this%itp(1)%arr=>itp_x
@@ -147,19 +136,6 @@ contains
 
       ! Create a pseudo time
       this%pseudo_time=timetracker(amRoot=this%cfg%amRoot,name='Pseudo',print_info=.false.)
-
-      ! Debug
-      ! this%mfile=monitor(cfg%amRoot,'mflux')
-      ! call this%mfile%add_column(this%pseudo_time%n,'Pseudo time step')
-      ! call this%mfile%add_column(this%pseudo_time%t,'Pseudo time')
-      ! call this%mfile%add_column(this%mfluxL_err,'Liquid error')
-      ! call this%mfile%add_column(this%mfluxG_err,'Gas error')
-      ! this%ens_out=ensight(cfg=cfg,name='mflux')
-      ! call this%ens_out%add_scalar('mflux',this%mflux)
-      ! call this%ens_out%add_scalar('mfluxL',this%mfluxL)
-      ! call this%ens_out%add_scalar('mfluxG',this%mfluxG)
-      ! call this%ens_out%add_scalar('mfluxL_err',this%mfluxL_errField)
-      ! call this%ens_out%add_scalar('mfluxG_err',this%mfluxG_errField)
 
    end subroutine initialize
    
@@ -203,6 +179,9 @@ contains
       ! Initialize with zeros
       this%vel_pc=0.0_WP
       
+      ! Get the interface normal
+      call this%get_normal()
+
       ! Loop over directions
       do dir=1,3
          ! Skip if needed
@@ -251,8 +230,6 @@ contains
       integer :: i,j,k,dir
       integer :: im,jm,km
       integer :: ip,jp,kp
-      real(WP):: VFm,VFp
-      logical :: is_interfacial_m,is_interfacial_p
       
       ! Initialize with zeros
       this%pseudo_vel=0.0_WP
@@ -269,29 +246,8 @@ contains
                   im=i-ind_shift(1,dir); ip=i
                   jm=j-ind_shift(2,dir); jp=j
                   km=k-ind_shift(3,dir); kp=k
-                  ! Get the corresponding VOF values
-                  VFm=this%vf%VF(im,jm,km)
-                  VFp=this%vf%VF(ip,jp,kp)
-                  ! Check if the adjacent cells are interfacial
-                  is_interfacial_m=VFm.gt.0.0_WP.and.VFm.lt.1.0_WP
-                  is_interfacial_p=VFp.gt.0.0_WP.and.VFp.lt.1.0_WP
-
-                  ! Debug
                   this%pseudo_vel(i,j,k,dir)=-this%itp(dir)%arr(-1,i,j,k)*this%normal(im,jm,km,dir) &
                   &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
-                  ! if (is_interfacial_m) then
-                  !    if (is_interfacial_p) then
-                  !       ! Both cells are interfacial, linear interpolation of the normal vector
-                  !       this%pseudo_vel(i,j,k,dir)=-this%itp(dir)%arr(-1,i,j,k)*this%normal(im,jm,km,dir) &
-                  !       &                          -this%itp(dir)%arr( 0,i,j,k)*this%normal(ip,jp,kp,dir)
-                  !    else
-                  !       ! The plus cell is not interfacial, use the minus cell's normal vector
-                  !       this%pseudo_vel(i,j,k,dir)=-this%normal(im,jm,km,dir)
-                  !    end if
-                  ! else if (is_interfacial_p) then
-                  !    ! The minus cell is not interfacial, use the plus cell's normal vector
-                  !    this%pseudo_vel(i,j,k,dir)=-this%normal(ip,jp,kp,dir)
-                  ! end if
                end do
             end do
          end do
@@ -367,6 +323,9 @@ contains
       allocate(resmfluxL(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(resmfluxG(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
 
+      ! Get the interface normal
+      call this%get_normal()
+
       ! Get the normalized gradient of VOF
       call this%get_pseudo_vel()
 
@@ -380,7 +339,8 @@ contains
       call this%pseudo_time%adjust_dt()
       
       ! Initialize the evaporation mass fluxes on the liquid and gas sides
-      this%mfluxL=this%mflux; this%mfluxG=this%mflux
+      this%mfluxL=this%mflux
+      this%mfluxG=this%mflux
 
       ! Move the evaporation mass flux away from the interface
       do while (.not.this%pseudo_time%done())
@@ -412,12 +372,6 @@ contains
          my_mflux_err=maxval(abs((this%mfluxG-this%mfluxG_old)/mflux_max))
          call MPI_ALLREDUCE(my_mflux_err,this%mfluxG_err,1,MPI_REAL_WP,MPI_Max,this%cfg%comm,ierr)
 
-         ! Debug
-         ! this%mfluxL_errField=abs((this%mfluxL-this%mfluxL_old)/mflux_max)
-         ! this%mfluxG_errField=abs((this%mfluxG-this%mfluxG_old)/mflux_max)
-         ! call this%mfile%write()
-         ! call this%ens_out%write_data(this%pseudo_time%t)
-
          ! Check convergence
          mflux_err=max(this%mfluxL_err,this%mfluxG_err)
          if (mflux_err.lt.this%mflux_tol) exit
@@ -441,7 +395,7 @@ contains
    subroutine get_div(this)
       implicit none
       class(evap), intent(inout) :: this
-      this%evp_div=this%mfluxG/this%rho_g-this%mfluxL/this%rho_l
+      this%div_src=this%mfluxG/this%rho_g-this%mfluxL/this%rho_l
    end subroutine get_div
 
 
