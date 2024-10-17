@@ -65,10 +65,12 @@ module evap_class
    contains
 
       procedure :: initialize                                          !< Class initializer
+      procedure :: init_mflux                                          !< Initializer evaporation mass flux
       procedure :: get_normal                                          !< Get the interface normal vector
       procedure :: get_vel_pc                                          !< Get the phase-change velocity
       procedure :: get_max_vel_pc                                      !< Calculate maximum field values
       procedure :: get_pseudo_vel                                      !< Get the face-centered normilized gradient of VOF
+      procedure :: get_mflux                                           !< Get the volumetric evaporation mass fllux
       procedure :: get_dmfluxdt                                        !< Get the time derivative of the evaporation mass fllux
       procedure :: shift_mflux                                         !< Shift the evaporation mass flux
       procedure :: get_div                                             !< Get the evaporation source term
@@ -80,7 +82,7 @@ module evap_class
 contains
    
    
-   !> Default constructor for evap class
+   !> Object initializer
    subroutine initialize(this,cfg,vf,itp_x,itp_y,itp_z,div_x,div_y,div_z,name)
       implicit none
       class(evap), intent(inout) :: this
@@ -138,6 +140,25 @@ contains
       this%pseudo_time=timetracker(amRoot=this%cfg%amRoot,name='Pseudo',print_info=.false.)
 
    end subroutine initialize
+
+
+   !> Initialize the volumetric mass flux
+   subroutine init_mflux(this)
+      implicit none
+      class(evap), intent(inout) :: this
+      ! Initialize the liquid and gas side mfluxes
+      this%mfluxL=this%mflux
+      this%mfluxG=this%mflux
+      ! Initialize errors to zero
+      this%mfluxL_err    =0.0_WP
+      this%mfluxG_err    =0.0_WP
+      this%mfluxL_int_err=0.0_WP
+      this%mfluxG_int_err=0.0_WP
+      ! Get the integrals
+      call this%cfg%integrate(this%mflux, this%mflux_int)
+      call this%cfg%integrate(this%mfluxL,this%mfluxL_int)
+      call this%cfg%integrate(this%mfluxG,this%mfluxG_int)
+   end subroutine init_mflux
    
 
    !> Calculate the interfacial normal vector
@@ -255,6 +276,14 @@ contains
 
    end subroutine get_pseudo_vel
    
+
+   !> Calculate the volumetric mass flux
+   subroutine get_mflux(this)
+      implicit none
+      class(evap), intent(inout) :: this
+      this%mflux=this%mdotdp*this%vf%SD
+   end subroutine get_mflux
+
 
    !> Calculate the explicit mflux time derivative
    subroutine get_dmfluxdt(this,vel,mflux_old,dmfluxdt)

@@ -356,26 +356,16 @@ contains
          ! Get densities from the flow solver
          evp%rho_l=fs%rho_l
          evp%rho_g=fs%rho_g
-         ! Initialize the evaporation mass flux
+         ! Interface jump condition
          where ((vf%VF.gt.0.0_WP).and.(vf%VF.lt.1.0_WP))
             evp%mdotdp=mdotdp
-            evp%mflux =evp%mdotdp*vf%SD
          else where
             evp%mdotdp=0.0_WP
-            evp%mflux =0.0_WP
          end where
-         ! Initialize the liquid and gas side mfluxes
-         evp%mfluxL=evp%mflux
-         evp%mfluxG=evp%mflux
-         ! Initialize errors to zero
-         evp%mfluxL_err    =0.0_WP
-         evp%mfluxG_err    =0.0_WP
-         evp%mfluxL_int_err=0.0_WP
-         evp%mfluxG_int_err=0.0_WP
-         ! Get the integrals
-         call cfg%integrate(evp%mflux, evp%mflux_int)
-         call cfg%integrate(evp%mfluxL,evp%mfluxL_int)
-         call cfg%integrate(evp%mfluxG,evp%mfluxG_int)
+         ! Get the volumetric evaporation mass flux
+         call evp%get_mflux()
+         ! Initialize the liquid and gas side mass fluxes
+         call evp%init_mflux()
       end block create_evp
       
 
@@ -516,13 +506,14 @@ contains
          ! Interface jump conditions
          where ((vf%VF.gt.0.0_WP).and.(vf%VF.lt.1.0_WP))
             evp%mdotdp=mdotdp
-            evp%mflux =evp%mdotdp*vf%SD
          else where
             evp%mdotdp=0.0_WP
-            evp%mflux =0.0_WP
          end where
 
-         ! Update interface velocity
+         ! Get the volumetric evaporation mass flux
+         call evp%get_mflux()
+
+         ! Get the interface velocity
          call evp%get_vel_pc()
          evp%U_itf=fsL%U-evp%vel_pc(:,:,:,1)
          evp%V_itf=fsL%V-evp%vel_pc(:,:,:,2)
