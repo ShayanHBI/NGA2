@@ -1,0 +1,44 @@
+# Parallelization
+Partition : 1 1 1
+
+# Mesh definition
+Lx : 0.2
+Ly : 0
+Lz : 0
+nx : 256
+ny : 1
+nz : 1
+
+# Flame definition
+Use reactions        : .true.
+Flame speed          : 0.414334
+Flame location       : 0.070625
+Pressure             : 101325
+Unburned temperature : 300
+Burned temperature   : 2224.2
+Unburned O2          : 0.220149
+Unburned CH4         : 0.055186
+Unburned N2          : 0.724665
+Burned H2            : 0.000245
+Burned H             : 0.000014
+Burned O             : 0.000135
+Burned O2            : 0.006286
+Burned OH            : 0.001850
+Burned H2O           : 0.121112
+Burned CO            : 0.008441
+Burned CO2           : 0.136813
+Burned NO            : 0.000323
+Burned N2            : 0.724780
+
+# Time integration
+Max timestep size :	1e-3
+Max cfl number    :	0.5
+Max time          : 1e-1
+Sub iterations    : 2
+
+# Pressure solver
+Pressure tolerance : 1e-6
+Pressure iteration : 50
+
+# Ensight output
+Ensight output period : 1e-2
