@@ -239,293 +239,293 @@ contains
 
       end if
 
-      ! ------------------------------------------- !
-      ! Dynamic scheduler here for load balancing
-      ! ------------------------------------------- !
+      ! ! ------------------------------------------- !
+      ! ! Dynamic scheduler here for load balancing
+      ! ! ------------------------------------------- !
 
-      ! Tag meanings:
-      ! TAG=1: sending number of data
-      itag_ndata = 1
-      ! TAG=2: sending data
-      itag_data = 2
-      ! TAG=3: identity of master
-      itag_imaster = 3
-      ! TAG=4: idle
-      itag_idle = 4
-      ! TAG=5: quit signal
-      itag_done = 5
+      ! ! Tag meanings:
+      ! ! TAG=1: sending number of data
+      ! itag_ndata = 1
+      ! ! TAG=2: sending data
+      ! itag_data = 2
+      ! ! TAG=3: identity of master
+      ! itag_imaster = 3
+      ! ! TAG=4: idle
+      ! itag_idle = 4
+      ! ! TAG=5: quit signal
+      ! itag_done = 5
 
-      ! Initialize master/slave identities
-      ! Initial master id
-      this%imaster = 1
-      ! flag that a new master has been promoted
-      this%inewmaster = -1
-      ! Processors that have been master already
-      this%imaster_list = 0
-      this%imaster_list(this%imaster) = 1
-      ! Flag indicating that data need to be sent back to master
-      idata = 0
-      ! Extra integer buffer
-      ibuf = 1
-      ! Not done to start with
-      ldone = .false.
+      ! ! Initialize master/slave identities
+      ! ! Initial master id
+      ! this%imaster = 1
+      ! ! flag that a new master has been promoted
+      ! this%inewmaster = -1
+      ! ! Processors that have been master already
+      ! this%imaster_list = 0
+      ! this%imaster_list(this%imaster) = 1
+      ! ! Flag indicating that data need to be sent back to master
+      ! idata = 0
+      ! ! Extra integer buffer
+      ! ibuf = 1
+      ! ! Not done to start with
+      ! ldone = .false.
 
-      ! Loop until all work is done
-      scheduler_loop: do while (.not.ldone)
+      ! ! Loop until all work is done
+      ! scheduler_loop: do while (.not.ldone)
 
 
-         ! Master loop
-         if (this%cfg%rank+1.eq.this%imaster) then
+      !    ! Master loop
+      !    if (this%cfg%rank+1.eq.this%imaster) then
 
-            ! Initializing processor roles and buffers
-            this%nproc_waiting = 0
-            this%iproc_waiting = 0
-            this%bufferR = 0.0_WP
-            this%bufferS = 0.0_WP
-            ! Initialize ndata
-            ndata = 0
-            ! Initialize loop condition
-            iexit_master = 0
-            !   nretrieves = 0
-            ! Set up isat mode for master
-            !   call fcsubs_retrieve_start
-            ! Initialize counter
-            icount_ = 1
-            ncount_ = (this%cfg%imax_-this%cfg%imin_+1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1)
+      !       ! Initializing processor roles and buffers
+      !       this%nproc_waiting = 0
+      !       this%iproc_waiting = 0
+      !       this%bufferR = 0.0_WP
+      !       this%bufferS = 0.0_WP
+      !       ! Initialize ndata
+      !       ndata = 0
+      !       ! Initialize loop condition
+      !       iexit_master = 0
+      !       !   nretrieves = 0
+      !       ! Set up isat mode for master
+      !       !   call fcsubs_retrieve_start
+      !       ! Initialize counter
+      !       icount_ = 1
+      !       ncount_ = (this%cfg%imax_-this%cfg%imin_+1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1)
 
-            ! Let's send out all my data
-            master_loop: do while (iexit_master.eq.0) ! No explicit exit conditions here, automatically handled below
+      !       ! Let's send out all my data
+      !       master_loop: do while (iexit_master.eq.0) ! No explicit exit conditions here, automatically handled below
 
-               ! ------------------------------------------- !
-               ! Gather compositions until there is a bundle of ndata particles ready to send
-               ! Skip locally processed compositions
-               do while (ndata.lt.this%nbundles .and. icount_.le.ncount_)
+      !          ! ------------------------------------------- !
+      !          ! Gather compositions until there is a bundle of ndata particles ready to send
+      !          ! Skip locally processed compositions
+      !          do while (ndata.lt.this%nbundles .and. icount_.le.ncount_)
 
-                  ! Figure out which composition to consider next to get more data
-                  i = int(icount_/((this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1))) + 1
-                  j = int((icount_-(i-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1))/(this%cfg%kmax_-this%cfg%kmin_+1)) + 1
-                  k = icount_ - (i-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1) - (j-1)*(this%cfg%kmax_-this%cfg%kmin_+1) + 1
-                  i = i+this%cfg%imin_-1
-                  j = j+this%cfg%jmin_-1
-                  k = k+this%cfg%kmin_-1
+      !             ! Figure out which composition to consider next to get more data
+      !             i = int(icount_/((this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1))) + 1
+      !             j = int((icount_-(i-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1))/(this%cfg%kmax_-this%cfg%kmin_+1)) + 1
+      !             k = icount_ - (i-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1) - (j-1)*(this%cfg%kmax_-this%cfg%kmin_+1) + 1
+      !             i = i+this%cfg%imin_-1
+      !             j = j+this%cfg%jmin_-1
+      !             k = k+this%cfg%kmin_-1
 
-                  ! Skip walls
-                  if (this%mask(i,j,k).eq.0) then
+      !             ! Skip walls
+      !             if (this%mask(i,j,k).eq.0) then
 
-                     ! Initialize solution vector
-                     sol(1:nspec) = min(max(this%SC(i,j,k,1:nspec),0.0_WP),1.0_WP)
-                     sol(1:nspec) = sol(1:nspec)/sum(sol(1:nspec))
-                     sol(nspec1) = min(max(this%SC(i,j,k,nspec1),T_min),T_max)
-                     ! Try PLP with ISAT to get solution at t+deltat
-                     !   call fcsubs_retrieve(sol,Pthermo,dt,istatus)
-                     istatus=0
-                     ! Check status
-                     if (istatus.eq.1) then
-                        ! If retrieve was successful, transfer solution back!
-                        !   this%SC(i,j,k,isc_1:isc_1+nspec-1) = sol(1:nspec)
-                        !   this%SC(i,j,k,isc_1:isc_T) = sol(nspec+1)
-                        !   nretrieves = nretrieves+1
-                     else
-                        ! Buffer composition to send out to other processors
-                        ndata = ndata + 1
-                        this%bufferS((ndata-1)*(nspec+1)+1:ndata*(nspec+1)) = sol
-                        this%iwhere_buf(ndata) = icount_ ! link between bundle and pmc array
-                        this%nwhere_buf = ndata ! Keep track of actual number of compos in bundle
-                     end if
+      !                ! Initialize solution vector
+      !                sol(1:nspec) = min(max(this%SC(i,j,k,1:nspec),0.0_WP),1.0_WP)
+      !                sol(1:nspec) = sol(1:nspec)/sum(sol(1:nspec))
+      !                sol(nspec1) = min(max(this%SC(i,j,k,nspec1),T_min),T_max)
+      !                ! Try PLP with ISAT to get solution at t+deltat
+      !                !   call fcsubs_retrieve(sol,Pthermo,dt,istatus)
+      !                istatus=0
+      !                ! Check status
+      !                if (istatus.eq.1) then
+      !                   ! If retrieve was successful, transfer solution back!
+      !                   !   this%SC(i,j,k,isc_1:isc_1+nspec-1) = sol(1:nspec)
+      !                   !   this%SC(i,j,k,isc_1:isc_T) = sol(nspec+1)
+      !                   !   nretrieves = nretrieves+1
+      !                else
+      !                   ! Buffer composition to send out to other processors
+      !                   ndata = ndata + 1
+      !                   this%bufferS((ndata-1)*(nspec+1)+1:ndata*(nspec+1)) = sol
+      !                   this%iwhere_buf(ndata) = icount_ ! link between bundle and pmc array
+      !                   this%nwhere_buf = ndata ! Keep track of actual number of compos in bundle
+      !                end if
 
-                  end if
+      !             end if
 
-                  ! Increment index of next composition to consider
-                  icount_ = icount_ + 1
+      !             ! Increment index of next composition to consider
+      !             icount_ = icount_ + 1
 
-               end do
+      !          end do
 
-               ! ------------------------------------------- !
-               ! Listen to the slaves until one raises its hand
-               call MPI_probe(MPI_ANY_SOURCE,MPI_ANY_TAG,this%cfg%comm,status,ierr)
-               ! Got something: which slave is talking?
-               islave = status(MPI_SOURCE)+1
-               ! What message is it sending?
-               itag = status(MPI_TAG)
+      !          ! ------------------------------------------- !
+      !          ! Listen to the slaves until one raises its hand
+      !          call MPI_probe(MPI_ANY_SOURCE,MPI_ANY_TAG,this%cfg%comm,status,ierr)
+      !          ! Got something: which slave is talking?
+      !          islave = status(MPI_SOURCE)+1
+      !          ! What message is it sending?
+      !          itag = status(MPI_TAG)
 
-               ! ------------------------------------------- !
-               ! Does this slave have results to send?
-               if (itag.eq.itag_data) then
-                  ! itag = 1: slave has data to send back, receive them!
-                  call MPI_recv(this%bufferR(1:this%nwhere(islave)*(nspec+1)),this%nwhere(islave)*(nspec+1),MPI_REAL_WP,islave-1,itag_data,this%cfg%comm,status,ierr)
-                  ! Store each bufferR compo at correct location in pmc array
-                  do i=1,this%nwhere(islave)
-                     ! Figure out where to store the result
-                     myi = int(this%iwhere(islave,i)/((this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1)))+1
-                     myj = int((this%iwhere(islave,i)-(myi-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1))/(this%cfg%kmax_-this%cfg%kmin_+1))+1
-                     myk = this%iwhere(islave,i) - (myi-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1) - (myj-1)*(this%cfg%kmax_-this%cfg%kmin_+1)+1
-                     myi = myi+this%cfg%imin_-1
-                     myj = myj+this%cfg%jmin_-1
-                     myk = myk+this%cfg%kmin_-1
-                     ! this%SC(myi,myj,myk,1:nspec) = this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)-1)
-                     ! this%SC(myi,myj,myk,nspec+1) = this%bufferR(i*(nspec+1))
-                     this%SRCchem(myi,myj,myk,1:nspec) = this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)-1)
-                     this%SRCchem(myi,myj,myk,nspec+1) = this%bufferR(i*(nspec+1))
+      !          ! ------------------------------------------- !
+      !          ! Does this slave have results to send?
+      !          if (itag.eq.itag_data) then
+      !             ! itag = 1: slave has data to send back, receive them!
+      !             call MPI_recv(this%bufferR(1:this%nwhere(islave)*(nspec+1)),this%nwhere(islave)*(nspec+1),MPI_REAL_WP,islave-1,itag_data,this%cfg%comm,status,ierr)
+      !             ! Store each bufferR compo at correct location in pmc array
+      !             do i=1,this%nwhere(islave)
+      !                ! Figure out where to store the result
+      !                myi = int(this%iwhere(islave,i)/((this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1)))+1
+      !                myj = int((this%iwhere(islave,i)-(myi-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1))/(this%cfg%kmax_-this%cfg%kmin_+1))+1
+      !                myk = this%iwhere(islave,i) - (myi-1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1) - (myj-1)*(this%cfg%kmax_-this%cfg%kmin_+1)+1
+      !                myi = myi+this%cfg%imin_-1
+      !                myj = myj+this%cfg%jmin_-1
+      !                myk = myk+this%cfg%kmin_-1
+      !                ! this%SC(myi,myj,myk,1:nspec) = this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)-1)
+      !                ! this%SC(myi,myj,myk,nspec+1) = this%bufferR(i*(nspec+1))
+      !                this%SRCchem(myi,myj,myk,1:nspec) = this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)-1)
+      !                this%SRCchem(myi,myj,myk,nspec+1) = this%bufferR(i*(nspec+1))
 
-                  end do
-               else
-                  ! Just receive its empty message
-                  call MPI_recv(ibuf,1,MPI_INTEGER,islave-1,itag_idle,this%cfg%comm,status,ierr)
-               end if
+      !             end do
+      !          else
+      !             ! Just receive its empty message
+      !             call MPI_recv(ibuf,1,MPI_INTEGER,islave-1,itag_idle,this%cfg%comm,status,ierr)
+      !          end if
 
-               ! ------------------------------------------- !
-               ! Do I have more work to do?
-               if (ndata.gt.0) then ! ndata not 0: last bundle has not been sent yet, more work to do!
-                  ! Keep a note of what was sent to islave
-                  this%iwhere(islave,:) = this%iwhere_buf
-                  this%nwhere(islave) = this%nwhere_buf
-                  ! If yes, send the number of data that will be sent
-                  call MPI_send(this%nwhere(islave),1,MPI_INTEGER,islave-1,itag_ndata,this%cfg%comm,ierr)
-                  ! Send the next chunk to this slave
-                  call MPI_send(this%bufferS(1:this%nwhere(islave)*(nspec+1)),ndata*(nspec+1),MPI_REAL_WP,islave-1,itag_data,this%cfg%comm,ierr)
-                  ! Reset buffer to start accumulating more composition for next call
-                  ndata = 0
-                  this%iwhere_buf = 0
-                  this%nwhere_buf = 0
-                  ! Go back to beginning of loop
-                  cycle master_loop
-               end if
+      !          ! ------------------------------------------- !
+      !          ! Do I have more work to do?
+      !          if (ndata.gt.0) then ! ndata not 0: last bundle has not been sent yet, more work to do!
+      !             ! Keep a note of what was sent to islave
+      !             this%iwhere(islave,:) = this%iwhere_buf
+      !             this%nwhere(islave) = this%nwhere_buf
+      !             ! If yes, send the number of data that will be sent
+      !             call MPI_send(this%nwhere(islave),1,MPI_INTEGER,islave-1,itag_ndata,this%cfg%comm,ierr)
+      !             ! Send the next chunk to this slave
+      !             call MPI_send(this%bufferS(1:this%nwhere(islave)*(nspec+1)),ndata*(nspec+1),MPI_REAL_WP,islave-1,itag_data,this%cfg%comm,ierr)
+      !             ! Reset buffer to start accumulating more composition for next call
+      !             ndata = 0
+      !             this%iwhere_buf = 0
+      !             this%nwhere_buf = 0
+      !             ! Go back to beginning of loop
+      !             cycle master_loop
+      !          end if
 
-               ! ------------------------------------------- !
-               ! If reaching here, no more work to do,
-               ! ready to finish work as master and switch to slave status
+      !          ! ------------------------------------------- !
+      !          ! If reaching here, no more work to do,
+      !          ! ready to finish work as master and switch to slave status
 
-               ! ------------------------------------------- !
-               ! Has a new master being promoted?
-               if (this%inewmaster.eq.-1) then !no, no new master yet
+      !          ! ------------------------------------------- !
+      !          ! Has a new master being promoted?
+      !          if (this%inewmaster.eq.-1) then !no, no new master yet
 
-                  ! Reset this%imaster_aware to 0
-                  this%imaster_aware = 0
-                  ! But I am aware already, that counts for someting
-                  this%imaster_aware(this%cfg%rank+1) = 1
+      !             ! Reset this%imaster_aware to 0
+      !             this%imaster_aware = 0
+      !             ! But I am aware already, that counts for someting
+      !             this%imaster_aware(this%cfg%rank+1) = 1
 
-                  ! Has this slave been a master yet?
-                  if (this%imaster_list(islave).eq.0) then ! no, not yet
-                     ! Promote the slave to master status
-                     this%inewmaster = islave
-                     ! Tell the current slave that it is the new master and update aware list
-                     call MPI_send(this%inewmaster,1,MPI_INTEGER,islave-1,itag_imaster,this%cfg%comm,ierr)
-                     this%imaster_aware(islave) = 1
-                     ! Send id of new master to all waiting slaves and update aware list
-                     do ip=1,this%nproc_waiting
-                        call MPI_send(this%inewmaster,1,MPI_INTEGER,this%iproc_waiting(ip)-1,itag_imaster,this%cfg%comm,ierr)
-                        this%imaster_aware(this%iproc_waiting(ip)) = 1
-                     end do
+      !             ! Has this slave been a master yet?
+      !             if (this%imaster_list(islave).eq.0) then ! no, not yet
+      !                ! Promote the slave to master status
+      !                this%inewmaster = islave
+      !                ! Tell the current slave that it is the new master and update aware list
+      !                call MPI_send(this%inewmaster,1,MPI_INTEGER,islave-1,itag_imaster,this%cfg%comm,ierr)
+      !                this%imaster_aware(islave) = 1
+      !                ! Send id of new master to all waiting slaves and update aware list
+      !                do ip=1,this%nproc_waiting
+      !                   call MPI_send(this%inewmaster,1,MPI_INTEGER,this%iproc_waiting(ip)-1,itag_imaster,this%cfg%comm,ierr)
+      !                   this%imaster_aware(this%iproc_waiting(ip)) = 1
+      !                end do
 
-                  else ! Yes, this proc has been master already
-                     ! Add identity of this slave to the waiting list
-                     this%nproc_waiting = this%nproc_waiting + 1
-                     this%iproc_waiting(this%nproc_waiting) = islave
-                     ! Check if we are fully done (all procs have been masters already)
-                     if (this%nproc_waiting.eq.this%cfg%nproc-1) then
-                        exit master_loop
-                     end if
-                  end if
+      !             else ! Yes, this proc has been master already
+      !                ! Add identity of this slave to the waiting list
+      !                this%nproc_waiting = this%nproc_waiting + 1
+      !                this%iproc_waiting(this%nproc_waiting) = islave
+      !                ! Check if we are fully done (all procs have been masters already)
+      !                if (this%nproc_waiting.eq.this%cfg%nproc-1) then
+      !                   exit master_loop
+      !                end if
+      !             end if
 
-                  ! ------------------------------------------- !
-               else ! Yes, a new master has been promoted
-                  ! Send the id of the new master to the current slave and update aware list
-                  call MPI_send(this%inewmaster,1,MPI_INTEGER,islave-1,itag_imaster,this%cfg%comm,ierr)
-                  this%imaster_aware(islave) = 1
-               end if
+      !             ! ------------------------------------------- !
+      !          else ! Yes, a new master has been promoted
+      !             ! Send the id of the new master to the current slave and update aware list
+      !             call MPI_send(this%inewmaster,1,MPI_INTEGER,islave-1,itag_imaster,this%cfg%comm,ierr)
+      !             this%imaster_aware(islave) = 1
+      !          end if
 
-               ! ------------------------------------------- !
-               ! Continue waiting for signals till all slaves have received new master id
-               if (sum(this%imaster_aware).eq.this%cfg%nproc) iexit_master = 1
+      !          ! ------------------------------------------- !
+      !          ! Continue waiting for signals till all slaves have received new master id
+      !          if (sum(this%imaster_aware).eq.this%cfg%nproc) iexit_master = 1
 
-            end do master_loop
+      !       end do master_loop
 
-            ! ------------------------------------------- !
-            ! End isat mode for master
-            !   call fcsubs_retrieve_stop
+      !       ! ------------------------------------------- !
+      !       ! End isat mode for master
+      !       !   call fcsubs_retrieve_stop
 
-            ! Print number of retrieves done by the master
-            !print*,'master',this%cfg%rank,': ',nretrieves,' out of ',npmc_,'[',real(nretrieves,WP)/real(npmc_),']'
+      !       ! Print number of retrieves done by the master
+      !       !print*,'master',this%cfg%rank,': ',nretrieves,' out of ',npmc_,'[',real(nretrieves,WP)/real(npmc_),']'
 
-            ! ------------------------------------------- !
-            ! Check if I am the last master
-            if (sum(this%imaster_list).eq.this%cfg%nproc) then
-               ! If so, update done
-               ldone = .true.
-               ! Send a quit signal to every body
-               do ip=1,this%cfg%nproc
-                  if (ip.eq.this%cfg%rank+1) cycle
-                  call MPI_send(ldone,1,MPI_LOGICAL,ip-1,itag_done,this%cfg%comm,ierr)
-               end do
-            else ! I am not the last master
-               ! Switching the master id to somebody else
-               this%imaster = this%inewmaster
-               ! Keep it rolling
-               cycle scheduler_loop
-            end if
+      !       ! ------------------------------------------- !
+      !       ! Check if I am the last master
+      !       if (sum(this%imaster_list).eq.this%cfg%nproc) then
+      !          ! If so, update done
+      !          ldone = .true.
+      !          ! Send a quit signal to every body
+      !          do ip=1,this%cfg%nproc
+      !             if (ip.eq.this%cfg%rank+1) cycle
+      !             call MPI_send(ldone,1,MPI_LOGICAL,ip-1,itag_done,this%cfg%comm,ierr)
+      !          end do
+      !       else ! I am not the last master
+      !          ! Switching the master id to somebody else
+      !          this%imaster = this%inewmaster
+      !          ! Keep it rolling
+      !          cycle scheduler_loop
+      !       end if
 
-            ! ------------------------------------------- !
-            ! ------------------------------------------- !
-            ! Slave loop
-         else
+      !       ! ------------------------------------------- !
+      !       ! ------------------------------------------- !
+      !       ! Slave loop
+      !    else
 
-            slave_loop: do while (.true.) ! No explicit exit conditions here, automatically handled below
-               ! ------------------------------------------- !
-               ! Do I have results to send to the master?
-               if (idata.eq.1) then ! yes, I have data to send
-                  ! Send them to master
-                  call MPI_send(this%bufferR(1:ndata*(nspec+1)),ndata*(nspec+1),MPI_REAL_WP,this%imaster-1,itag_data,this%cfg%comm,ierr)
-                  ! No more data to send for now
-                  idata = 0
-               else ! No, no data to send
-                  ! Just tell the master I am available
-                  call MPI_send(ibuf,1,MPI_INTEGER,this%imaster-1,itag_idle,this%cfg%comm,ierr)
-               end if
+      !       slave_loop: do while (.true.) ! No explicit exit conditions here, automatically handled below
+      !          ! ------------------------------------------- !
+      !          ! Do I have results to send to the master?
+      !          if (idata.eq.1) then ! yes, I have data to send
+      !             ! Send them to master
+      !             call MPI_send(this%bufferR(1:ndata*(nspec+1)),ndata*(nspec+1),MPI_REAL_WP,this%imaster-1,itag_data,this%cfg%comm,ierr)
+      !             ! No more data to send for now
+      !             idata = 0
+      !          else ! No, no data to send
+      !             ! Just tell the master I am available
+      !             call MPI_send(ibuf,1,MPI_INTEGER,this%imaster-1,itag_idle,this%cfg%comm,ierr)
+      !          end if
 
-               ! ------------------------------------------- !
-               ! Listening to the master to see what is coming next
-               call MPI_probe(this%imaster-1,MPI_ANY_TAG,this%cfg%comm,status,ierr)
-               ! What message is it sending?
-               itag = status(MPI_TAG)
+      !          ! ------------------------------------------- !
+      !          ! Listening to the master to see what is coming next
+      !          call MPI_probe(this%imaster-1,MPI_ANY_TAG,this%cfg%comm,status,ierr)
+      !          ! What message is it sending?
+      !          itag = status(MPI_TAG)
 
-               ! ------------------------------------------- !
-               ! What is the message?
-               if (itag.eq.itag_done) then ! Quit message
-                  ! Receive it (we just tested the tag here, still need to actually receive the integer)
-                  call MPI_recv(ldone,1,MPI_LOGICAL,this%imaster-1,itag_done,this%cfg%comm,status,ierr)
-                  cycle scheduler_loop
+      !          ! ------------------------------------------- !
+      !          ! What is the message?
+      !          if (itag.eq.itag_done) then ! Quit message
+      !             ! Receive it (we just tested the tag here, still need to actually receive the integer)
+      !             call MPI_recv(ldone,1,MPI_LOGICAL,this%imaster-1,itag_done,this%cfg%comm,status,ierr)
+      !             cycle scheduler_loop
 
-                  ! ------------------------------------------- !
-               elseif (itag.eq.itag_ndata) then ! Work message
-                  ! Receiving number of data expected
-                  call MPI_recv(ndata,1,MPI_integer,this%imaster-1,itag_ndata,this%cfg%comm,status,ierr)
-                  ! Receiving chunk of data to process
-                  call MPI_recv(this%bufferR(1:ndata*(nspec+1)),ndata*(nspec+1),MPI_REAL_WP,this%imaster-1,itag_data,this%cfg%comm,status,ierr)
-                  ! Do the work
-                  do i=1,ndata
-                     solold=this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))
-                     call fc_reaction_compute_sol(this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)),this%Pthermo,dt)
-                     this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))=this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))-solold
-                  end do
-                  ! Now I have data to send
-                  idata = 1
-                  ! Cycle the slave loop again
-                  cycle slave_loop
+      !             ! ------------------------------------------- !
+      !          elseif (itag.eq.itag_ndata) then ! Work message
+      !             ! Receiving number of data expected
+      !             call MPI_recv(ndata,1,MPI_integer,this%imaster-1,itag_ndata,this%cfg%comm,status,ierr)
+      !             ! Receiving chunk of data to process
+      !             call MPI_recv(this%bufferR(1:ndata*(nspec+1)),ndata*(nspec+1),MPI_REAL_WP,this%imaster-1,itag_data,this%cfg%comm,status,ierr)
+      !             ! Do the work
+      !             do i=1,ndata
+      !                solold=this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))
+      !                call fc_reaction_compute_sol(this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)),this%Pthermo,dt)
+      !                this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))=this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))-solold
+      !             end do
+      !             ! Now I have data to send
+      !             idata = 1
+      !             ! Cycle the slave loop again
+      !             cycle slave_loop
 
-                  ! ------------------------------------------- !
-               elseif (itag.eq.itag_imaster) then ! Master has changed
-                  ! Receive the id of the new master
-                  call MPI_recv(ibuf,1,MPI_integer,this%imaster-1,itag_imaster,this%cfg%comm,status,ierr)
-                  ! Update the id of master
-                  this%imaster = ibuf
-                  this%imaster_list(this%imaster) = 1
-                  ! Cycle the scheduler loop
-                  cycle scheduler_loop
+      !             ! ------------------------------------------- !
+      !          elseif (itag.eq.itag_imaster) then ! Master has changed
+      !             ! Receive the id of the new master
+      !             call MPI_recv(ibuf,1,MPI_integer,this%imaster-1,itag_imaster,this%cfg%comm,status,ierr)
+      !             ! Update the id of master
+      !             this%imaster = ibuf
+      !             this%imaster_list(this%imaster) = 1
+      !             ! Cycle the scheduler loop
+      !             cycle scheduler_loop
 
-               end if
-            end do slave_loop
-         end if
-      end do scheduler_loop
+      !          end if
+      !       end do slave_loop
+      !    end if
+      ! end do scheduler_loop
 
    contains
       ! ---------------------------------------------------------------------------------- !
@@ -619,25 +619,23 @@ contains
          real(WP), intent(in) :: t_
          real(WP), dimension(n_), intent(in)  :: sol
          real(WP), dimension(n_), intent(out) :: rhs
-         real(WP) :: Cp_mix, Wmix, RHOmix
-         real(WP), dimension(nspec) :: C, wdot
-         real(WP), dimension(nTB + nFO) :: M
-         real(WP), dimension(nreac + nreac_reverse) :: W, K
+         real(WP) :: Cp_mix,Wmix,RHOmix
+         real(WP), dimension(nspec) :: wdot
 
          ! Reset rhs
          rhs = 0.0_WP
-         M = 0.0_WP
 
          ! Get W of mixture
          call this%get_Wmix(sol(1:nspec), Wmix)
 
          ! Get Cp of mixture and update hsp
          call this%get_cpmix(sol(1:nspec), sol(nspec1), Cp_mix)
+
          ! Get RHO of mixture
          RHOmix = this%Pthermo*Wmix/(Rcst*sol(nspec1))
 
-         call fcmech_get_wdot(this%Pthermo, sol(nspec+1), sol(1:nspec), wdot)
-
+         ! Get the reaction source terms
+         call fcmech_get_wdot(this%Pthermo,sol(nspec+1),sol(1:nspec),wdot)
 
          ! Transform concentration into mass fraction
          rhs(1:nspec) = wdot*W_sp/RHOmix

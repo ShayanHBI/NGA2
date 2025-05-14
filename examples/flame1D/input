@@ -2,7 +2,7 @@
 Partition : 1 1 1
 
 # Mesh definition
-Lx : 0.2
+Lx : 3e-4
 Ly : 0
 Lz : 0
 nx : 256
@@ -11,29 +11,37 @@ nz : 1
 
 # Flame definition
 Use reactions        : .true.
-Flame speed          : 0.414334
-Flame location       : 0.070625
-Pressure             : 101325
-Unburned temperature : 300
-Burned temperature   : 2224.2
-Unburned O2          : 0.220149
-Unburned CH4         : 0.055186
-Unburned N2          : 0.724665
-Burned H2            : 0.000245
-Burned H             : 0.000014
-Burned O             : 0.000135
-Burned O2            : 0.006286
-Burned OH            : 0.001850
-Burned H2O           : 0.121112
-Burned CO            : 0.008441
-Burned CO2           : 0.136813
-Burned NO            : 0.000323
-Burned N2            : 0.724780
+Pressure             : 3.4e6
+Flame speed          : 0.616554
+Flame location       : 0.000124
+Unburned temperature : 700.0000
+Unburned HMN         : 0.010812
+Unburned XC12H26     : 0.052065
+Unburned N2          : 0.718723
+Unburned H2          : 0.000020
+Unburned O2          : 0.218334
+Unburned H2O         : 0.000034
+Unburned CO          : 0.000008
+Unburned CO2         : 0.000002
+Burned temperature   : 2587.699
+Burned XC12H23-42    : 0.000075
+Burned N2            : 0.718718
+Burned H2            : 0.000196
+Burned H             : 0.000013
+Burned O2            : 0.007630
+Burned O             : 0.000190
+Burned H2O           : 0.084481
+Burned OH            : 0.002618
+Burned HO2           : 0.000005
+Burned CO            : 0.014675
+Burned CO2           : 0.170777
+Burned I24C7D1       : 0.000610
+Burned NEC7Y4        : 0.000010
 
 # Time integration
-Max timestep size :	1e-3
+Max timestep size :	1e-6
 Max cfl number    :	0.5
-Max time          : 1e-1
+Max time          : 1e-5
 Sub iterations    : 2
 
 # Pressure solver
@@ -41,4 +49,4 @@ Pressure tolerance : 1e-6
 Pressure iteration : 50
 
 # Ensight output
-Ensight output period : 1e-2
+Ensight output period : 1e-6

@@ -6,8 +6,6 @@ module simulation
    ! use fft3d_class,         only: fft3d
    use hypre_str_class,     only: hypre_str
    use lowmach_class,       only: lowmach
-   use vdscalar_class,      only: vdscalar
-   use multivdscalar_class, only: multivdscalar
    use finitechem_class,    only: finitechem
    use timetracker_class,   only: timetracker
    use ensight_class,       only: ensight
@@ -43,6 +41,7 @@ module simulation
    !> Flame definition
    logical  :: use_reactions
    real(WP) :: xFlame,Tu,Tb,Uin
+   real(WP) :: Schmidt,Prandtl
    real(WP), dimension(:), allocatable :: Yu,Yb
 
 contains
@@ -126,26 +125,23 @@ contains
 
       ! Allocate work arrays
       allocate_work_arrays: block
-         ! Flow solver
-         allocate (resU(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate (resV(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate (resW(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate (resRHO(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_)); resRHO=0.0_WP
-         allocate (Ui(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate (Vi(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate (Wi(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         ! Scalar solver
-         allocate (resSC(fc%cfg%imino_:fc%cfg%imaxo_,fc%cfg%jmino_:fc%cfg%jmaxo_,fc%cfg%kmino_:fc%cfg%kmaxo_,fc%nscalar))
-         allocate (SCtmp(fc%cfg%imino_:fc%cfg%imaxo_,fc%cfg%jmino_:fc%cfg%jmaxo_,fc%cfg%kmino_:fc%cfg%kmaxo_,fc%nscalar))
+         allocate (resU  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate (resV  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate (resW  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate (resRHO(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); resRHO=0.0_WP
+         allocate (Ui    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate (Vi    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate (Wi    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate (resSC (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,nspec+1)); resSC=0.0_WP
+         allocate (SCtmp (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,nspec+1)); SCtmp=0.0_WP
       end block allocate_work_arrays
 
       ! Initialize time tracker
       initialize_timetracker: block
-         time=timetracker(amRoot=fs%cfg%amRoot)
+         time=timetracker(amRoot=cfg%amRoot)
          call param_read('Max timestep size',time%dtmax)
          call param_read('Max cfl number',time%cflmax)
          call param_read('Max time',time%tmax)
-         call param_read('Max iterations',time%nmax)
          call param_read('Sub iterations',time%itmax)
          time%dt=time%dtmax
       end block initialize_timetracker
@@ -159,9 +155,10 @@ contains
          character(len=str_medium), dimension(:), allocatable :: spname
          ! Create finite chem object
          fc=finitechem(cfg=cfg,scheme=bquick,name='fc')
+         fc%use_scheduler=.false.
          ! Define boundary conditions
          call fc%add_bcond(name='inflow', type=dirichlet,locator=xm_locator_sc)
-         call fs%add_bcond(name='outflow',type=neumann,  locator=xp_locator)
+         call fc%add_bcond(name='outflow',type=neumann,  locator=xp_locator,dir='+x')
          ! Assign constant diffusivity
          ! call param_read('Dynamic diffusivity',diffusivity)
          ! fc%diff=diffusivity
@@ -190,18 +187,24 @@ contains
          Yu=Yu/sum(Yu)
          ! Burned composition
          do nsc=1,nspec
-            if (param_exists('Burnt '//trim(spname(nsc)))) then
-               call param_read('Burnt '//trim(spname(nsc)),Yb(nsc))
-               print *,'Burnt species ',trim(spname(nsc)),Yb(nsc)
+            if (param_exists('Burned '//trim(spname(nsc)))) then
+               call param_read('Burned '//trim(spname(nsc)),Yb(nsc))
             end if
          end do
          Yb=Yb/sum(Yb)
          ! Initialize the flame
-         fc%SC(:,:,:,nspec+1)=Tu
+         do nsc=1,nspec
+            do k=fc%cfg%kmin_,fc%cfg%kmax_
+               do j=fc%cfg%jmin_,fc%cfg%jmax_
+                  do i=fc%cfg%imin_,fc%cfg%imax_
+                     fc%SC(i,j,k,nsc)=Yu(nsc)+(Yb(nsc)-Yu(nsc))*0.5_WP*(1.0_WP+tanh((fc%cfg%xm(i)-xFlame)/(Lx/20.0_WP)))
+                  end do
+               end do
+            end do
+         end do
          do k=fc%cfg%kmin_,fc%cfg%kmax_
             do j=fc%cfg%jmin_,fc%cfg%jmax_
                do i=fc%cfg%imin_,fc%cfg%imax_
-                  fc%SC(i,j,k,1:nspec)=Yu+(Yb-Yu)*0.5_WP*(1.0_WP+tanh((fc%cfg%xm(i)-xFlame)/(Lx/20.0_WP)))
                   fc%SC(i,j,k,nspec+1)=Tu+(Tb-Tu)*0.5_WP*(1.0_WP+tanh((fc%cfg%xm(i)-xFlame)/(Lx/20.0_WP)))
                end do
             end do
@@ -285,14 +288,16 @@ contains
          call ens_out%add_scalar('density',fc%rho)
          call ens_out%add_scalar('viscosity',fc%visc)
          call ens_out%add_scalar('thermal_diff',fc%diff(:,:,:,nspec+1))
-         call ens_out%add_scalar('YCH4',fc%SC(:,:,:,sCH4))
+         ! call ens_out%add_scalar('YCH4',fc%SC(:,:,:,sCH4))
          call ens_out%add_scalar('YOH',fc%SC(:,:,:,sOH))
          call ens_out%add_scalar('YO2',fc%SC(:,:,:,sO2))
          call ens_out%add_scalar('YN2',fc%SC(:,:,:,sN2))
-         call ens_out%add_scalar('T',fc%SC(:,:,:,nspec+1))
          call ens_out%add_scalar('YCO2',fc%SC(:,:,:,sCO2))
          call ens_out%add_scalar('YH2O',fc%SC(:,:,:,sH2O))
          call ens_out%add_scalar('YCO',fc%SC(:,:,:,sCO))
+         call ens_out%add_scalar('YNC12H26',fc%SC(:,:,:,sXC12H26))
+         call ens_out%add_scalar('YHMN',fc%SC(:,:,:,sHMN))
+         call ens_out%add_scalar('T',fc%SC(:,:,:,nspec+1))
          ! call ens_out%add_scalar('SRC_T',fc%SRCchem(:,:,:,nspec+1))
          ! Output to ensight
          if (ens_evt%occurs()) call ens_out%write_data(time%t)
@@ -386,7 +391,9 @@ contains
          if (use_reactions) then
             call fc%react(time%dt)
          end if
+
          ! call fc%diffusive_source(time%dt)
+
          ! Perform sub-iterations
          do while (time%it.le.time%itmax)
 
@@ -409,7 +416,6 @@ contains
                call fc%diffusive_source(time%dt)
                ! Explicit calculation of drhoSC/dt from scalar equation
                call fc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
-
                ! Assemble explicit residual
                do nsc=1,fc%nscalar
                   resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%rho*fc%SRCchem(:,:,:,nsc)+fc%SRC(:,:,:,nsc)
@@ -577,7 +583,7 @@ contains
       ! timetracker
 
       ! Deallocate work arrays
-      deallocate (resSC,resRHO,resU,resV,resW,Ui,Vi,Wi)
+      deallocate (resU,resV,resW,Ui,Vi,Wi,resSC,resRHO,SCtmp)
 
    end subroutine simulation_final
 
