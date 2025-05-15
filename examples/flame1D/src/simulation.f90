@@ -242,7 +242,7 @@ contains
          call fs%add_bcond(name='outflow',type=clipped_neumann,face='x',dir=+1,canCorrect=.True., locator=xp_locator)
          ! Configure pressure solver
          ps=hypre_str(cfg=cfg,name='Pressure',method=pcg_pfmg2,nst=7)
-         ps%maxlevel=9
+         ps%maxlevel=6
          call param_read('Pressure iteration',ps%maxit)
          call param_read('Pressure tolerance',ps%rcvg)
          ! ps=fft3d(cfg=cfg,name='Pressure',nst=7)
@@ -257,9 +257,10 @@ contains
          fs%W=0.0_WP
          ! Set density from scalar
          fs%rho=fc%rho
+         fs%rhoold=fs%rho
          fs%visc=fc%visc
          ! Form momentum
-         call fs%rho_multiply
+         call fs%rho_multiply()
          ! Apply boundary conditions
          call fs%get_bcond('inflow',mybc)
          do n=1,mybc%itr%no_
@@ -285,8 +286,8 @@ contains
          call ens_out%add_scalar('pressure',fs%P)
          call ens_out%add_vector('velocity',Ui,Vi,Wi)
          call ens_out%add_scalar('divergence',fs%div)
-         call ens_out%add_scalar('density',fc%rho)
-         call ens_out%add_scalar('viscosity',fc%visc)
+         call ens_out%add_scalar('density',fs%rho)
+         call ens_out%add_scalar('viscosity',fs%visc)
          call ens_out%add_scalar('thermal_diff',fc%diff(:,:,:,nspec+1))
          ! call ens_out%add_scalar('YCH4',fc%SC(:,:,:,sCH4))
          call ens_out%add_scalar('YOH',fc%SC(:,:,:,sOH))
@@ -297,6 +298,7 @@ contains
          call ens_out%add_scalar('YCO',fc%SC(:,:,:,sCO))
          call ens_out%add_scalar('YNC12H26',fc%SC(:,:,:,sXC12H26))
          call ens_out%add_scalar('YHMN',fc%SC(:,:,:,sHMN))
+         call ens_out%add_scalar('resRHO',resRHO)
          call ens_out%add_scalar('T',fc%SC(:,:,:,nspec+1))
          ! call ens_out%add_scalar('SRC_T',fc%SRCchem(:,:,:,nspec+1))
          ! Output to ensight
@@ -447,7 +449,7 @@ contains
                ! Adjust metrics
                call fc%metric_adjust(SCtmp,flag)
                ! Clean up
-               deallocate (flag)
+               deallocate(flag)
 
                ! Recompute drhoSC/dt
                call fc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
@@ -568,6 +570,20 @@ contains
          call consfile%write()
 
       end do
+
+      ! Output profiles
+      post_process: block
+         integer :: i
+         ! Open the file for writing
+         open(unit=10, file=trim('NGA2.dat'), status='replace', action='write')
+         ! Write the arrays in three columns
+         write(10,'(a15,a15,a15,a15,a15,a15,a15,a15)') 'x', 'XC12H26', 'HMN', 'N2', 'OH', 'CO', 'T', 'u'
+         do i=cfg%imin_,cfg%imax_
+            write(10,'(8E15.6)') cfg%xm(i),fc%SC(i,1,1,sXC12H26),fc%SC(i,1,1,sHMN),fc%SC(i,1,1,sN2),fc%SC(i,1,1,sOH),fc%SC(i,1,1,sCO),fc%SC(i,1,1,nspec+1),Ui(i,1,1)
+         end do
+         ! Close the file
+         close(10)
+      end block post_process
 
    end subroutine simulation_run
 

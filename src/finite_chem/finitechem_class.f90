@@ -190,7 +190,7 @@ contains
       class(finitechem), intent(inout) :: this
       real(WP), intent(in) :: dt  !< Timestep size over which to advance
 
-      integer :: i, j, k, myi,myj,myk
+      integer :: nsc,i, j, k, myi,myj,myk
       real(WP), dimension(nspec + 1) :: sol, solold
 
       ! Local scheduler variables
@@ -218,9 +218,9 @@ contains
       ! If only one processor, or if beginning of simulation, just do the work for all particles
       if (.not. this%use_scheduler .or. this%cfg%nproc .eq. 1) then
 
-         do k = this%cfg%kmino_, this%cfg%kmaxo_
-            do j = this%cfg%jmino_, this%cfg%jmaxo_
-               do i = this%cfg%imino_, this%cfg%imaxo_
+         do k = this%cfg%kmin_, this%cfg%kmax_
+            do j = this%cfg%jmin_, this%cfg%jmax_
+               do i = this%cfg%imin_, this%cfg%imax_
                   sol(1:nspec) = min(max(this%SC(i, j, k, 1:nspec), 0.0_WP), 1.0_WP)
                   sol(1:nspec) = sol(1:nspec)/sum(sol(1:nspec))
                   sol(nspec1) = min(max(this%SC(i, j, k, nspec1), T_min), T_max)
@@ -526,6 +526,11 @@ contains
       !       end do slave_loop
       !    end if
       ! end do scheduler_loop
+
+      ! Sync
+      do nsc=1,nspec1
+         call this%cfg%sync(this%SRCchem(:,:,:,nsc))
+      end do
 
    contains
       ! ---------------------------------------------------------------------------------- !
