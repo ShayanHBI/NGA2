@@ -3,7 +3,6 @@ module simulation
    use precision,           only: WP
    use geometry,            only: cfg,Lx
    use ddadi_class,         only: ddadi
-   ! use fft3d_class,         only: fft3d
    use hypre_str_class,     only: hypre_str
    use lowmach_class,       only: lowmach
    use finitechem_class,    only: finitechem
@@ -17,7 +16,6 @@ module simulation
 
    !> Single low Mach flow solver and scalar solver and corresponding time tracker
    type(hypre_str),   public :: ps
-   ! type(fft3d),       public :: ps
    type(ddadi),       public :: vs,ss
    type(lowmach),     public :: fs
    type(finitechem),  public :: fc
@@ -28,7 +26,7 @@ module simulation
    type(event)   :: ens_evt
 
    !> Simulation monitor file
-   type(monitor) :: mfile,cflfile,consfile,fcfile
+   type(monitor) :: mfile,cflfile,consfile
 
    !> Simulation subroutines
    public :: simulation_init,simulation_run,simulation_final
@@ -39,10 +37,8 @@ module simulation
    real(WP), dimension(:,:,:,:),   allocatable :: resSC,SCtmp
 
    !> Flame definition
-   logical  :: use_reactions
-   real(WP) :: xFlame,Tu,Tb,Uin
-   real(WP) :: Schmidt,Prandtl
-   real(WP), dimension(:), allocatable :: Yu,Yb
+   real(WP) :: xFlame,uFlame
+   real(WP), dimension(:), allocatable :: YTu,YTb
 
 contains
 
@@ -57,55 +53,6 @@ contains
       if (i.eq.pg%imin) isIn=.true.
    end function xm_locator
 
-   !> Function that localizes the x+ boundary
-   function xp_locator(pg,i,j,k) result(isIn)
-      use pgrid_class, only: pgrid
-      class(pgrid),intent(in) :: pg
-      integer,intent(in) :: i,j,k
-      logical :: isIn
-      isIn=.false.
-      if (i.eq.pg%imax+1) isIn=.true.
-   end function xp_locator
-
-   !> Function that localizes y- boundary
-   function ym_locator(pg,i,j,k) result(isIn)
-      use pgrid_class, only: pgrid
-      class(pgrid),intent(in) :: pg
-      integer,intent(in) :: i,j,k
-      logical :: isIn
-      isIn=.false.
-      if (j.eq.pg%jmin) isIn=.true.
-   end function ym_locator
-
-   !> Function that localizes y+ boundary
-   function yp_locator(pg,i,j,k) result(isIn)
-      use pgrid_class, only: pgrid
-      class(pgrid),intent(in) :: pg
-      integer,intent(in) :: i,j,k
-      logical :: isIn
-      isIn=.false.
-      if (j.eq.pg%jmax+1) isIn=.true.
-   end function yp_locator
-
-   !> Function that localizes z- boundary
-   function zm_locator(pg,i,j,k) result(isIn)
-      use pgrid_class, only: pgrid
-      class(pgrid),intent(in) :: pg
-      integer,intent(in) :: i,j,k
-      logical :: isIn
-      isIn=.false.
-      if (k.eq.pg%kmin) isIn=.true.
-   end function zm_locator
-
-   !> Function that localizes z+ boundary
-   function zp_locator(pg,i,j,k) result(isIn)
-      use pgrid_class, only: pgrid
-      class(pgrid),intent(in) :: pg
-      integer,intent(in) :: i,j,k
-      logical :: isIn
-      isIn=.false.
-      if (k.eq.pg%kmax+1) isIn=.true.
-   end function zp_locator
 
    !> Function that localizes the x- boundary for SC
    function xm_locator_sc(pg,i,j,k) result(isIn)
@@ -118,6 +65,61 @@ contains
    end function xm_locator_sc
 
 
+   !> Function that localizes the x+ boundary
+   function xp_locator(pg,i,j,k) result(isIn)
+      use pgrid_class, only: pgrid
+      class(pgrid),intent(in) :: pg
+      integer,intent(in) :: i,j,k
+      logical :: isIn
+      isIn=.false.
+      if (i.eq.pg%imax+1) isIn=.true.
+   end function xp_locator
+
+
+   !> Function that localizes y- boundary
+   function ym_locator(pg,i,j,k) result(isIn)
+      use pgrid_class, only: pgrid
+      class(pgrid),intent(in) :: pg
+      integer,intent(in) :: i,j,k
+      logical :: isIn
+      isIn=.false.
+      if (j.eq.pg%jmin) isIn=.true.
+   end function ym_locator
+
+
+   !> Function that localizes y+ boundary
+   function yp_locator(pg,i,j,k) result(isIn)
+      use pgrid_class, only: pgrid
+      class(pgrid),intent(in) :: pg
+      integer,intent(in) :: i,j,k
+      logical :: isIn
+      isIn=.false.
+      if (j.eq.pg%jmax+1) isIn=.true.
+   end function yp_locator
+
+
+   !> Function that localizes z- boundary
+   function zm_locator(pg,i,j,k) result(isIn)
+      use pgrid_class, only: pgrid
+      class(pgrid),intent(in) :: pg
+      integer,intent(in) :: i,j,k
+      logical :: isIn
+      isIn=.false.
+      if (k.eq.pg%kmin) isIn=.true.
+   end function zm_locator
+
+
+   !> Function that localizes z+ boundary
+   function zp_locator(pg,i,j,k) result(isIn)
+      use pgrid_class, only: pgrid
+      class(pgrid),intent(in) :: pg
+      integer,intent(in) :: i,j,k
+      logical :: isIn
+      isIn=.false.
+      if (k.eq.pg%kmax+1) isIn=.true.
+   end function zp_locator
+
+
    !> Initialization of problem solver
    subroutine simulation_init
       use param, only: param_read,param_exists
@@ -128,7 +130,7 @@ contains
          allocate (resU  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate (resV  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate (resW  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate (resRHO(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); resRHO=0.0_WP
+         allocate (resRHO(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate (Ui    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate (Vi    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate (Wi    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
@@ -159,66 +161,52 @@ contains
          ! Define boundary conditions
          call fc%add_bcond(name='inflow', type=dirichlet,locator=xm_locator_sc)
          call fc%add_bcond(name='outflow',type=neumann,  locator=xp_locator,dir='+x')
-         ! Assign constant diffusivity
-         ! call param_read('Dynamic diffusivity',diffusivity)
-         ! fc%diff=diffusivity
          ! Configure implicit scalar solver
          ss=ddadi(cfg=cfg,name='Scalar',nst=13)
          ! Setup the solver
          call fc%setup(implicit_solver=ss)
          ! Allocate memory
          allocate (spname(nspec))
-         allocate (Yu(nspec)); Yu=0.0_WP
-         allocate (Yb(nspec)); Yb=0.0_WP
+         allocate (YTu(nspec+1)); YTu=0.0_WP
+         allocate (YTb(nspec+1)); YTb=0.0_WP
          ! Read in info
-         call param_read('Use reactions',use_reactions)
          call param_read('Flame location',xFlame)
-         call param_read('Unburned temperature',Tu)
-         call param_read('Burned temperature',Tb)
          call param_read('Pressure',fc%Pthermo)
          ! Get species names
          call fcmech_get_speciesnames(spname)
          ! Unburned composition
          do nsc=1,nspec
             if (param_exists('Unburned '//trim(spname(nsc)))) then
-               call param_read('Unburned '//trim(spname(nsc)),Yu(nsc))
+               call param_read('Unburned '//trim(spname(nsc)),YTu(nsc))
             end if
          end do
-         Yu=Yu/sum(Yu)
+         YTu=YTu/sum(YTu)
+         call param_read('Unburned temperature',YTu(nspec+1))
          ! Burned composition
          do nsc=1,nspec
             if (param_exists('Burned '//trim(spname(nsc)))) then
-               call param_read('Burned '//trim(spname(nsc)),Yb(nsc))
+               call param_read('Burned '//trim(spname(nsc)),YTb(nsc))
             end if
          end do
-         Yb=Yb/sum(Yb)
+         YTb=YTb/sum(YTb)
+         call param_read('Burned temperature',YTb(nspec+1))
          ! Initialize the flame
-         do nsc=1,nspec
+         do nsc=1,nspec+1
             do k=fc%cfg%kmin_,fc%cfg%kmax_
                do j=fc%cfg%jmin_,fc%cfg%jmax_
                   do i=fc%cfg%imin_,fc%cfg%imax_
-                     fc%SC(i,j,k,nsc)=Yu(nsc)+(Yb(nsc)-Yu(nsc))*0.5_WP*(1.0_WP+tanh((fc%cfg%xm(i)-xFlame)/(Lx/20.0_WP)))
+                     fc%SC(i,j,k,nsc)=YTu(nsc)+(YTb(nsc)-YTu(nsc))*0.5_WP*(1.0_WP+tanh((fc%cfg%xm(i)-xFlame)/(Lx/20.0_WP)))
                   end do
                end do
             end do
-         end do
-         do k=fc%cfg%kmin_,fc%cfg%kmax_
-            do j=fc%cfg%jmin_,fc%cfg%jmax_
-               do i=fc%cfg%imin_,fc%cfg%imax_
-                  fc%SC(i,j,k,nspec+1)=Tu+(Tb-Tu)*0.5_WP*(1.0_WP+tanh((fc%cfg%xm(i)-xFlame)/(Lx/20.0_WP)))
-               end do
-            end do
-         end do
-         ! Sync scalars
-         do nsc=1,nspec+1
+            ! Sync
             call fc%cfg%sync(fc%SC(:,:,:,nsc))
          end do
          ! Apply boundary conditions
          call fc%get_bcond('inflow',mybc)
          do n=1,mybc%itr%no_
             i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-            fc%SC(i,j,k,1:nspec)=2.0_WP*Yu-fc%SC(i+1,j,k,1:nspec)
-            fc%SC(i,j,k,nspec+1)=2.0_WP*Tu-fc%SC(i+1,j,k,nspec+1)
+            fc%SC(i,j,k,:)=2.0_WP*YTu-fc%SC(i+1,j,k,:)
          end do
          call fc%apply_bcond(time%t,time%dt)
          ! Get fluid properties
@@ -245,17 +233,16 @@ contains
          ps%maxlevel=6
          call param_read('Pressure iteration',ps%maxit)
          call param_read('Pressure tolerance',ps%rcvg)
-         ! ps=fft3d(cfg=cfg,name='Pressure',nst=7)
          ! Configure implicit velocity solver
          vs=ddadi(cfg=cfg,name='Velocity',nst=7)
          ! Setup the solver
          call fs%setup(pressure_solver=ps,implicit_solver=vs)
          ! Initialize velocity field
-         call param_read('Flame speed',Uin)
-         fs%U=Uin
+         call param_read('Flame speed',uFlame)
+         fs%U=uFlame
          fs%V=0.0_WP
          fs%W=0.0_WP
-         ! Set density from scalar
+         ! Set fluid properties from scalar
          fs%rho=fc%rho
          fs%rhoold=fs%rho
          fs%visc=fc%visc
@@ -265,12 +252,13 @@ contains
          call fs%get_bcond('inflow',mybc)
          do n=1,mybc%itr%no_
             i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-            fs%U(i,j,k)=Uin
+            fs%U(i,j,k)=uFlame
+            fs%rhoU(i,j,k)=fc%rho(i,j,k)*uFlame
          end do
          call fs%apply_bcond(time%t,time%dt)
          ! Get cell-centered velocities and continuity residual
          call fs%interp_vel(Ui,Vi,Wi)
-         call fs%get_div(drhodt=resRHO)
+         resRHO=0.0_WP; call fs%get_div(drhodt=resRHO)
          ! Compute MFR through all boundaries
          call fs%get_mfr()
       end block create_velocity_solver
@@ -283,24 +271,19 @@ contains
          ens_evt=event(time=time,name='Ensight output')
          call param_read('Ensight output period',ens_evt%tper)
          ! Add variables to output
-         call ens_out%add_scalar('pressure',fs%P)
-         call ens_out%add_vector('velocity',Ui,Vi,Wi)
+         call ens_out%add_scalar('pressure'  ,fs%P)
+         call ens_out%add_vector('velocity'  ,Ui,Vi,Wi)
          call ens_out%add_scalar('divergence',fs%div)
-         call ens_out%add_scalar('density',fs%rho)
-         call ens_out%add_scalar('viscosity',fs%visc)
-         call ens_out%add_scalar('thermal_diff',fc%diff(:,:,:,nspec+1))
-         ! call ens_out%add_scalar('YCH4',fc%SC(:,:,:,sCH4))
-         call ens_out%add_scalar('YOH',fc%SC(:,:,:,sOH))
-         call ens_out%add_scalar('YO2',fc%SC(:,:,:,sO2))
-         call ens_out%add_scalar('YN2',fc%SC(:,:,:,sN2))
-         call ens_out%add_scalar('YCO2',fc%SC(:,:,:,sCO2))
-         call ens_out%add_scalar('YH2O',fc%SC(:,:,:,sH2O))
-         call ens_out%add_scalar('YCO',fc%SC(:,:,:,sCO))
-         call ens_out%add_scalar('YNC12H26',fc%SC(:,:,:,sXC12H26))
-         call ens_out%add_scalar('YHMN',fc%SC(:,:,:,sHMN))
-         call ens_out%add_scalar('resRHO',resRHO)
-         call ens_out%add_scalar('T',fc%SC(:,:,:,nspec+1))
-         ! call ens_out%add_scalar('SRC_T',fc%SRCchem(:,:,:,nspec+1))
+         call ens_out%add_scalar('density'   ,fs%rho)
+         call ens_out%add_scalar('YOH'       ,fc%SC(:,:,:,sOH))
+         call ens_out%add_scalar('YO2'       ,fc%SC(:,:,:,sO2))
+         call ens_out%add_scalar('YN2'       ,fc%SC(:,:,:,sN2))
+         call ens_out%add_scalar('YCO2'      ,fc%SC(:,:,:,sCO2))
+         call ens_out%add_scalar('YH2O'      ,fc%SC(:,:,:,sH2O))
+         call ens_out%add_scalar('YCO'       ,fc%SC(:,:,:,sCO))
+         call ens_out%add_scalar('YNC12H26'  ,fc%SC(:,:,:,sXC12H26))
+         call ens_out%add_scalar('YHMN'      ,fc%SC(:,:,:,sHMN))
+         call ens_out%add_scalar('T'         ,fc%SC(:,:,:,nspec+1))
          ! Output to ensight
          if (ens_evt%occurs()) call ens_out%write_data(time%t)
       end block create_ensight
@@ -337,27 +320,11 @@ contains
          call cflfile%add_column(fs%CFLv_y,'Viscous yCFL')
          call cflfile%add_column(fs%CFLv_z,'Viscous zCFL')
          call cflfile%write()
-         ! Create FC monitor
-         fcfile=monitor(fs%cfg%amRoot,'fc')
-         call fcfile%add_column(time%n,'Timestep number')
-         call fcfile%add_column(time%t,'Time')
-         call fcfile%add_column(fs%CFLc_x,'Min Temperature')
-         call fcfile%add_column(fs%CFLc_y,'Max Temperature')
-         call fcfile%add_column(fs%CFLc_z,'Min sumY')
-         call fcfile%add_column(fs%CFLv_x,'Max sumY')
-         call fcfile%add_column(fc%rhomax,'RHOmax')
-         call fcfile%add_column(fc%rhomin,'RHOmin')
-         call fcfile%add_column(fc%Pthermo,'Pthermo')
-         call fcfile%add_column(fc%SCmin(nspec+1),'Min Temperature')
-         call fcfile%add_column(fc%SCmax(nspec+1),'Max Temperature')
-         call fcfile%write()
          ! Create conservation monitor
          consfile=monitor(fs%cfg%amRoot,'conservation')
          call consfile%add_column(time%n,'Timestep number')
          call consfile%add_column(time%t,'Time')
-         ! call consfile%add_column(fc%SCint,'fc integral')
          call consfile%add_column(fc%rhoint,'RHO integral')
-         ! call consfile%add_column(fc%rhoSCint,'rhoSC integral')
          call consfile%write()
       end block create_monitor
 
@@ -389,12 +356,8 @@ contains
          ! Apply time-varying Dirichlet conditions
          ! This is where time-dpt Dirichlet would be enforced
 
-         fc%SRCchem=0.0_WP
-         if (use_reactions) then
-            call fc%react(time%dt)
-         end if
-
-         ! call fc%diffusive_source(time%dt)
+         ! Get the reaction source terms
+         call fc%react(time%dt)
 
          ! Perform sub-iterations
          do while (time%it.le.time%itmax)
@@ -406,59 +369,81 @@ contains
                integer :: i,j,k
                logical, dimension(:,:,:,:), allocatable :: flag
 
+               ! Additional memory for BQUICK
                allocate (flag(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,fc%nscalar))
+
+               ! Reset scalar metric
                call fc%metric_reset()
 
-               fc%SRC=0.0_WP
+               ! Initialize source terms
+               ! fc%SRC=0.0_WP
+
+               ! Get pressure source term
                ! call fc%pressure_source()
 
                ! Build mid-time scalar
                fc%SC=0.5_WP*(fc%SC+fc%SCold)
 
-               call fc%diffusive_source(time%dt)
+               ! Get diffusion source terms
+               ! call fc%diffusive_source(time%dt)
+
+               ! Get the scalar source terms
+               call fc%get_src(time%dt)
+
                ! Explicit calculation of drhoSC/dt from scalar equation
                call fc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
+
                ! Assemble explicit residual
                do nsc=1,fc%nscalar
-                  resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%rho*fc%SRCchem(:,:,:,nsc)+fc%SRC(:,:,:,nsc)
+                  ! resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%rho*fc%SRCchem(:,:,:,nsc)+fc%SRC(:,:,:,nsc)
+                  resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%SRC(:,:,:,nsc)
                   SCtmp(:,:,:,nsc)=2.0_WP*fc%SC(:,:,:,nsc)-fc%SCold(:,:,:,nsc)+resSC(:,:,:,nsc)/fc%rho
                end do
 
-               ! Apply it to get explicit scalar prediction
-               do nsc=1,fc%nscalar
+               ! Clip the mass fractions
+               do nsc=1,nspec
                   do k=fc%cfg%kmino_,fc%cfg%kmaxo_
                      do j=fc%cfg%jmino_,fc%cfg%jmaxo_
                         do i=fc%cfg%imino_,fc%cfg%imaxo_
-                           if (nsc.eq.nspec+1) then
-                              if (SCtmp(i,j,k,nsc).le.290.0_WP.or.SCtmp(i,j,k,nsc).ge.4000.0_WP) then
-                                 flag(i,j,k,nsc)=.true.
-                              else
-                                 flag(i,j,k,nsc)=.false.
-                              end if
+                           if (SCtmp(i,j,k,nsc).le.0.0_WP.or.SCtmp(i,j,k,nsc).ge.1.0_WP) then
+                              flag(i,j,k,nsc)=.true.
                            else
-                              if (SCtmp(i,j,k,nsc).le.0.0_WP.or.SCtmp(i,j,k,nsc).ge.1.0_WP) then
-                                 flag(i,j,k,nsc)=.true.
-                              else
-                                 flag(i,j,k,nsc)=.false.
-                              end if
+                              flag(i,j,k,nsc)=.false.
                            end if
                         end do
                      end do
                   end do
                end do
-               ! Adjust metrics
+
+               ! Clip the temperature
+               nsc=nspec+1
+               do k=fc%cfg%kmino_,fc%cfg%kmaxo_
+                  do j=fc%cfg%jmino_,fc%cfg%jmaxo_
+                     do i=fc%cfg%imino_,fc%cfg%imaxo_
+                        if (SCtmp(i,j,k,nsc).le.290.0_WP.or.SCtmp(i,j,k,nsc).ge.4000.0_WP) then
+                           flag(i,j,k,nsc)=.true.
+                        else
+                           flag(i,j,k,nsc)=.false.
+                        end if
+                     end do
+                  end do
+               end do
+
+               ! Adjust scalar metrics
                call fc%metric_adjust(SCtmp,flag)
-               ! Clean up
+
+               ! Clean up BQUICK flag memory
                deallocate(flag)
 
                ! Recompute drhoSC/dt
                call fc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
-               ! resSC=-2.0_WP*(fc%SC-fc%SCold)+time%dt*resSC
+               
                ! Assemble explicit residual
                do nsc=1,fc%nscalar
-                  resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%rho*fc%SRCchem(:,:,:,nsc)+fc%SRC(:,:,:,nsc)
+                  ! resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%rho*fc%SRCchem(:,:,:,nsc)+fc%SRC(:,:,:,nsc)
+                  resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%SRC(:,:,:,nsc)
                end do
-               !    resSC(:,:,:,nsc)=time%dt*resSC(:,:,:,nsc)-2.0_WP*fc%rho*fc%SC(:,:,:,nsc)+(fc%rho+fc%rhoold)*fc%SCold(:,:,:,nsc)+fc%rho*fc%SRCchem(:,:,:,nsc)
+               
                ! Form implicit residual
                call fc%solve_implicit(time%dt,resSC,fs%rhoU,fs%rhoV,fs%rhoW)
 
@@ -467,7 +452,6 @@ contains
 
                ! Apply boundary conditions
                call fc%apply_bcond(time%t,time%dt)
-               ! Re-apply Dirichlet BCs
                dirichlet_scalar: block
                   use multivdscalar_class, only: bcond
                   type(bcond),pointer :: mybc
@@ -475,8 +459,7 @@ contains
                   call fc%get_bcond('inflow',mybc)
                   do n=1,mybc%itr%no_
                      i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-                     fc%SC(i,j,k,1:nspec)=2.0_WP*Yu-fc%SC(i+1,j,k,1:nspec)
-                     fc%SC(i,j,k,nspec+1)=2.0_WP*Tu-fc%SC(i+1,j,k,nspec+1)
+                     fc%SC(i,j,k,:)=2.0_WP*YTu-fc%SC(i+1,j,k,:)
                   end do
                end block dirichlet_scalar
 
@@ -488,12 +471,13 @@ contains
             call fc%get_viscosity()
             call fc%get_diffusivity()
             ! call fc%update_pressure()
+            fs%rho=fc%rho
             fs%visc=fc%visc
 
             ! ============ VELOCITY SOLVER ======================
 
             ! Build n+1 density
-            fs%rho=0.5_WP*(fc%rho+fc%rhoold)
+            fs%rho=0.5_WP*(fs%rho+fs%rhoold)
 
             ! Build mid-time velocity and momentum
             fs%U=0.5_WP*(fs%U+fs%Uold); fs%rhoU=0.5_WP*(fs%rhoU+fs%rhoUold)
@@ -516,6 +500,9 @@ contains
             fs%V=2.0_WP*fs%V-fs%Vold+resV
             fs%W=2.0_WP*fs%W-fs%Wold+resW
 
+            ! Update momentum
+            call fs%rho_multiply()
+
             ! Apply other boundary conditions and update momentum
             call fs%apply_bcond(time%tmid,time%dtmid)
             dirichlet_velocity: block
@@ -525,11 +512,11 @@ contains
                call fs%get_bcond('inflow',mybc)
                do n=1,mybc%itr%no_
                   i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-                  fs%U(i,j,k)=Uin
+                  fs%U(i,j,k)=uFlame
+                  fs%rhoU(i,j,k)=fc%rho(i,j,k)*uFlame
                end do
             end block dirichlet_velocity
 
-            call fs%rho_multiply()
 
             ! Solve Poisson equation
             call fc%get_drhodt(dt=time%dt,drhodt=resRHO)
@@ -599,7 +586,7 @@ contains
       ! timetracker
 
       ! Deallocate work arrays
-      deallocate (resU,resV,resW,Ui,Vi,Wi,resSC,resRHO,SCtmp)
+      deallocate (resU,resV,resW,Ui,Vi,Wi,resSC,resRHO,SCtmp,YTu,YTb)
 
    end subroutine simulation_final
 

@@ -10,7 +10,6 @@ ny : 1
 nz : 1
 
 # Flame definition
-Use reactions        : .true.
 Pressure             : 3.4e6
 Flame speed          : 0.616554
 Flame location       : 0.000124
@@ -41,7 +40,7 @@ Burned NEC7Y4        : 0.000010
 # Time integration
 Max timestep size :	3e-7
 Max cfl number    :	0.8
-Max time          : 1.5e-5
+Max time          : 2e-5
 Sub iterations    : 5
 
 # Pressure solver
