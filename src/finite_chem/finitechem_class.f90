@@ -160,7 +160,6 @@ contains
       allocate(this%iwhere(this%cfg%nproc,this%nbundles_max),this%jwhere(this%cfg%nproc,this%nbundles_max),this%kwhere(this%cfg%nproc,this%nbundles_max))
       allocate(this%nwhere(this%cfg%nproc))
       allocate(this%iproc_waiting(this%cfg%nproc))
-
    end subroutine scheduler_init
 
 
@@ -218,8 +217,8 @@ contains
                   solold=sol
                   if (solold(sN2).gt.0.8_WP) cycle                        ! Package initial solution vector
                   ! call this%clip(sol(1:nspec))
-                  ! Advance the chemical equations for each particle
-                  call fc_reaction_compute_sol(sol,this%pthermo,dt)
+                  ! Advance the chemical equations
+                  call get_sol(sol)
                   this%SRCchem(i,j,k,:)=sol-solold
                end do
             end do
@@ -500,7 +499,7 @@ contains
       !             ! Do the work
       !             do i=1,ndata
       !                solold=this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))
-      !                call fc_reaction_compute_sol(this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)),this%Pthermo,dt)
+      !                call get_sol(this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1)))
       !                this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))=this%bufferR((i-1)*(nspec+1)+1:i*(nspec+1))-solold
       !             end do
       !             ! Now I have data to send
@@ -531,45 +530,42 @@ contains
    contains
 
       ! Compute solution after time step delta t
-      subroutine fc_reaction_compute_sol(sol,mypressure,dt)
+      subroutine get_sol(mysol)
          use random
          use messager, only: die
          implicit none
-         real(WP), dimension(nspec+1) :: sol,dsol,solcheck
-         real(WP) :: dt,t_chem
-         real(WP) :: mypressure
+         real(WP), dimension(nspec+1), intent(inout) :: mysol
+         real(WP), dimension(nspec+1) :: dsol,solcheck
+         real(WP) :: t_chem
          real(WP) :: tstop,tstart
          type(vode_opts), save :: opts
          integer  :: istate,itask
          real(WP) :: atol=1.0e-15_WP
          real(WP) :: rtol=1.0e-12_WP
          integer :: n
-         ! external :: fc_reaction_compute_rhs
-         ! external :: fc_reaction_compute_jac
-         ! external :: pdfrmap1
          real(WP), dimension(22) :: rstats
          integer, dimension(31) :: istats
          ! ISAT parameters
          real(WP) :: xx(nspec+2),f(nspec+1),dfdx(nspec+1,nspec+2),hvar(1),stats(100)
          integer :: iusr(1)
          ! Save solution
-         solcheck=sol
+         solcheck=mysol
          ! Set values for DVODE
          itask=1; istate=1; tstart=0.0_WP; tstop=dt
          ! Direct integration
-         call fc_reaction_compute_rhs(nspec+1,0.0_WP,solcheck,dsol)
-         t_chem=sol(nspec+1)/(abs(dsol(nspec+1))+epsilon(1.0_WP))
+         call get_rhs(nspec+1,0.0_WP,solcheck,dsol)
+         t_chem=mysol(nspec+1)/(abs(dsol(nspec+1))+epsilon(1.0_WP))
          if (dt.lt.0.0001_WP*t_chem.and.this%use_explicit_try) then
-            sol=sol+dsol*dt
+            mysol=mysol+dsol*dt
          else
             ! Integrate using DVODE
             if (use_jacanal) then
                continue
                ! opts=set_opts(dense_j=.true.,mxstep=500000,abserr=atol,relerr=rtol,tcrit=tstop,user_supplied_jacobian=.true.)
-               !  call dvode_f90(fc_reaction_compute_rhs,nspec+1,sol,tstart,tstop,itask,istate,opts,j_fcn=fc_reaction_compute_jac)
+               !  call dvode_f90(get_rhs,nspec+1,mysol,tstart,tstop,itask,istate,opts,j_fcn=fc_reaction_compute_jac)
             else
                opts=set_opts(method_flag=22,mxstep=500000,abserr=atol,relerr=rtol,tcrit=tstop)
-               call dvode_f90(fc_reaction_compute_rhs,nspec+1,sol,tstart,tstop,itask,istate,opts)
+               call dvode_f90(get_rhs,nspec+1,mysol,tstart,tstop,itask,istate,opts)
             end if
             call get_stats(rstats,istats)
             call release_opts_arrays(opts)
@@ -584,7 +580,7 @@ contains
                end do
                print *,'sol(NT)=',solcheck(nspec+1),'_WP !','T'
                print *,'-------------------------------'
-               print *,'sol',sol
+               print *,'sol',mysol
                print *,'-------------------------------'
                do n=1,nspec
                   print *,'dsol(',n,')=',dsol(n),'_WP !'
@@ -593,128 +589,34 @@ contains
                call die('fc_reaction_source: Direct integration-DVODE failed to converge.')
             end if
          end if
-         ! Clip and renormalize,just in case
-         call this%clip(sol(1:nspec))
-      end subroutine fc_reaction_compute_sol
+         ! Clip and renormalize
+         call this%clip(mysol(1:nspec))
+      end subroutine get_sol
 
       ! Computes the chemical source term of the system (called by solver)
-      subroutine fc_reaction_compute_rhs(n_,t_,sol,rhs)
+      subroutine get_rhs(n_,t_,mysol,rhs)
          implicit none
          integer,intent(in) :: n_
          real(WP),intent(in) :: t_
-         real(WP), dimension(n_),intent(in)  :: sol
+         real(WP), dimension(n_),intent(in)  :: mysol
          real(WP), dimension(n_),intent(out) :: rhs
          real(WP) :: Cp_mix,Wmix,RHOmix
          real(WP), dimension(nspec) :: wdot
          ! Reset rhs
          rhs=0.0_WP
          ! Get W of mixture
-         call this%get_Wmix(sol(1:nspec),Wmix)
+         call this%get_Wmix(mysol(1:nspec),Wmix)
          ! Get Cp of mixture and update hsp
-         call this%get_cpmix(sol(1:nspec),sol(nspec+1),Cp_mix)
+         call this%get_cpmix(mysol(1:nspec),mysol(nspec+1),Cp_mix)
          ! Get RHO of mixture
-         RHOmix=this%Pthermo*Wmix/(Rcst*sol(nspec+1))
+         RHOmix=this%Pthermo*Wmix/(Rcst*mysol(nspec+1))
          ! Get the reaction source terms
-         call fcmech_get_wdot(this%Pthermo,sol(nspec+1),sol(1:nspec),wdot)
+         call fcmech_get_wdot(this%Pthermo,mysol(nspec+1),mysol(1:nspec),wdot)
          ! Transform concentration into mass fraction
          rhs(1:nspec)=wdot*W_sp/RHOmix
          ! Temperature rhs from change in concentration
          rhs(nspec+1)=-sum(hsp*rhs(1:nspec))/Cp_mix
-      end subroutine fc_reaction_compute_rhs
-
-      ! ! ---------------------------------------------------------------------------------- !
-      ! ! ========================================================== !
-      ! ! Computes the approximate analytical jacobian of the system !
-      ! ! ========================================================== !
-      ! subroutine fc_reaction_compute_jac(n_,t_,sol,ml,mu,jac,nrpd)
-      !     implicit none
-
-      !     ! ! Input
-      !     integer :: n_,ml,mu,nrpd
-      !     real(WP) :: t_
-      !     real(WP), dimension(n_) :: sol
-      !     real(WP), dimension(nrpd,n_) :: jac
-
-      !     ! Local variables
-      !     real(WP) :: Cp_mix,Wmix,RHOmix
-      !     real(WP), dimension(nspec) :: C,Cdot
-      !     real(WP), dimension(nTB+nFO) :: M
-      !     real(WP), dimension(nreac+nreac_reverse) :: W,K
-
-      !     ! Get W of mixture
-      !     call this%get_Wmix(sol(1:nspec),Wmix)
-
-      !     ! Get Cp of mixture and update hsp
-      !     call this%get_cpmix(sol(1:nspec),sol(nspec+1),Cp_mix)
-
-      !     ! Get RHO of mixture
-      !     RHOmix=this%Pthermo*Wmix/(Rcst*sol(nspec+1))
-
-      !     call get_thirdbodies(M,c)
-
-      !     call get_rate_coefficients(k,M,sol(nspec+1),this%Pthermo)
-
-      !     call get_reaction_rates(w,k,M,c)
-
-      !     call get_production_rates(Cdot,w)
-
-      !     ! Get analytical Jacobian from mechanism file
-      !     ! call fc_reaction_getjacobian(sol(1:nspec),sol(nspec+1),M,Cdot,K,RHOmix,Cp_mix,Wmix,jac)
-
-      !     return
-      ! end subroutine fc_reaction_compute_jac
-
-      ! ------------------------------------------------------------------------------------------------ !
-      ! ================================================ !
-      ! Used by finitechem_getjacobian
-      ! to compute one of the more involved terms
-      ! dealing with pressure dependent rate coefficients
-      ! ================================================ !
-      subroutine fc_reaction_compute_dlnFCdT(fca_i,fcta_i,fcb_i,fctb_i,fcc_i,fctc_i,Tloc,FC,dlnFCdT)
-         implicit none
-         real(WP) :: fca_i,fcta_i,fcb_i,fctb_i,fcc_i,fctc_i
-         real(WP) :: Tloc,FC,dlnFCdT
-         real(WP) :: tmp
-         real(WP), parameter :: eps=2.0_WP*epsilon(1.0_WP)
-         ! fca_i=1-alpha,fcta_i=T***,fcb_i=alpha,fctb_i=T*,fcc_i=beta,fctc_i=T**
-         FC=0.0_WP
-         dlnFCdT=0.0_WP
-         if (abs(fcta_i).gt.eps) then
-            tmp=fca_i*exp(-Tloc/fcta_i)
-            FC=FC+tmp
-            dlnFCdT=dlnFCdT-tmp/fcta_i
-         end if
-         if (abs(fctb_i).gt.eps) then
-            tmp=fcb_i*exp(-Tloc/fctb_i)
-            FC=FC+tmp
-            dlnFCdT=dlnFCdT-tmp/fctb_i
-         end if
-         tmp=fcc_i*exp(-fctc_i/Tloc)
-         FC=FC+tmp
-         dlnFCdT=dlnFCdT+tmp*fctc_i/(Tloc*Tloc)
-         dlnFCdT=dlnFCdT/FC
-      end subroutine fc_reaction_compute_dlnFCdT
-
-      ! ------------------------------------------------------------------------------------------------ !
-      ! ================================================ !
-      ! Used by finitechem_getjacobian
-      ! to compute one of the more involved terms
-      ! dealing with pressure dependent rate coefficients
-      ! ================================================ !
-      subroutine fc_reaction_compute_dGdT(redP,kc_oInf,Tloc,FC,dlnFCdT,dGdT)
-         implicit none
-         real(WP),intent(in) :: redP,kc_oInf,Tloc,FC
-         real(WP) :: J,H
-         real(WP) :: ctmp,ntmp,dtmp
-         real(WP),intent(out) :: dGdT,dlnFCdT
-         ntmp=0.75_WP-1.27_WP*dlog10(FC)
-         ctmp=-0.4_WP-0.67_WP*dlog10(FC)
-         dtmp=0.14_WP
-         J=log(redP)+ctmp
-         H=J/(ntmp-dtmp*J)
-         dlnFCdT=dlnFCdT/(1+H*H)
-         dGdT=-2*H/((1+H*H)**2)*(ntmp/((ntmp-dtmp*J)**2))*(kc_oInf-1/Tloc)
-      end subroutine fc_reaction_compute_dGdT
+      end subroutine get_rhs
 
    end subroutine react
 
@@ -726,8 +628,7 @@ contains
       integer :: i,j,k
       real(WP):: Tmix,Wmix
       real(WP), dimension(nspec) :: Ys
-      ! Original version
-      ! Compute the new density from the equation of state
+      ! Get density from the equation of state
       do k=this%cfg%kmino_,this%cfg%kmaxo_
          do j=this%cfg%jmino_,this%cfg%jmaxo_
             do i=this%cfg%imino_,this%cfg%imaxo_
@@ -755,7 +656,7 @@ contains
       real(WP) :: Tmix,buf
       real(WP), dimension(nspec) :: eta
       real(WP), dimension(nspec,nspec) :: phi
-      ! Compute the new viscosity from Wilke's method
+      ! Get viscosity from Wilke's method
       do k=this%cfg%kmino_,this%cfg%kmaxo_
          do j=this%cfg%jmino_,this%cfg%jmaxo_
             do i=this%cfg%imino_,this%cfg%imaxo_
@@ -796,7 +697,7 @@ contains
       real(WP) :: sum1,sum2,sumY,sumDiff
       real(WP), dimension(nspec) :: eta,cond,YoverW,Ys
       real(WP), dimension(nspec,nspec) :: invDij
-      ! Compute the new diffusivity
+      ! Get diffusivity
       do k=this%cfg%kmino_,this%cfg%kmaxo_
          do j=this%cfg%jmino_,this%cfg%jmaxo_
             do i=this%cfg%imino_,this%cfg%imaxo_
