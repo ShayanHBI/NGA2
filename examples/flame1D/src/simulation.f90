@@ -154,7 +154,6 @@ contains
          use string,              only: str_medium
          type(bcond),pointer :: mybc
          integer :: nsc,i,j,k,n
-         character(len=str_medium), dimension(:), allocatable :: spname
          ! Create finite chem object
          fc=finitechem(cfg=cfg,scheme=bquick,name='fc')
          fc%use_scheduler=.false.
@@ -166,30 +165,25 @@ contains
          ! Setup the solver
          call fc%setup(implicit_solver=ss)
          ! Allocate memory
-         allocate (spname(nspec))
          allocate (YTu(nspec+1)); YTu=0.0_WP
          allocate (YTb(nspec+1)); YTb=0.0_WP
          ! Read in info
          call param_read('Flame location',xFlame)
          call param_read('Pressure',fc%Pthermo)
-         ! Get species names
-         call fcmech_get_speciesnames(spname)
-         ! Unburned composition
-         do nsc=1,nspec
-            if (param_exists('Unburned '//trim(spname(nsc)))) then
-               call param_read('Unburned '//trim(spname(nsc)),YTu(nsc))
+         ! Unburned composition and temperature
+         do nsc=1,nspec+1
+            if (param_exists('Unburned '//trim(fc%SCname(nsc)))) then
+               call param_read('Unburned '//trim(fc%SCname(nsc)),YTu(nsc))
             end if
          end do
-         YTu=YTu/sum(YTu)
-         call param_read('Unburned temperature',YTu(nspec+1))
-         ! Burned composition
-         do nsc=1,nspec
-            if (param_exists('Burned '//trim(spname(nsc)))) then
-               call param_read('Burned '//trim(spname(nsc)),YTb(nsc))
+         YTu(1:nspec)=YTu(1:nspec)/sum(YTu(1:nspec))
+         ! Burned composition and temperature
+         do nsc=1,nspec+1
+            if (param_exists('Burned '//trim(fc%SCname(nsc)))) then
+               call param_read('Burned '//trim(fc%SCname(nsc)),YTb(nsc))
             end if
          end do
-         YTb=YTb/sum(YTb)
-         call param_read('Burned temperature',YTb(nspec+1))
+         YTb(1:nspec)=YTb(1:nspec)/sum(YTb(1:nspec))
          ! Initialize the flame
          do nsc=1,nspec+1
             do k=fc%cfg%kmin_,fc%cfg%kmax_
@@ -375,17 +369,8 @@ contains
                ! Reset scalar metric
                call fc%metric_reset()
 
-               ! Initialize source terms
-               ! fc%SRC=0.0_WP
-
-               ! Get pressure source term
-               ! call fc%pressure_source()
-
                ! Build mid-time scalar
                fc%SC=0.5_WP*(fc%SC+fc%SCold)
-
-               ! Get diffusion source terms
-               ! call fc%diffusive_source(time%dt)
 
                ! Get the scalar source terms
                call fc%get_src(time%dt)

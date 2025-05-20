@@ -92,7 +92,7 @@ contains
       type(finitechem) :: self
       class(config),target, intent(in) :: cfg
       integer, intent(in) :: scheme
-      character(len=*),optional :: name
+      character(len=*), optional :: name
       character(len=str_medium), dimension(nspec) :: names
       integer :: i,j,k
 
@@ -106,7 +106,7 @@ contains
       do i=1,nspec
          self%SCname(i)=names(i)
       end do
-      self%SCname(nspec+1)='T'
+      self%SCname(nspec+1)='temperature'
 
       ! Allocate variables
       allocate(self%visc(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));            self%visc=0.0_WP
