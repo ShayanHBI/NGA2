@@ -20,6 +20,9 @@ module finitechem_class
    logical :: use_jacanal=.false.
    logical :: use_lewis=.false.
 
+   ! Inverse molar mass of the species
+   real(WP), dimension(:), allocatable :: Winv
+
    !> Finite chemistry solver object definition
    type, extends(multivdscalar) :: finitechem
       
@@ -33,7 +36,6 @@ module finitechem_class
       real(WP), dimension(:,:,:),   allocatable :: visc                       !< Viscosity field
       real(WP), dimension(:,:,:,:), allocatable :: SRCchem                    !< Chemical source terms
       real(WP), dimension(:,:,:,:), allocatable :: SRC                        !< Total source terms for scalar equations
-      real(WP), dimension(:,:,:),   allocatable :: h                          !< Enthalpy
       real(WP), dimension(:,:,:),   allocatable :: lambda                     !< Thermal conductivity
       real(WP), dimension(:,:,:),   allocatable :: Cp                         !< Heat capacity
       
@@ -67,13 +69,11 @@ module finitechem_class
       procedure :: get_density
       procedure :: get_viscosity
       procedure :: get_diffusivity
-      procedure :: get_cpmix
-      procedure :: get_enthalpy
-      procedure :: get_Wmix
       procedure :: diffusive_source
       procedure :: pressure_source
       procedure :: update_pressure
       procedure :: get_src
+      procedure :: mixture_avg
       procedure :: get_max=>fc_get_max
 
    end type finitechem
@@ -90,8 +90,8 @@ contains
    function constructor(cfg,scheme,name) result(self)
       implicit none
       type(finitechem) :: self
-      class(config),target,intent(in) :: cfg
-      integer,intent(in) :: scheme
+      class(config),target, intent(in) :: cfg
+      integer, intent(in) :: scheme
       character(len=*),optional :: name
       character(len=str_medium), dimension(nspec) :: names
       integer :: i,j,k
@@ -112,9 +112,9 @@ contains
       allocate(self%visc(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));            self%visc=0.0_WP
       allocate(self%lambda(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));          self%lambda=0.0_WP
       allocate(self%Cp(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));              self%Cp=0.0_WP
-      allocate(self%h(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));               self%h=0.0_WP
       allocate(self%SRCchem(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_,nspec+1)); self%SRCchem=0.0_WP
       allocate(self%SRC(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_,nspec+1));     self%SRC=0.0_WP
+      allocate(Winv(nspec)); Winv=1.0_WP/W_sp
 
       ! Allocate finite difference gradient operators
       allocate (self%grdsc_xm(0:+1,self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_))
@@ -143,8 +143,8 @@ contains
    subroutine scheduler_init(this,bundleref)
       use mpi_f08, only: MPI_MAX,MPI_INTEGER
       implicit none
-      class(finitechem),intent(inout) :: this
-      real(WP),intent(in) :: bundleref
+      class(finitechem), intent(inout) :: this
+      real(WP), intent(in) :: bundleref
       integer :: ierr
       this%bundleref=bundleref
       this%nbundles=int((this%cfg%imax_-this%cfg%imin_+1)*(this%cfg%jmax_-this%cfg%jmin_+1)*(this%cfg%kmax_-this%cfg%kmin_+1)/this%bundleref)
@@ -166,8 +166,8 @@ contains
    !> Clip and rescale mass fractions
    subroutine clip(this,myY)
       implicit none
-      class(finitechem),intent(inout) :: this
-      real(WP),intent(inout), dimension(nspec) :: myY
+      class(finitechem), intent(inout) :: this
+      real(WP), dimension(nspec), intent(inout) :: myY
       myY=min(max(myY,0.0_WP),1.0_WP)
       myY=myY/sum(myY)
    end subroutine clip
@@ -176,12 +176,11 @@ contains
    !> Calculate reaction source terms
    subroutine react(this,dt)
       use parallel, only: MPI_REAL_WP
-      use mpi_f08, only: MPI_TAG,MPI_ANY_SOURCE,MPI_ANY_TAG,MPI_SOURCE,MPI_STATUS_SIZE,MPI_INTEGER,MPI_LOGICAL
+      use mpi_f08,  only: MPI_TAG,MPI_ANY_SOURCE,MPI_ANY_TAG,MPI_SOURCE,MPI_STATUS_SIZE,MPI_INTEGER,MPI_LOGICAL
       use messager, only: die
-      use,intrinsic :: ISO_C_BINDING, only: c_loc
       implicit none
-      class(finitechem),intent(inout) :: this
-      real(WP),intent(in) :: dt  !< Timestep size over which to advance
+      class(finitechem), intent(inout) :: this
+      real(WP), intent(in) :: dt
       integer :: nsc,i,j,k,myi,myj,myk
       real(WP), dimension(nspec+1) :: sol,solold
 
@@ -196,42 +195,35 @@ contains
       ! MPI
       integer, dimension(MPI_STATUS_SIZE) :: status
       integer :: ierr,iexit_master
-      ! List of particles to send out for direct integration
-      integer :: nDI
-      integer, dimension(:), pointer :: iDI
-      ! Temp variables to update particle properties
-      real(WP) :: rbuf,myw,mysv,myh
-      CHARACTER(LEN=30) :: Format
 
       ! Initialize with zeros
       this%SRCchem=0.0_WP
-      ! If only one processor,or if beginning of simulation,just do the work for all particles
-      if (.not.this%use_scheduler.or.this%cfg%nproc.eq.1) then
 
+      ! If only one processor or if beginning of simulation
+      if (.not.this%use_scheduler.or.this%cfg%nproc.eq.1) then
          do k=this%cfg%kmin_,this%cfg%kmax_
             do j=this%cfg%jmin_,this%cfg%jmax_
                do i=this%cfg%imin_,this%cfg%imax_
-                  sol(1:nspec)=min(max(this%SC(i,j,k,1:nspec),0.0_WP),1.0_WP)
-                  sol(1:nspec)=sol(1:nspec)/sum(sol(1:nspec))
+                  sol(1:nspec)=this%SC(i,j,k,1:nspec)
+                  ! Clip and renormalize
+                  call this%clip(sol(1:nspec))
                   sol(nspec+1)=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
+                  ! Remember old solution
                   solold=sol
-                  if (solold(sN2).gt.0.8_WP) cycle                        ! Package initial solution vector
-                  ! call this%clip(sol(1:nspec))
-                  ! Advance the chemical equations
+                  if (sol(sN2).gt.0.8_WP) cycle
+                  ! Advance the reactions
                   call get_sol(sol)
+                  ! Calculate the scalar chemical source terms
                   this%SRCchem(i,j,k,:)=sol-solold
                end do
             end do
          end do
-
          ! Sync
          do nsc=1,nspec+1
             call this%cfg%sync(this%SRCchem(:,:,:,nsc))
          end do
-
-         ! Stop there,no dynamic scheduling in this case
+         ! Stop there, no dynamic scheduling in this case
          return
-
       end if
 
       ! ! ------------------------------------------- !
@@ -596,18 +588,19 @@ contains
       ! Computes the chemical source term of the system (called by solver)
       subroutine get_rhs(n_,t_,mysol,rhs)
          implicit none
-         integer,intent(in) :: n_
-         real(WP),intent(in) :: t_
-         real(WP), dimension(n_),intent(in)  :: mysol
-         real(WP), dimension(n_),intent(out) :: rhs
+         integer, intent(in) :: n_
+         real(WP), intent(in) :: t_
+         real(WP), dimension(n_), intent(in)  :: mysol
+         real(WP), dimension(n_), intent(out) :: rhs
          real(WP) :: Cp_mix,Wmix,RHOmix
          real(WP), dimension(nspec) :: wdot
          ! Reset rhs
          rhs=0.0_WP
          ! Get W of mixture
-         call this%get_Wmix(mysol(1:nspec),Wmix)
+         Wmix=1.0_WP/this%mixture_avg(Winv,mysol(1:nspec))
          ! Get Cp of mixture and update hsp
-         call this%get_cpmix(mysol(1:nspec),mysol(nspec+1),Cp_mix)
+         call fcmech_thermodata(mysol(nspec+1))
+         Cp_mix=this%mixture_avg(Cpsp,mysol(1:nspec))
          ! Get RHO of mixture
          RHOmix=this%Pthermo*Wmix/(Rcst*mysol(nspec+1))
          ! Get the reaction source terms
@@ -624,7 +617,7 @@ contains
    !> Calculate mixture density
    subroutine get_density(this)
       implicit none
-      class(finitechem),intent(inout) :: this
+      class(finitechem), intent(inout) :: this
       integer :: i,j,k
       real(WP):: Tmix,Wmix
       real(WP), dimension(nspec) :: Ys
@@ -637,9 +630,8 @@ contains
                else
                   Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
                   Ys=this%SC(i,j,k,1:nspec)
-                  Ys=min(max(Ys,0.0_WP),1.0_WP)
-                  Ys=Ys/sum(Ys)
-                  call this%get_Wmix(Ys,Wmix)
+                  call this%clip(Ys)
+                  Wmix=1.0_WP/this%mixture_avg(Winv,Ys)
                   this%rho(i,j,k)=this%Pthermo*Wmix/(Rcst*Tmix)
                end if
             end do
@@ -651,7 +643,7 @@ contains
    !> Calculate mixture viscosity
    subroutine get_viscosity(this)
       implicit none
-      class(finitechem),intent(inout) :: this
+      class(finitechem), intent(inout) :: this
       integer  :: i,j,k,sc1,sc2
       real(WP) :: Tmix,buf
       real(WP), dimension(nspec) :: eta
@@ -691,7 +683,7 @@ contains
    !> Calculate species and thermal diffusivities
    subroutine get_diffusivity(this)
       implicit none
-      class(finitechem),intent(inout) :: this
+      class(finitechem), intent(inout) :: this
       integer  :: i,j,k,n
       real(WP) :: Wmix,Tmix
       real(WP) :: sum1,sum2,sumY,sumDiff
@@ -705,9 +697,8 @@ contains
                ! ---- Thermal diffusivity ---- !
                ! Mixture molar mass and temperature
                Ys=this%SC(i,j,k,1:nspec)
-               Ys=min(max(Ys,0.0_WP),1.0_WP)
-               Ys=Ys/sum(Ys)
-               call this%get_Wmix(Ys,Wmix)
+               call this%clip(Ys)
+               Wmix=1.0_WP/this%mixture_avg(Winv,Ys)
                Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
                ! Individual compounds viscosity
                call fcmech_get_viscosity(eta,Tmix)
@@ -718,7 +709,8 @@ contains
                sum2=Wmix*sum(Ys*cond/W_sp)
                this%lambda(i,j,k)=0.5_WP*(sum2+1.0_WP/sum1)
                ! Average Cp based on scalar field
-               call this%get_cpmix(Ys,Tmix,this%Cp(i,j,k))
+               call fcmech_thermodata(Tmix)
+               this%Cp(i,j,k)=this%mixture_avg(Cpsp,Ys)
                ! Thermal diffusivity for enthalpy
                !  this%diff(i,j,k,isc_ENTH)=this%lambda(i,j,k)/this%Cp(i,j,k)
                ! Thermal diffusivity for temperature
@@ -750,58 +742,15 @@ contains
       end do
    end subroutine get_diffusivity
 
-   
-   !> Calculate mixture specific heat capacity at constant pressure
-   subroutine get_cpmix(this,scalar,Tmix,Cp_mix)
-      implicit none
-      class(finitechem),intent(inout) :: this
-      real(WP), dimension(nspec),intent(in) :: scalar
-      real(WP),intent(in) :: Tmix
-      real(WP),intent(out) :: Cp_mix
-      call fcmech_thermodata(Tmix)
-      Cp_mix=sum(scalar*Cpsp)
-   end subroutine get_cpmix
-
-
-   !> Calculate mixture enthalpy
-   subroutine get_enthalpy(this)
-      implicit none
-      integer :: i,j,k,n
-      class(finitechem),intent(inout) :: this
-      this%h=0.0_WP
-      do k=this%cfg%kmino_,this%cfg%kmaxo_
-         do j=this%cfg%jmino_,this%cfg%jmaxo_
-            do i=this%cfg%imino_,this%cfg%imaxo_
-               call fcmech_thermodata(this%T(i,j,k))
-               do n=1,nspec
-                  this%h(i,j,k)=this%h(i,j,k)+hsp(n)*this%Y(i,j,k,n)
-               end do
-            end do
-         end do
-      end do
-   end subroutine get_enthalpy
-
-
-   !> Calculate mixture molar mass
-   subroutine get_Wmix(this,scalar,Wmix)
-      implicit none
-      class(finitechem),intent(inout) :: this
-      real(WP), dimension(nspec),intent(in) :: scalar
-      real(WP),intent(out) :: Wmix
-      real(WP), dimension(nspec) :: scalar_clip
-      scalar_clip=scalar!min(max(scalar,0.0_WP),1.0_WP)
-      Wmix=1.0_WP/sum(scalar_clip/W_sp)
-   end subroutine get_Wmix
-
 
    !> Calculate diffusion source terms
    subroutine diffusive_source(this,dt)
       implicit none
-      class(finitechem),intent(inout) :: this
+      class(finitechem), intent(inout) :: this
       real(WP), dimension(:,:,:), allocatable :: Wmix,Cpmix,DFX_SUM,DFY_SUM,DFZ_SUM
       real(WP), dimension(:,:,:), allocatable :: FX,FY,FZ
       real(WP), dimension(:,:,:,:), allocatable :: DFX,DFY,DFZ
-      real(WP),intent(in) :: dt
+      real(WP), intent(in) :: dt
       real(WP) :: Tmix,Ttmp,df1,df2,df3
       real(WP), dimension(nspec) :: Ys,hs,Cps
       integer :: i,j,k,nsc
@@ -834,8 +783,9 @@ contains
                else
                   Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
                   Ys=this%SC(i,j,k,1:nspec)
-                  call this%get_Wmix(Ys,Wmix(i,j,k))
-                  call this%get_cpmix(Ys,Tmix,Cpmix(i,j,k))
+                  Wmix(i,j,k)=1.0_WP/this%mixture_avg(Winv,Ys)
+                  call fcmech_thermodata(Tmix)
+                  Cpmix(i,j,k)=this%mixture_avg(Cpsp,Ys)
                end if
             end do
          end do
@@ -948,7 +898,7 @@ contains
    !> Calculate pressure source term
    subroutine pressure_source(this)
       implicit none
-      class(finitechem),intent(inout) :: this
+      class(finitechem), intent(inout) :: this
       real(WP) :: Cp_mix,Tmix
       integer :: i,j,k
       real(WP), dimension(nspec) :: Ys
@@ -959,7 +909,8 @@ contains
                if (this%mask(i,j,k).eq.1) cycle
                Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
                Ys=this%SC(i,j,k,1:nspec)
-               call this%get_cpmix(Ys,Tmix,Cp_mix)
+               call fcmech_thermodata(Tmix)
+               Cp_mix=this%mixture_avg(Cpsp,Ys)
                this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+(this%Pthermo-this%Pthermo_old)/Cp_mix
             end do
          end do
@@ -970,7 +921,7 @@ contains
    !> Update thermodynamic pressure and density
    subroutine update_pressure(this)
       implicit none
-      class(finitechem),intent(inout) :: this
+      class(finitechem), intent(inout) :: this
       integer :: i,j,k
       ! Save the old background pressure
       this%Pthermo_old=this%Pthermo
@@ -994,8 +945,8 @@ contains
    !> Calculate all the source terms
    subroutine get_src(this,dt)
       implicit none
-      class(finitechem),intent(inout) :: this
-      real(WP),intent(in) :: dt
+      class(finitechem), intent(inout) :: this
+      real(WP), intent(in) :: dt
       integer :: nsc
       ! Add chemical source terms
       do nsc=1,nspec+1
@@ -1008,12 +959,22 @@ contains
    end subroutine get_src
 
 
+   !> Calculate the mixture-averaged of a given quantity
+   function mixture_avg(this,input,Y)
+      implicit none
+      class(finitechem), intent(in) :: this
+      real(WP), dimension(nspec), intent(in) :: input,Y
+      real(WP) :: mixture_avg
+      mixture_avg=sum(Y*input)
+   end function mixture_avg
+
+
    !> Calculate the min and max of SC fields
    subroutine fc_get_max(this)
       use mpi_f08, only: MPI_ALLREDUCE,MPI_MAX,MPI_MIN
       use parallel, only: MPI_REAL_WP
       implicit none
-      class(finitechem),intent(inout) :: this
+      class(finitechem), intent(inout) :: this
       integer :: ierr,i,j,k,nsc
       real(WP) :: my_visc_max,my_visc_min,my_rhomax,my_rhomin,my_SCmax,my_SCmin,my_rhoSCmax,my_rhoSCmin,my_diff_max,my_diff_min
       my_SCmax=-huge(1.0_WP)
