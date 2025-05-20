@@ -38,13 +38,13 @@ Burned I24C7D1       : 0.000610
 Burned NEC7Y4        : 0.000010
 
 # Time integration
-Max timestep size :	3e-7
+Max timestep size :	1.5e-7
 Max cfl number    :	0.8
-Max time          : 2e-6 ! 2e-5
+Max time          : 2e-6
 Sub iterations    : 5
 
 # Pressure solver
-Pressure tolerance : 1e-10
+Pressure tolerance : 1e-12
 Pressure iteration : 50
 
 # Ensight output

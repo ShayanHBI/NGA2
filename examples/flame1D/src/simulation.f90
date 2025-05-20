@@ -204,9 +204,10 @@ contains
          end do
          call fc%apply_bcond(time%t,time%dt)
          ! Get fluid properties
+         call fc%get_molarMass()
+         call fc%get_Cp()
          call fc%get_density()
-         call fc%get_viscosity()
-         call fc%get_diffusivity()
+         call fc%get_visc_diff()
          ! Get monitoring quantities
          call fc%get_max()
       end block create_fc
@@ -372,6 +373,11 @@ contains
                ! Build mid-time scalar
                fc%SC=0.5_WP*(fc%SC+fc%SCold)
 
+               ! Update properties accordingly
+               call fc%get_molarMass()
+               call fc%get_Cp()
+               call fc%get_density()
+
                ! Get the scalar source terms
                call fc%get_src(time%dt)
 
@@ -449,10 +455,11 @@ contains
             end block scalar_solver
 
             ! ============ UPDATE PROPERTIES ====================
+            call fc%get_molarMass()
+            call fc%get_Cp()
             call fc%get_density()
             ! call fc%rescale_density()
-            call fc%get_viscosity()
-            call fc%get_diffusivity()
+            call fc%get_visc_diff()
             ! call fc%update_pressure()
             fs%rho=fc%rho
             fs%visc=fc%visc

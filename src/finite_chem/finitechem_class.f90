@@ -31,13 +31,11 @@ module finitechem_class
       real(WP) :: RHOmean,RHO_0
       
       ! Scalar variables
-      real(WP), dimension(:,:,:),   pointer     :: T                          !< Temperature
-      real(WP), dimension(:,:,:,:), pointer     :: Y                          !< Composition
       real(WP), dimension(:,:,:),   allocatable :: visc                       !< Viscosity field
       real(WP), dimension(:,:,:,:), allocatable :: SRCchem                    !< Chemical source terms
       real(WP), dimension(:,:,:,:), allocatable :: SRC                        !< Total source terms for scalar equations
-      real(WP), dimension(:,:,:),   allocatable :: lambda                     !< Thermal conductivity
-      real(WP), dimension(:,:,:),   allocatable :: Cp                         !< Heat capacity
+      real(WP), dimension(:,:,:),   allocatable :: Cp                         !< Mixture heat capacity
+      real(WP), dimension(:,:,:),   allocatable :: W                          !< Mixture molar mass
       
       ! Metrics
       real(WP), dimension(:,:,:,:), allocatable :: grdsc_xm,grdsc_ym,grdsc_zm !< Scalar gradient for SC at centers
@@ -66,11 +64,12 @@ module finitechem_class
       procedure :: scheduler_init
       procedure :: clip
       procedure :: react
+      procedure :: get_molarMass
+      procedure :: get_Cp
       procedure :: get_density
-      procedure :: get_viscosity
-      procedure :: get_diffusivity
-      procedure :: diffusive_source
-      procedure :: pressure_source
+      procedure :: get_visc_diff
+      procedure :: diffusive_src
+      procedure :: pressure_src
       procedure :: update_pressure
       procedure :: get_src
       procedure :: mixture_avg
@@ -110,8 +109,8 @@ contains
 
       ! Allocate variables
       allocate(self%visc(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));            self%visc=0.0_WP
-      allocate(self%lambda(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));          self%lambda=0.0_WP
       allocate(self%Cp(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));              self%Cp=0.0_WP
+      allocate(self%W(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_));               self%W=0.0_WP
       allocate(self%SRCchem(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_,nspec+1)); self%SRCchem=0.0_WP
       allocate(self%SRC(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_,nspec+1));     self%SRC=0.0_WP
       allocate(Winv(nspec)); Winv=1.0_WP/W_sp
@@ -131,10 +130,6 @@ contains
             end do
          end do
       end do
-
-      ! Pointers to composition and temperature
-      self%Y=>self%SC(:,:,:,1:nspec)
-      self%T=>self%SC(:,:,:,nspec+1)
 
    end function constructor
 
@@ -592,26 +587,57 @@ contains
          real(WP), intent(in) :: t_
          real(WP), dimension(n_), intent(in)  :: mysol
          real(WP), dimension(n_), intent(out) :: rhs
-         real(WP) :: Cp_mix,Wmix,RHOmix
          real(WP), dimension(nspec) :: wdot
          ! Reset rhs
          rhs=0.0_WP
-         ! Get W of mixture
-         Wmix=1.0_WP/this%mixture_avg(Winv,mysol(1:nspec))
-         ! Get Cp of mixture and update hsp
-         call fcmech_thermodata(mysol(nspec+1))
-         Cp_mix=this%mixture_avg(Cpsp,mysol(1:nspec))
-         ! Get RHO of mixture
-         RHOmix=this%Pthermo*Wmix/(Rcst*mysol(nspec+1))
          ! Get the reaction source terms
          call fcmech_get_wdot(this%Pthermo,mysol(nspec+1),mysol(1:nspec),wdot)
          ! Transform concentration into mass fraction
-         rhs(1:nspec)=wdot*W_sp/RHOmix
+         rhs(1:nspec)=wdot*W_sp/this%rho(i,j,k)
          ! Temperature rhs from change in concentration
-         rhs(nspec+1)=-sum(hsp*rhs(1:nspec))/Cp_mix
+         rhs(nspec+1)=-sum(hsp*rhs(1:nspec))/this%Cp(i,j,k)
       end subroutine get_rhs
 
    end subroutine react
+
+
+   !> Calculate mixture molar mass
+   subroutine get_molarMass(this)
+      implicit none
+      class(finitechem), intent(inout) :: this
+      integer :: i,j,k
+      real(WP), dimension(nspec) :: Y
+      do k=this%cfg%kmino_,this%cfg%kmaxo_
+         do j=this%cfg%jmino_,this%cfg%jmaxo_
+            do i=this%cfg%imino_,this%cfg%imaxo_
+               Y=this%SC(i,j,k,1:nspec)
+               call this%clip(Y)
+               this%W(i,j,k)=1.0_WP/this%mixture_avg(Winv,Y)
+            end do
+         end do
+      end do
+   end subroutine get_molarMass
+
+
+   !> Calculate mixture heat capacity at constant pressure
+   subroutine get_Cp(this)
+      implicit none
+      class(finitechem), intent(inout) :: this
+      integer :: i,j,k
+      real(WP):: T
+      real(WP), dimension(nspec) :: Y
+      do k=this%cfg%kmino_,this%cfg%kmaxo_
+         do j=this%cfg%jmino_,this%cfg%jmaxo_
+            do i=this%cfg%imino_,this%cfg%imaxo_
+               Y=this%SC(i,j,k,1:nspec)
+               call this%clip(Y)
+               T=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
+               call fcmech_thermodata(T)
+               this%Cp(i,j,k)=this%mixture_avg(Cpsp,Y)
+            end do
+         end do
+      end do
+   end subroutine get_Cp
 
    
    !> Calculate mixture density
@@ -619,20 +645,15 @@ contains
       implicit none
       class(finitechem), intent(inout) :: this
       integer :: i,j,k
-      real(WP):: Tmix,Wmix
-      real(WP), dimension(nspec) :: Ys
-      ! Get density from the equation of state
+      real(WP):: T
       do k=this%cfg%kmino_,this%cfg%kmaxo_
          do j=this%cfg%jmino_,this%cfg%jmaxo_
             do i=this%cfg%imino_,this%cfg%imaxo_
                if (this%mask(i,j,k).eq.1) then
                   this%rho(i,j,k)=1000.0_WP
                else
-                  Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
-                  Ys=this%SC(i,j,k,1:nspec)
-                  call this%clip(Ys)
-                  Wmix=1.0_WP/this%mixture_avg(Winv,Ys)
-                  this%rho(i,j,k)=this%Pthermo*Wmix/(Rcst*Tmix)
+                  T=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
+                  this%rho(i,j,k)=this%Pthermo*this%W(i,j,k)/(Rcst*T)
                end if
             end do
          end do
@@ -640,130 +661,74 @@ contains
    end subroutine get_density
 
 
-   !> Calculate mixture viscosity
-   subroutine get_viscosity(this)
+   !> Calculate mixture viscosity and diffusivity
+   subroutine get_visc_diff(this)
       implicit none
       class(finitechem), intent(inout) :: this
-      integer  :: i,j,k,sc1,sc2
-      real(WP) :: Tmix,buf
-      real(WP), dimension(nspec) :: eta
+      integer  :: i,j,k,nsc1,nsc2
+      real(WP) :: T,buf
+      real(WP) :: lambda1,lambda2
+      real(WP), dimension(nspec) :: Y,eta,cond
       real(WP), dimension(nspec,nspec) :: phi
-      ! Get viscosity from Wilke's method
       do k=this%cfg%kmino_,this%cfg%kmaxo_
          do j=this%cfg%jmino_,this%cfg%jmaxo_
             do i=this%cfg%imino_,this%cfg%imaxo_
                if (this%mask(i,j,k).eq.1) cycle
+               ! Composition and temperature
+               Y=this%SC(i,j,k,1:nspec)
+               call this%clip(Y)
+               T=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
                ! Pure compounds viscosity
-               Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
-               call fcmech_get_viscosity(eta,Tmix)
+               call fcmech_get_viscosity(eta,T)
                ! Mixing coefficients
-               do sc2=1,nspec
-                  do sc1=1,nspec
-                     if (sc1.eq.sc2) then
-                        phi(sc1,sc2)=1.0_WP
+               do nsc2=1,nspec
+                  do nsc1=1,nspec
+                     if (nsc1.eq.nsc2) then
+                        phi(nsc1,nsc2)=1.0_WP
                      else
-                        buf=sqrt(eta(sc1)/eta(sc2))*(W_sp(sc2)/W_sp(sc1))**0.25_WP
-                        phi(sc1,sc2)=(1.0_WP+buf)**2/sqrt(8.0_WP+8.0_WP*W_sp(sc1)/W_sp(sc2))
+                        buf=sqrt(eta(nsc1)/eta(nsc2))*(W_sp(nsc2)/W_sp(nsc1))**0.25_WP
+                        phi(nsc1,nsc2)=(1.0_WP+buf)**2/sqrt(8.0_WP+8.0_WP*W_sp(nsc1)/W_sp(nsc2))
                      end if
                   end do
                end do
-               ! Mixing rule
+               ! Get viscosity from Wilke's method
                this%visc(i,j,k)=0.0_WP
-               do sc1=1,nspec
-                  if (this%SC(i,j,k,1+sc1-1).le.0.0_WP) cycle
-                  buf=sum(this%SC(i,j,k,1:nspec)*phi(sc1,:)/W_sp)
-                  this%visc(i,j,k)=this%visc(i,j,k)+this%SC(i,j,k,1+sc1-1)*eta(sc1)/(W_sp(sc1)*buf)
+               do nsc1=1,nspec
+                  if (this%SC(i,j,k,1+nsc1-1).le.0.0_WP) cycle
+                  buf=sum(this%SC(i,j,k,1:nspec)*phi(nsc1,:)/W_sp)
+                  this%visc(i,j,k)=this%visc(i,j,k)+this%SC(i,j,k,1+nsc1-1)*eta(nsc1)/(W_sp(nsc1)*buf)
                end do
-            end do
-         end do
-      end do
-   end subroutine get_viscosity
-
-
-   !> Calculate species and thermal diffusivities
-   subroutine get_diffusivity(this)
-      implicit none
-      class(finitechem), intent(inout) :: this
-      integer  :: i,j,k,n
-      real(WP) :: Wmix,Tmix
-      real(WP) :: sum1,sum2,sumY,sumDiff
-      real(WP), dimension(nspec) :: eta,cond,YoverW,Ys
-      real(WP), dimension(nspec,nspec) :: invDij
-      ! Get diffusivity
-      do k=this%cfg%kmino_,this%cfg%kmaxo_
-         do j=this%cfg%jmino_,this%cfg%jmaxo_
-            do i=this%cfg%imino_,this%cfg%imaxo_
-               if (this%mask(i,j,k).eq.1) cycle
-               ! ---- Thermal diffusivity ---- !
-               ! Mixture molar mass and temperature
-               Ys=this%SC(i,j,k,1:nspec)
-               call this%clip(Ys)
-               Wmix=1.0_WP/this%mixture_avg(Winv,Ys)
-               Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
-               ! Individual compounds viscosity
-               call fcmech_get_viscosity(eta,Tmix)
-               ! Individual compounds viscosity
-               call fcmech_get_conductivity(cond,Tmix,eta)
+               ! Individual compounds conductivity
+               call fcmech_get_conductivity(cond,T,eta)
                ! Mixture averaged thermal conductivity
-               sum1=Wmix*sum(Ys/(cond*W_sp))
-               sum2=Wmix*sum(Ys*cond/W_sp)
-               this%lambda(i,j,k)=0.5_WP*(sum2+1.0_WP/sum1)
-               ! Average Cp based on scalar field
-               call fcmech_thermodata(Tmix)
-               this%Cp(i,j,k)=this%mixture_avg(Cpsp,Ys)
-               ! Thermal diffusivity for enthalpy
-               !  this%diff(i,j,k,isc_ENTH)=this%lambda(i,j,k)/this%Cp(i,j,k)
-               ! Thermal diffusivity for temperature
-               ! this%diff(i,j,k,nspec+1)=this%lambda(i,j,k)/this%Cp(i,j,k)
-               this%diff(i,j,k,:)=this%lambda(i,j,k)/this%Cp(i,j,k)
-               ! ! ---- Species diffusivity ---- !
-               ! ! Inverse of binary diffusion coefficients
-               ! call fcmech_get_invDij(invDij,Tmix,this%Pthermo)
-               ! ! Constant terms
-               ! Ys=this%SC(i,j,k,1:nspec)
-               ! YOverW=Ys/W_sp
-               ! sumY=sum(Ys)
-               ! ! Compute mixture-average diffusion coefficient for each species
-               ! do n=1,nspec
-               !    ! Denominator
-               !    sumDiff=sum(YOverW*invDij(n,:))
-               !    if (sumDiff.gt.1.0e-15_WP) then
-               !       ! Diffusion is well defined
-               !       this%diff(i,j,k,n)=(sumY-Ys(n))/(Wmix*sumDiff);
-               !    else
-               !       ! Diffusion is ill defined
-               !       sumDiff=sum(invDij(n,:)/W_sp)
-               !       this%diff(i,j,k,n)=(real(nspec,WP))/(Wmix*sumDiff)
-               !    end if
-               !    this%diff(i,j,k,n)=this%rho(i,j,k)*this%diff(i,j,k,n)
-               ! end do
+               lambda1=this%W(i,j,k)*sum(Y/(cond*W_sp))
+               lambda2=this%W(i,j,k)*sum(Y*cond/W_sp)
+               ! Unity Lewis number
+               this%diff(i,j,k,:)=0.5_WP*(lambda2+1.0_WP/lambda1)/this%Cp(i,j,k)
             end do
          end do
       end do
-   end subroutine get_diffusivity
+   end subroutine get_visc_diff
 
 
    !> Calculate diffusion source terms
-   subroutine diffusive_source(this,dt)
+   subroutine diffusive_src(this,dt)
       implicit none
       class(finitechem), intent(inout) :: this
-      real(WP), dimension(:,:,:), allocatable :: Wmix,Cpmix,DFX_SUM,DFY_SUM,DFZ_SUM
-      real(WP), dimension(:,:,:), allocatable :: FX,FY,FZ
+      real(WP), dimension(:,:,:),   allocatable :: DFX_SUM,DFY_SUM,DFZ_SUM
+      real(WP), dimension(:,:,:),   allocatable :: FX,FY,FZ
       real(WP), dimension(:,:,:,:), allocatable :: DFX,DFY,DFZ
       real(WP), intent(in) :: dt
-      real(WP) :: Tmix,Ttmp,df1,df2,df3
-      real(WP), dimension(nspec) :: Ys,hs,Cps
+      real(WP) :: df1,df2,df3
       integer :: i,j,k,nsc
 
-      ! Allocate arrays
+      ! Allocate flux arrays
       allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(FY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(FZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(DFX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_,1:nspec))
       allocate(DFY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_,1:nspec))
       allocate(DFZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_,1:nspec))
-      allocate(Wmix(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-      allocate(Cpmix(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(DFX_SUM(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(DFY_SUM(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(DFZ_SUM(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
@@ -773,33 +738,15 @@ contains
       DFY=0.0_WP
       DFZ=0.0_WP
 
-      ! Get Wmix and Cpmix fields
-      do k=this%cfg%kmino_,this%cfg%kmaxo_
-         do j=this%cfg%jmino_,this%cfg%jmaxo_
-            do i=this%cfg%imino_,this%cfg%imaxo_
-               if (this%mask(i,j,k).eq.1) then
-                  Wmix(i,j,k)=1.0_WP
-                  Cpmix(i,j,k)=1.0_WP
-               else
-                  Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
-                  Ys=this%SC(i,j,k,1:nspec)
-                  Wmix(i,j,k)=1.0_WP/this%mixture_avg(Winv,Ys)
-                  call fcmech_thermodata(Tmix)
-                  Cpmix(i,j,k)=this%mixture_avg(Cpsp,Ys)
-               end if
-            end do
-         end do
-      end do
-
       ! Form species diffusive fluxes
       do nsc=1,nspec
          do k=this%cfg%kmin_,this%cfg%kmax_+1
             do j=this%cfg%jmin_,this%cfg%jmax_+1
                do i=this%cfg%imin_,this%cfg%imax_+1
                   ! Molar diffusion correction-DIFF/Wmix*Yi*grad(Wmix)
-                  FX(i,j,k)=sum(this%itp_x(:,i,j,k)*this%diff(i-1:i,j,k,nsc)/Wmix(i-1:i,j,k))*sum(this%itp_x(:,i,j,k)*this%SC(i-1:i,j,k,nsc))*sum(this%grdsc_x(:,i,j,k)*Wmix(i-1:i,j,k))
-                  FY(i,j,k)=sum(this%itp_y(:,i,j,k)*this%diff(i,j-1:j,k,nsc)/Wmix(i,j-1:j,k))*sum(this%itp_y(:,i,j,k)*this%SC(i,j-1:j,k,nsc))*sum(this%grdsc_y(:,i,j,k)*Wmix(i,j-1:j,k))
-                  FZ(i,j,k)=sum(this%itp_z(:,i,j,k)*this%diff(i,j,k-1:k,nsc)/Wmix(i,j,k-1:k))*sum(this%itp_z(:,i,j,k)*this%SC(i,j,k-1:k,nsc))*sum(this%grdsc_z(:,i,j,k)*Wmix(i,j,k-1:k))
+                  FX(i,j,k)=sum(this%itp_x(:,i,j,k)*this%diff(i-1:i,j,k,nsc)/this%W(i-1:i,j,k))*sum(this%itp_x(:,i,j,k)*this%SC(i-1:i,j,k,nsc))*sum(this%grdsc_x(:,i,j,k)*this%W(i-1:i,j,k))
+                  FY(i,j,k)=sum(this%itp_y(:,i,j,k)*this%diff(i,j-1:j,k,nsc)/this%W(i,j-1:j,k))*sum(this%itp_y(:,i,j,k)*this%SC(i,j-1:j,k,nsc))*sum(this%grdsc_y(:,i,j,k)*this%W(i,j-1:j,k))
+                  FZ(i,j,k)=sum(this%itp_z(:,i,j,k)*this%diff(i,j,k-1:k,nsc)/this%W(i,j,k-1:k))*sum(this%itp_z(:,i,j,k)*this%SC(i,j,k-1:k,nsc))*sum(this%grdsc_z(:,i,j,k)*this%W(i,j,k-1:k))
                   ! Store full diffusive flux
                   DFX(i,j,k,nsc)=FX(i,j,k)+sum(this%itp_x(:,i,j,k)*this%diff(i-1:i,j,k,nsc))*sum(this%grdsc_x(:,i,j,k)*this%SC(i-1:i,j,k,nsc))
                   DFY(i,j,k,nsc)=FY(i,j,k)+sum(this%itp_y(:,i,j,k)*this%diff(i,j-1:j,k,nsc))*sum(this%grdsc_y(:,i,j,k)*this%SC(i,j-1:j,k,nsc))
@@ -861,61 +808,55 @@ contains
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
             do i=this%cfg%imin_,this%cfg%imax_
-               this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt*this%diff(i,j,k,nspec+1)/Cpmix(i,j,k)*(sum(this%grdsc_xm(:,i,j,k)*Cpmix(i:i+1,j,k))*sum(this%grdsc_xm(:,i,j,k)*this%SC(i:i+1,j,k,nspec+1)) &
-               &                                                                                        +sum(this%grdsc_ym(:,i,j,k)*Cpmix(i,j:j+1,k))*sum(this%grdsc_ym(:,i,j,k)*this%SC(i,j:j+1,k,nspec+1)) &
-               &                                                                                        +sum(this%grdsc_zm(:,i,j,k)*Cpmix(i,j,k:k+1))*sum(this%grdsc_zm(:,i,j,k)*this%SC(i,j,k:k+1,nspec+1)))
+               this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt*this%diff(i,j,k,nspec+1)/this%Cp(i,j,k)*(sum(this%grdsc_xm(:,i,j,k)*this%Cp(i:i+1,j,k))*sum(this%grdsc_xm(:,i,j,k)*this%SC(i:i+1,j,k,nspec+1)) &
+               &                                                                                          +sum(this%grdsc_ym(:,i,j,k)*this%Cp(i,j:j+1,k))*sum(this%grdsc_ym(:,i,j,k)*this%SC(i,j:j+1,k,nspec+1)) &
+               &                                                                                          +sum(this%grdsc_zm(:,i,j,k)*this%Cp(i,j,k:k+1))*sum(this%grdsc_zm(:,i,j,k)*this%SC(i,j,k:k+1,nspec+1)))
             end do
          end do
       end do
 
-      ! Update temperature source terms
+      ! Update temperature source term
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
             do i=this%cfg%imin_,this%cfg%imax_
                if (this%mask(i,j,k).eq.1) cycle
                ! Update Cp of species
-               call fcmech_get_thermodata(hs,Cps,this%SC(i,j,k,nspec+1))
+               call fcmech_thermodata(this%SC(i,j,k,nspec+1))
                ! Loop over species and compute temperature flux-sum(Cpsp*DF.grad(T))/Cpmix
                df1=0.0_WP; df2=0.0_WP; df3=0.0_WP
                do nsc=1,nspec
-                  df1=df1+Cps(nsc)*sum(this%itp_x(:,i,j,k)*DFX(i-1:i,j,k,nsc))
-                  df2=df2+Cps(nsc)*sum(this%itp_y(:,i,j,k)*DFY(i,j-1:j,k,nsc))
-                  df3=df3+Cps(nsc)*sum(this%itp_z(:,i,j,k)*DFZ(i,j,k-1:k,nsc))
+                  df1=df1+Cpsp(nsc)*sum(this%itp_x(:,i,j,k)*DFX(i-1:i,j,k,nsc))
+                  df2=df2+Cpsp(nsc)*sum(this%itp_y(:,i,j,k)*DFY(i,j-1:j,k,nsc))
+                  df3=df3+Cpsp(nsc)*sum(this%itp_z(:,i,j,k)*DFZ(i,j,k-1:k,nsc))
                end do
                ! Temperature source
-               this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt/Cpmix(i,j,k)*(df1*sum(this%grdsc_xm(:,i,j,k)*this%SC(i:i+1,j,k,nspec+1)) &
-               &                                                               +df2*sum(this%grdsc_ym(:,i,j,k)*this%SC(i,j:j+1,k,nspec+1)) &
-               &                                                               +df3*sum(this%grdsc_zm(:,i,j,k)*this%SC(i,j,k:k+1,nspec+1)))
+               this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt/this%Cp(i,j,k)*(df1*sum(this%grdsc_xm(:,i,j,k)*this%SC(i:i+1,j,k,nspec+1)) &
+               &                                                                 +df2*sum(this%grdsc_ym(:,i,j,k)*this%SC(i,j:j+1,k,nspec+1)) &
+               &                                                                 +df3*sum(this%grdsc_zm(:,i,j,k)*this%SC(i,j,k:k+1,nspec+1)))
             end do
          end do
       end do
 
-      ! Release memory
-      deallocate (FX,FY,FZ,DFX,DFY,DFZ,Cpmix,Wmix,DFX_SUM,DFY_SUM,DFZ_SUM)
-   end subroutine diffusive_source
+      ! Deallocate flux arrays
+      deallocate (FX,FY,FZ,DFX,DFY,DFZ,DFX_SUM,DFY_SUM,DFZ_SUM)
+   end subroutine diffusive_src
 
 
    !> Calculate pressure source term
-   subroutine pressure_source(this)
+   subroutine pressure_src(this)
       implicit none
       class(finitechem), intent(inout) :: this
-      real(WP) :: Cp_mix,Tmix
       integer :: i,j,k
-      real(WP), dimension(nspec) :: Ys
       ! Compute pressure source term
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
             do i=this%cfg%imin_,this%cfg%imax_
                if (this%mask(i,j,k).eq.1) cycle
-               Tmix=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
-               Ys=this%SC(i,j,k,1:nspec)
-               call fcmech_thermodata(Tmix)
-               Cp_mix=this%mixture_avg(Cpsp,Ys)
-               this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+(this%Pthermo-this%Pthermo_old)/Cp_mix
+               this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+(this%Pthermo-this%Pthermo_old)/this%Cp(i,j,k)
             end do
          end do
       end do
-   end subroutine pressure_source
+   end subroutine pressure_src
 
 
    !> Update thermodynamic pressure and density
@@ -953,9 +894,9 @@ contains
          this%SRC(:,:,:,nsc)=this%rho*this%SRCchem(:,:,:,nsc)
       end do
       ! Get pressure source term
-      ! call this%pressure_source()
+      ! call this%pressure_src()
       ! Get diffusion source terms
-      call this%diffusive_source(dt)
+      call this%diffusive_src(dt)
    end subroutine get_src
 
 
