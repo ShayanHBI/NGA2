@@ -38,7 +38,7 @@ module finitechem_class
       real(WP), dimension(:,:,:),   allocatable :: W                          !< Mixture molar mass
       
       ! Metrics
-      real(WP), dimension(:,:,:,:), allocatable :: grdsc_xm,grdsc_ym,grdsc_zm !< Scalar gradient for SC at centers
+      real(WP), dimension(:,:,:,:), allocatable :: grdsc_xm,grdsc_ym,grdsc_zm !< Scalar gradient for SC at cell centers
       logical :: use_explicit_try=.false.
       
       ! Monitoring quantities
@@ -121,12 +121,15 @@ contains
       allocate (self%grdsc_zm(0:+1,self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_))
 
       ! Create gradient coefficients to cell faces
-      do k=self%cfg%kmin_,self%cfg%kmax_+1
-         do j=self%cfg%jmin_,self%cfg%jmax_+1
-            do i=self%cfg%imin_,self%cfg%imax_+1
-               self%grdsc_xm(:,i,j,k)=self%cfg%dxi(i)*[-1.0_WP,+1.0_WP] !< FD gradient of SC in x from [xm,ym,zm] to [x,ym,zm]
-               self%grdsc_ym(:,i,j,k)=self%cfg%dyi(j)*[-1.0_WP,+1.0_WP] !< FD gradient of SC in y from [xm,ym,zm] to [xm,y,zm]
-               self%grdsc_zm(:,i,j,k)=self%cfg%dzi(k)*[-1.0_WP,+1.0_WP] !< FD gradient of SC in z from [xm,ym,zm] to [xm,ym,z]
+      do k=self%cfg%kmin_,self%cfg%kmax_
+         do j=self%cfg%jmin_,self%cfg%jmax_
+            do i=self%cfg%imin_,self%cfg%imax_
+               self%grdsc_xm(:,i,j,k)=self%cfg%dxi(i)*[-1.0_WP,+1.0_WP]
+               self%grdsc_ym(:,i,j,k)=self%cfg%dyi(j)*[-1.0_WP,+1.0_WP]
+               self%grdsc_zm(:,i,j,k)=self%cfg%dzi(k)*[-1.0_WP,+1.0_WP]
+               ! self%grdsc_xm(:,i,j,k)=[-1.0_WP,+1.0_WP]/(self%cfg%xm(i+1)-self%cfg%xm(i-1))
+               ! self%grdsc_ym(:,i,j,k)=[-1.0_WP,+1.0_WP]/(self%cfg%ym(j+1)-self%cfg%ym(j-1))
+               ! self%grdsc_zm(:,i,j,k)=[-1.0_WP,+1.0_WP]/(self%cfg%zm(k+1)-self%cfg%zm(k-1))
             end do
          end do
       end do
@@ -721,6 +724,9 @@ contains
       real(WP), intent(in) :: dt
       real(WP) :: df1,df2,df3
       integer :: i,j,k,nsc
+      real(WP) :: grdm,grdp
+      real(WP) :: Cp_grdX,Cp_grdY,Cp_grdZ
+      real(WP) :: T_grdX,T_grdY,T_grdZ
 
       ! Allocate flux arrays
       allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
@@ -802,6 +808,8 @@ contains
                end do
             end do
          end do
+         ! Sync
+         call this%cfg%sync(this%SRC(:,:,:,nsc))
       end do
 
       ! Form thermal diffusion correction-lambda/Cp^2*grad(Cpmix).grad(T)
@@ -811,6 +819,25 @@ contains
                this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt*this%diff(i,j,k,nspec+1)/this%Cp(i,j,k)*(sum(this%grdsc_xm(:,i,j,k)*this%Cp(i:i+1,j,k))*sum(this%grdsc_xm(:,i,j,k)*this%SC(i:i+1,j,k,nspec+1)) &
                &                                                                                          +sum(this%grdsc_ym(:,i,j,k)*this%Cp(i,j:j+1,k))*sum(this%grdsc_ym(:,i,j,k)*this%SC(i,j:j+1,k,nspec+1)) &
                &                                                                                          +sum(this%grdsc_zm(:,i,j,k)*this%Cp(i,j,k:k+1))*sum(this%grdsc_zm(:,i,j,k)*this%SC(i,j,k:k+1,nspec+1)))
+               ! grdm=this%cfg%dxmi(i  )*(this%Cp(i  ,j,k)-this%Cp(i-1,j,k))
+               ! grdp=this%cfg%dxmi(i+1)*(this%Cp(i+1,j,k)-this%Cp(i  ,j,k))
+               ! Cp_grdX=minmod(grdm,grdp)
+               ! grdm=this%cfg%dymi(j  )*(this%Cp(i,j  ,k)-this%Cp(i,j-1,k))
+               ! grdp=this%cfg%dymi(j+1)*(this%Cp(i,j+1,k)-this%Cp(i,j  ,k))
+               ! Cp_grdY=minmod(grdm,grdp)
+               ! grdm=this%cfg%dzmi(k  )*(this%Cp(i,j,k  )-this%Cp(i,j,k-1))
+               ! grdp=this%cfg%dzmi(k+1)*(this%Cp(i,j,k+1)-this%Cp(i,j,k  ))
+               ! Cp_grdZ=minmod(grdm,grdp)
+               ! grdm=this%cfg%dxmi(i  )*(this%SC(i  ,j,k,nspec+1)-this%SC(i-1,j,k,nspec+1))
+               ! grdp=this%cfg%dxmi(i+1)*(this%SC(i+1,j,k,nspec+1)-this%SC(i  ,j,k,nspec+1))
+               ! T_grdX=minmod(grdm,grdp)
+               ! grdm=this%cfg%dymi(j  )*(this%SC(i,j  ,k,nspec+1)-this%SC(i,j-1,k,nspec+1))
+               ! grdp=this%cfg%dymi(j+1)*(this%SC(i,j+1,k,nspec+1)-this%SC(i,j  ,k,nspec+1))
+               ! T_grdY=minmod(grdm,grdp)
+               ! grdm=this%cfg%dzmi(k  )*(this%SC(i,j,k  ,nspec+1)-this%SC(i,j,k-1,nspec+1))
+               ! grdp=this%cfg%dzmi(k+1)*(this%SC(i,j,k+1,nspec+1)-this%SC(i,j,k  ,nspec+1))
+               ! T_grdZ=minmod(grdm,grdp)
+               ! this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt*this%diff(i,j,k,nspec+1)/this%Cp(i,j,k)*(Cp_grdX*T_grdX+Cp_grdY*T_grdY+Cp_grdZ*T_grdZ)
             end do
          end do
       end do
@@ -833,12 +860,43 @@ contains
                this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt/this%Cp(i,j,k)*(df1*sum(this%grdsc_xm(:,i,j,k)*this%SC(i:i+1,j,k,nspec+1)) &
                &                                                                 +df2*sum(this%grdsc_ym(:,i,j,k)*this%SC(i,j:j+1,k,nspec+1)) &
                &                                                                 +df3*sum(this%grdsc_zm(:,i,j,k)*this%SC(i,j,k:k+1,nspec+1)))
+               ! grdm=this%cfg%dxmi(i  )*(this%SC(i  ,j,k,nspec+1)-this%SC(i-1,j,k,nspec+1))
+               ! grdp=this%cfg%dxmi(i+1)*(this%SC(i+1,j,k,nspec+1)-this%SC(i  ,j,k,nspec+1))
+               ! T_grdX=minmod(grdm,grdp)
+               ! grdm=this%cfg%dymi(j  )*(this%SC(i,j  ,k,nspec+1)-this%SC(i,j-1,k,nspec+1))
+               ! grdp=this%cfg%dymi(j+1)*(this%SC(i,j+1,k,nspec+1)-this%SC(i,j  ,k,nspec+1))
+               ! T_grdY=minmod(grdm,grdp)
+               ! grdm=this%cfg%dzmi(k  )*(this%SC(i,j,k  ,nspec+1)-this%SC(i,j,k-1,nspec+1))
+               ! grdp=this%cfg%dzmi(k+1)*(this%SC(i,j,k+1,nspec+1)-this%SC(i,j,k  ,nspec+1))
+               ! T_grdZ=minmod(grdm,grdp)
+               ! this%SRC(i,j,k,nspec+1)=this%SRC(i,j,k,nspec+1)+dt/this%Cp(i,j,k)*(df1*T_grdX+df2*T_grdY+df3*T_grdZ)
             end do
          end do
       end do
+      ! Sync
+      call this%cfg%sync(this%SRC(:,:,:,nspec+1))
 
       ! Deallocate flux arrays
       deallocate (FX,FY,FZ,DFX,DFY,DFZ,DFX_SUM,DFY_SUM,DFZ_SUM)
+
+   contains
+
+      !> Minmod gradient
+      function minmod(g1,g2) result(g)
+         implicit none
+         real(WP), intent(in) :: g1,g2
+         real(WP) :: g
+         if (g1*g2.le.0.0_WP) then
+            g=0.0_WP
+         else
+            if (abs(g1).lt.abs(g2)) then
+               g=g1
+            else
+               g=g2
+            end if
+         end if
+      end function minmod
+
    end subroutine diffusive_src
 
 
