@@ -162,12 +162,12 @@ contains
 
 
    !> Clip and rescale mass fractions
-   subroutine clip(this,myY)
+   subroutine clip(this,Y)
       implicit none
       class(finitechem), intent(inout) :: this
-      real(WP), dimension(nspec), intent(inout) :: myY
-      myY=min(max(myY,0.0_WP),1.0_WP)
-      myY=myY/sum(myY)
+      real(WP), dimension(nspec), intent(inout) :: Y
+      Y=min(max(Y,0.0_WP),1.0_WP)
+      Y=Y/sum(Y)
    end subroutine clip
 
 
@@ -591,14 +591,22 @@ contains
          real(WP), dimension(n_), intent(in)  :: mysol
          real(WP), dimension(n_), intent(out) :: rhs
          real(WP), dimension(nspec) :: wdot
-         ! Reset rhs
+         real(WP) :: W,rho,Cp
+         ! Reset the rhs
          rhs=0.0_WP
+         ! Update the mixture molar mass
+         W=1.0_WP/this%mixture_avg(Winv,mysol(1:nspec))
+         ! Update the mixture heat capacity
+         call fcmech_thermodata(mysol(nspec+1))
+         Cp=this%mixture_avg(Cpsp,mysol(1:nspec))
+         ! Update the mixture density
+         rho=this%Pthermo*W/(Rcst*mysol(nspec+1))
          ! Get the reaction source terms
          call fcmech_get_wdot(this%Pthermo,mysol(nspec+1),mysol(1:nspec),wdot)
          ! Transform concentration into mass fraction
-         rhs(1:nspec)=wdot*W_sp/this%rho(i,j,k)
+         rhs(1:nspec)=wdot*W_sp/rho
          ! Temperature rhs from change in concentration
-         rhs(nspec+1)=-sum(hsp*rhs(1:nspec))/this%Cp(i,j,k)
+         rhs(nspec+1)=-sum(hsp*rhs(1:nspec))/Cp
       end subroutine get_rhs
 
    end subroutine react
@@ -743,6 +751,10 @@ contains
       DFX=0.0_WP
       DFY=0.0_WP
       DFZ=0.0_WP
+
+      ! Get the molar mass and the heat capacity
+      call this%get_molarMass()
+      call this%get_Cp()
 
       ! Form species diffusive fluxes
       do nsc=1,nspec

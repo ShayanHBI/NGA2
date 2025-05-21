@@ -373,11 +373,6 @@ contains
                ! Build mid-time scalar
                fc%SC=0.5_WP*(fc%SC+fc%SCold)
 
-               ! Update properties accordingly
-               call fc%get_molarMass()
-               call fc%get_Cp()
-               call fc%get_density()
-
                ! Get the scalar source terms
                call fc%get_src(time%dt)
 
