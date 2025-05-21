@@ -14,7 +14,10 @@ gas.TP = 700.0, 3.4e6
 width = 3e-4
 f = ct.FreeFlame(gas, width=width)
 f.transport_model = 'Mix'
-
+# tol_ss = [1.0e-12, 1.0e-9]
+# tol_ts = [1.0e-12, 1.0e-9]
+# f.flame.set_steady_tolerances(default=tol_ss)
+# f.flame.set_transient_tolerances(default=tol_ts)
 f.solve(refine_grid='refine')
 
 print(f"{'Flame speed':<20} : {f.u[0]:.6f}")
