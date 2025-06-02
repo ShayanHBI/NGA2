@@ -323,6 +323,7 @@ contains
          call igfile%add_column(fc%SC(1,1,1,sN2),'N2')
          call igfile%add_column(fc%SC(1,1,1,sOH),'OH')
          call igfile%add_column(fc%SC(1,1,1,sCO),'CO')
+         call igfile%add_column(fc%Pthermo,'P')
          call igfile%write()
       end block create_monitor
 
