@@ -208,7 +208,6 @@ contains
                   sol(nspec+1)=min(max(this%SC(i,j,k,nspec+1),T_min),T_max)
                   ! Remember old solution
                   solold=sol
-                  if (sol(sN2).gt.0.8_WP) cycle
                   ! Advance the reactions
                   call get_sol(sol)
                   ! Calculate the scalar chemical source terms
@@ -964,7 +963,7 @@ contains
          this%SRC(:,:,:,nsc)=this%rho*this%SRCchem(:,:,:,nsc)
       end do
       ! Get pressure source term
-      ! call this%pressure_src()
+      call this%pressure_src()
       ! Get diffusion source terms
       call this%diffusive_src(dt)
    end subroutine get_src

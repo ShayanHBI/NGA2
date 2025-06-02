@@ -1,0 +1,31 @@
+# Parallelization
+Partition : 1 1 1
+
+# Mesh definition
+Lx : 0.01
+Ly : 0.01
+Lz : 0
+nx : 1
+ny : 1
+nz : 1
+
+# Initial conditions
+Pressure            : 3.4e6
+Initial temperature : 700.000
+Initial HMN         : 0.010811
+Initial XC12H26     : 0.052062
+Initial N2          : 0.718770
+Initial O2          : 0.218358
+
+# Time integration
+Max timestep size :	1e-5
+Max cfl number    :	0.8
+Max time          : 7e-3
+Sub iterations    : 1
+
+# Pressure solver
+Pressure tolerance : 1e-6
+Pressure iteration : 50
+
+# Ensight output
+Ensight output period : 1e-3
