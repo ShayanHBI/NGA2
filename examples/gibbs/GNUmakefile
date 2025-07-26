@@ -16,7 +16,7 @@ Udirs   := src
 
 # Include user-defined sources
 USE_YAML = TRUE
-YAML_DIR = /Users/ppepiot/Research/Codes/Libraries/yaml-fortran
+YAML_DIR = /Users/ppepiot/Research/Codes/Libraries/fortran-yaml-c
 Upack   += $(foreach dir, $(Udirs), $(wildcard $(dir)/Make.package))
 Ulocs   += $(foreach dir, $(Udirs), $(wildcard $(dir)))
 include $(Upack)
