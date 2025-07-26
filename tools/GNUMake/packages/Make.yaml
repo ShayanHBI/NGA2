@@ -1,8 +1,14 @@
 # Add appropriate YAML interface libraries
 ifdef YAML_DIR
+<<<<<<< HEAD
   LIBRARY_LOCATIONS += $(YAML_DIR)/build/src
   LIBRARIES += -lfortran-yaml-c -llibyaml_interface
   INCLUDE_LOCATIONS += $(YAML_DIR)/build/modules
+=======
+  INCLUDE_LOCATIONS += $(YAML_DIR)/build/src/yaml-fortran $(YAML_DIR)/build/src/yaml-wrapper 
+  LIBRARY_LOCATIONS += $(YAML_DIR)/bin
+  LIBRARIES += -lyaml-interface -lyaml-wrapper
+>>>>>>> 3a952b61a9561a0fee32f862fef44c0bf48898e7
 else
   $(error YAML_DIR not defined, but it is currently required by NGA2)
 endif

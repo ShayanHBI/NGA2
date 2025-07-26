@@ -6,17 +6,17 @@ PRECISION = DOUBLE
 USE_MPI   = TRUE
 USE_HYPRE = FALSE
 USE_LAPACK= TRUE
+USE_IRL   = FALSE
+USE_YAML  = TRUE
 PROFILE   = FALSE
 DEBUG     = FALSE
 COMP      = gnu
 EXEBASE   = nga
 
 # Directories that contain user-defined code
-Udirs   := src
+Udirs   := $(shell find src -type d)
 
 # Include user-defined sources
-USE_YAML = TRUE
-YAML_DIR = /Users/ppepiot/Research/Codes/Libraries/fortran-yaml-c
 Upack   += $(foreach dir, $(Udirs), $(wildcard $(dir)/Make.package))
 Ulocs   += $(foreach dir, $(Udirs), $(wildcard $(dir)))
 include $(Upack)
@@ -29,7 +29,7 @@ VPATH_LOCATIONS   += $(Ulocs)
 include $(NGA_HOME)/tools/GNUMake/Make.defs
 
 # Include NGA base code
-Bdirs   := core libraries
+Bdirs   := core libraries ceq
 Bpack   += $(foreach dir, $(Bdirs), $(NGA_HOME)/src/$(dir)/Make.package)
 include $(Bpack)
 
