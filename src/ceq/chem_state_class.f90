@@ -68,7 +68,7 @@ module chem_state_class
       real(WP) :: Thi                                            !< Highest temperature at which h has been evaluated
       real(WP) :: tol_N                                          !< Tolerance for the residual norm
       real(WP) :: tol_T                                          !< Tolerance for the temperature
-      real(WP) :: tol_H                                         !< Tolerance for the enthalpy residual
+      real(WP) :: tol_H                                          !< Tolerance for the enthalpy residual
       real(WP) :: dT                                             !< Residual error for the temperature
       real(WP) :: RH                                             !< Residual error for the enthalpy
       integer  :: iter_N                                         !< Number of Newton-Raphson iterations
@@ -1217,16 +1217,16 @@ module chem_state_class
             ! Solve for dx
             dx=-this%R
             call dgelss(this%sys%nrc+this%sys%np,this%sys%nrc+this%sys%np,1,Jac,this%sys%nrc+this%sys%np,dx,this%sys%nrc+this%sys%np,S,rcond,rank,work,lwork,info)
-            if (rank.ne.this%sys%nrc+this%sys%np) call die('[chem_state get_ceq_PT]: Jacobian is not full rank')
+            ! if (rank.ne.this%sys%nrc+this%sys%np) call die('[chem_state get_ceq_PT]: Jacobian is not full rank')
             if (rank.ne.this%sys%nrc+this%sys%np) then
                this%success=.false.
-               write(output_unit,'(" >   [chem_state get_ceq_PT]: Jacobian is not full rank")')
+               ! write(output_unit,'(" >   [chem_state get_ceq_PT]: Jacobian is not full rank")')
                return
             end if
-            if (info.ne.0) call die('[chem_state get_ceq_PT]: Least-squares solver failed')
+            ! if (info.ne.0) call die('[chem_state get_ceq_PT]: Least-squares solver failed')
             if (info.ne.0) then
                this%success=.false.
-               write(output_unit,'(" >   [chem_state get_ceq_PT]: Least-squares solver failed")')
+               ! write(output_unit,'(" >   [chem_state get_ceq_PT]: Least-squares solver failed")')
                return
             end if
             ! Update the solution
