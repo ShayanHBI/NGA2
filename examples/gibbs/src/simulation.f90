@@ -243,7 +243,8 @@ contains
          ! Initialize the chemical state
          Nsum=1.0_WP
          if (scale) then
-            Nsum=sum(N_init)
+            ! Nsum=sum(N_init)
+            Nsum=1e8
             N_init=N_init/Nsum
          end if
          select case (eq_cond)
@@ -276,7 +277,7 @@ contains
                if (param_exists('Temperature initial guess')) then
                   call param_read('Temperature initial guess',T_g)
                   call state%N_init(N=N_init,N_h=N_h,T_h=T_h,T_g=T_g)
-                  ! call state%N_init(N=N_init,HoR=-33690.099223276899_WP,T_g=T_g)
+                  ! call state%N_init(N=N_init,HoR=-10623.375604977547_WP,T_g=353.0_WP)
                   print*,'state%HoR = ',state%HoR
                else
                   call state%N_init(N=N_init,N_h=N_h,T_h=T_h)

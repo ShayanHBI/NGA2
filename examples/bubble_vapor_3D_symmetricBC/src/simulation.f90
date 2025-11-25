@@ -868,8 +868,7 @@ contains
 
       ! Create and initialize an lg object
       create_lgpc: block
-         use lgpc_class, only: bcond,symmetry
-         ! use lgpc_class, only: symmetry
+         use lgpc_class, only: symmetry
          integer :: i,j,k,index
          ! Create the object
          call lg%initialize(cfg=cfg,vf=vf,sc=sc%SC,iTl=iTl,iTg=iTg,itp_x=fs%itpr_x,itp_y=fs%itpr_y,itp_z=fs%itpr_z,div_x=fs%divp_x,div_y=fs%divp_y,div_z=fs%divp_z,name='liquid gas pc')

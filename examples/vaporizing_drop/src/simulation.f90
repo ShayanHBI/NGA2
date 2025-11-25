@@ -5,7 +5,7 @@ module simulation
    use hypre_str_class,   only: hypre_str
    use tpns_class,        only: tpns
    use vfs_class,         only: vfs
-   use evap_class,        only: evap
+   use lgpc_class,        only: lgpc
    use timetracker_class, only: timetracker
    use ensight_class,     only: ensight
    use surfmesh_class,    only: surfmesh
@@ -18,7 +18,7 @@ module simulation
    type(hypre_str),   public :: ps
    type(tpns),        public :: fs
    type(vfs),         public :: vf
-   type(evap),        public :: evp
+   type(lgpc),        public :: lg
    type(timetracker), public :: time
    
    !> Ensight postprocessing
@@ -27,7 +27,7 @@ module simulation
    type(event)    :: ens_evt
    
    !> Simulation monitor file
-   type(monitor) :: mfile,mfileL,cflfile,evpfile
+   type(monitor) :: mfile,mfileL,cflfile,lgfile
    
    public :: simulation_init,simulation_run,simulation_final
    
@@ -36,9 +36,10 @@ module simulation
    real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi
    
    !> Problem definition
+   integer, parameter :: Lphase=0,Gphase=1
    real(WP), dimension(3) :: center
    real(WP) :: radius
-   real(WP) :: mdotdp
+   real(WP) :: mdot2p
    real(WP) :: rad_drop
    
    
@@ -120,28 +121,6 @@ contains
       isIn=.false.
       if (j.eq.pg%jmax+1) isIn=.true.
    end function yp_locator
-
-
-   !> Function that localizes z- boundary
-   function zm_locator(pg,i,j,k) result(isIn)
-      use pgrid_class, only: pgrid
-      class(pgrid), intent(in) :: pg
-      integer, intent(in) :: i,j,k
-      logical :: isIn
-      isIn=.false.
-      if (k.eq.pg%kmin) isIn=.true.
-   end function zm_locator
-
-
-   !> Function that localizes z- boundary for scalar fields
-   function zm_locator_sc(pg,i,j,k) result(isIn)
-      use pgrid_class, only: pgrid
-      class(pgrid), intent(in) :: pg
-      integer, intent(in) :: i,j,k
-      logical :: isIn
-      isIn=.false.
-      if (k.eq.pg%kmin-1) isIn=.true.
-   end function zm_locator_sc
    
    
    !> Function that localizes z+ boundary
@@ -169,9 +148,6 @@ contains
          allocate(Ui  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(Vi  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(Wi  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(Ui_L(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(Vi_L(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(Wi_L(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       end block allocate_work_arrays
       
       
@@ -204,8 +180,6 @@ contains
          call vf%add_bcond(name='xp',type=neumann,locator=xp_locator   ,dir='+x')
          call vf%add_bcond(name='ym',type=neumann,locator=ym_locator_sc,dir='-y')
          call vf%add_bcond(name='yp',type=neumann,locator=yp_locator   ,dir='+y')
-         ! call vf%add_bcond(name='zm',type=neumann,locator=zm_locator_sc,dir='-z')
-         ! call vf%add_bcond(name='zp',type=neumann,locator=zp_locator   ,dir='+z')
          ! Initialize to a droplet
          call param_read('Droplet center',center)
          call param_read('Droplet diameter',radius); radius=radius/2.0_WP
@@ -282,8 +256,6 @@ contains
          call fs%add_bcond(name='xp',type=clipped_neumann,face='x',dir=+1,canCorrect=.true.,locator=xp_locator)
          call fs%add_bcond(name='ym',type=clipped_neumann,face='y',dir=-1,canCorrect=.true.,locator=ym_locator)
          call fs%add_bcond(name='yp',type=clipped_neumann,face='y',dir=+1,canCorrect=.true.,locator=yp_locator)
-         ! call fs%add_bcond(name='zm',type=clipped_neumann,face='z',dir=-1,canCorrect=.true.,locator=zm_locator)
-         ! call fs%add_bcond(name='zp',type=clipped_neumann,face='z',dir=+1,canCorrect=.true.,locator=zp_locator)
          ! Configure pressure solver
          ps=hypre_str(cfg=cfg,name='Pressure',method=pcg_pfmg2,nst=7)
          ps%maxlevel=16
@@ -301,30 +273,30 @@ contains
       end block create_and_initialize_flow_solver
       
 
-      ! Create and initialize an evp object
-      create_evp: block
+      ! Create and initialize an lgpc object
+      create_lgpc: block
          ! Create the object
-         call evp%initialize(cfg=cfg,vf=vf,itp_x=fs%itpr_x,itp_y=fs%itpr_y,itp_z=fs%itpr_z,div_x=fs%divp_x,div_y=fs%divp_y,div_z=fs%divp_z,name='liquid gas pc')
-         call param_read('Mass flux tolerence',     evp%mflux_tol)
-         call param_read('Evaporation mass flux',   mdotdp)
-         call param_read('Max pseudo timestep size',evp%pseudo_time%dtmax)
-         call param_read('Max pseudo cfl number',   evp%pseudo_time%cflmax)
-         call param_read('Max pseudo time steps',   evp%pseudo_time%nmax)
-         evp%pseudo_time%dt=evp%pseudo_time%dtmax
+         call lg%initialize(cfg=cfg,vf=vf,itp_x=fs%itpr_x,itp_y=fs%itpr_y,itp_z=fs%itpr_z,div_x=fs%divp_x,div_y=fs%divp_y,div_z=fs%divp_z,name='liquid gas pc')
+         call param_read('Mass flux tolerence',     lg%mdot3p_tol)
+         call param_read('Evaporation mass flux',   mdot2p)
+         call param_read('Max pseudo timestep size',lg%pseudo_time%dtmax)
+         call param_read('Max pseudo cfl number',   lg%pseudo_time%cflmax)
+         call param_read('Max pseudo time steps',   lg%pseudo_time%nmax)
+         lg%pseudo_time%dt=lg%pseudo_time%dtmax
          ! Get densities from the flow solver
-         evp%rho_l=fs%rho_l
-         evp%rho_g=fs%rho_g
+         lg%rho_l=fs%rho_l
+         lg%rho_g=fs%rho_g
          ! Interface jump condition
          where ((vf%VF.gt.0.0_WP).and.(vf%VF.lt.1.0_WP))
-            evp%mdotdp=mdotdp
+            lg%mdot2p=mdot2p
          else where
-            evp%mdotdp=0.0_WP
+            lg%mdot2p=0.0_WP
          end where
          ! Get the volumetric evaporation mass flux
-         call evp%get_mflux()
+         call lg%get_mdot3p()
          ! Initialize the liquid and gas side mass fluxes
-         call evp%init_mflux()
-      end block create_evp
+         call lg%init_mdot3pLG()
+      end block create_lgpc
       
 
       ! Create surfmesh object for interface polygon output
@@ -346,13 +318,13 @@ contains
          call ens_out%add_scalar('VOF',vf%VF)
          call ens_out%add_scalar('pressure',fs%P)
          call ens_out%add_surface('plic',smesh)
-         call ens_out%add_scalar('mflux',evp%mflux)
-         call ens_out%add_scalar('evp_div',evp%div_src)
-         call ens_out%add_scalar('mdotdp',evp%mdotdp)
-         call ens_out%add_scalar('mfluxL',evp%mfluxL)
-         call ens_out%add_scalar('mfluxG',evp%mfluxG)
+         call ens_out%add_scalar('mdot3p',lg%mdot3p)
+         call ens_out%add_scalar('evp_div',lg%div_vel)
+         call ens_out%add_scalar('mdot2p',lg%mdot2p)
+         call ens_out%add_scalar('mdot3pL',lg%mdot3pLG(:,:,:,Lphase))
+         call ens_out%add_scalar('mdot3pG',lg%mdot3pLG(:,:,:,Gphase))
          call ens_out%add_scalar('divergence',fs%div)
-         call ens_out%add_vector('normal',evp%normal(:,:,:,1),evp%normal(:,:,:,2),evp%normal(:,:,:,3))
+         call ens_out%add_vector('normal',lg%normal(:,:,:,1),lg%normal(:,:,:,2),lg%normal(:,:,:,3))
          ! Output to ensight
          if (ens_evt%occurs()) call ens_out%write_data(time%t)
       end block create_ensight
@@ -395,23 +367,20 @@ contains
          call cflfile%add_column(fs%CFLv_z,'Viscous zCFL')
          call cflfile%write()
          ! Create evaporation monitor
-         evpfile=monitor(evp%cfg%amRoot,'evaporation')
-         call evpfile%add_column(time%n,'Timestep number')
-         call evpfile%add_column(time%t,'Time')
-         call evpfile%add_column(evp%pseudo_time%dt,'Pseudo time step')
-         call evpfile%add_column(evp%pseudo_time%cfl,'Maximum pseudo CFL')
-         call evpfile%add_column(evp%pseudo_time%n,'No. pseudo steps')
-         call evpfile%add_column(evp%mflux_int,'mflux int')
-         call evpfile%add_column(evp%mfluxL_int,'shifted mfluxL int')
-         call evpfile%add_column(evp%mfluxG_int,'shifted mfluxG int')
-         call evpfile%add_column(evp%mfluxL_int_err,'mfluxL int err')
-         call evpfile%add_column(evp%mfluxG_int_err,'mfluxG int err')
-         call evpfile%add_column(evp%mfluxL_err,'mfluxL res err')
-         call evpfile%add_column(evp%mfluxG_err,'mfluxG res err')
-         call evpfile%add_column(evp%Upcmax,'Upc_max')
-         call evpfile%add_column(evp%Vpcmax,'Vpc_max')
-         call evpfile%add_column(evp%Wpcmax,'Wpc_max')
-         call evpfile%write()
+         lgfile=monitor(lg%cfg%amRoot,'lgpc')
+         call lgfile%add_column(time%n,'Timestep number')
+         call lgfile%add_column(time%t,'Time')
+         call lgfile%add_column(lg%pseudo_time%dt,'Pseudo time step')
+         call lgfile%add_column(lg%pseudo_time%cfl,'Maximum pseudo CFL')
+         call lgfile%add_column(lg%pseudo_time%n,'No. pseudo steps')
+         call lgfile%add_column(lg%mdot3p_int,'mdot3p int')
+         call lgfile%add_column(lg%mdot3pL_int,'shifted mdot3pL int')
+         call lgfile%add_column(lg%mdot3pG_int,'shifted mdot3pG int')
+         call lgfile%add_column(lg%mdot3pL_int_err,'mdot3pL int err')
+         call lgfile%add_column(lg%mdot3pG_int_err,'mdot3pG int err')
+         call lgfile%add_column(lg%mdot3pL_err,'max mdot3pL err')
+         call lgfile%add_column(lg%mdot3pG_err,'max mdot3pG err')
+         call lgfile%write()
       end block create_monitor
    end subroutine simulation_init
    
@@ -446,23 +415,23 @@ contains
          
          ! Interface jump conditions
          where ((vf%VF.gt.0.0_WP).and.(vf%VF.lt.1.0_WP))
-            evp%mdotdp=mdotdp
+            lg%mdot2p=mdot2p
          else where
-            evp%mdotdp=0.0_WP
+            lg%mdot2p=0.0_WP
          end where
-
-         ! Get the volumetric evaporation mass flux
-         call evp%get_mflux()
 
          ! VOF solver step
          call vf%advance(dt=time%dt,U=fs%U,V=fs%V,W=fs%W)
          call vf%apply_bcond(time%t,time%dt)
 
-         ! Shift the evaporation mass flux
-         call evp%shift_mflux()
+         ! Get the volumetric lgpc mass flux
+         call lg%get_mdot3p()
 
+         ! Shift the lgpc mass flux
+         call lg%shift_mdot3p()
+         
          ! Get the phase-change induced divergence
-         call evp%get_div()
+         call lg%get_div()
 
          ! Advance flow
          advance_flow: block
@@ -501,8 +470,8 @@ contains
                
                ! Solve Poisson equation
                call fs%update_laplacian()
-               call fs%correct_mfr(src=evp%div_src)
-               call fs%get_div(src=evp%div_src)
+               call fs%correct_mfr(src=lg%div_vel)
+               call fs%get_div(src=lg%div_vel)
                ! call fs%add_surface_tension_jump(dt=time%dt,div=fs%div,vf=vf,contact_model=static_contact)
                call fs%add_surface_tension_jump(dt=time%dt,div=fs%div,vf=vf)
                fs%psolv%rhs=-fs%cfg%vol*fs%div/time%dt
@@ -524,7 +493,7 @@ contains
             
             ! Recompute interpolated velocity and divergence
             call fs%interp_vel(Ui,Vi,Wi)
-            call fs%get_div(src=evp%div_src)
+            call fs%get_div(src=lg%div_vel)
 
          end block advance_flow
          
@@ -540,7 +509,7 @@ contains
          rad_drop=sqrt(vf%VFint/(Lz*Pi))
          call mfile%write()
          call cflfile%write()
-         call evpfile%write()
+         call lgfile%write()
          
       end do
 

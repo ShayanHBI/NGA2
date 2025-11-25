@@ -73,21 +73,22 @@ fig, ax = plt.subplots(1, 1, figsize=(8,6))
 
 # Visualize
 for i, t in enumerate(time_ext):
-    ax.plot(1000*data_ext[i]['x'], data_ext[i]['Tg'], '-',  color=colors[i], label = r'$t = {:.3f}~(s)$'.format(t))
-    ax.plot(1000*data_num[i]['x'], data_num[i]['Tg'], '--', color=colors[i])
+    ax.plot(1000*data_ext[i]['x'], data_ext[i]['Tg'], '-',  linewidth=4, color=colors[i], label = r'$t = {:.3f}~(s)$'.format(t))
+    ax.plot(1000*data_num[i]['x'], data_num[i]['Tg'], '--', linewidth=4, color=colors[i])
 
 # Custom legend
 custom_lines = [
-    Line2D([0], [0], color='k', lw=1.5, ls='-',  label=r'$Exact$'),
-    Line2D([0], [0], color='k', lw=1.5, ls='--', label=r'$Numerical$'),
+    Line2D([0], [0], color='k', lw=4, ls='-',  label=r'$Analytical$'),
+    Line2D([0], [0], color='k', lw=4, ls='--', label=r'$Numerical$'),
 ]
-first_legend = ax.legend(custom_lines, [r'$Exact$', r'$Numerical$'], frameon=False, loc='upper right', fontsize=14)
+first_legend = ax.legend(custom_lines, [r'$Analytical$', r'$Numerical$'], frameon=False, bbox_to_anchor=(0.58, 1.0), loc='upper right', fontsize=20)
 ax.add_artist(first_legend)
-ax.legend(frameon=False, loc='lower right', bbox_to_anchor=(1, 0.5), fontsize=14)
-plt.grid(which='major', axis='both', color='gray', linestyle='-', linewidth=0.5, alpha=0.25)
-plt.xlabel(r'$x~(mm)$', fontsize=14)
-plt.ylabel(r'$T_g~(K)$', fontsize=14)
+ax.legend(frameon=False, loc='lower right', bbox_to_anchor=(1, 0.42), fontsize=20)
+plt.grid(which='major', axis='both', color='gray', linestyle='-', linewidth=0.7, alpha=0.25)
+plt.xlabel(r'$x~(mm)$',  fontsize=26)
+plt.ylabel(r'$T_g~(K)$', fontsize=26)
+ax.tick_params(axis='both', which='major', labelsize=22)
 for spine in plt.gca().spines.values():
-    spine.set_linewidth(1.2)
+    spine.set_linewidth(2)
 plt.tight_layout()
 plt.savefig('./T_g.pdf')

@@ -52,9 +52,6 @@ module lgpc_class
       ! Liquid and gas densities
       real(WP) :: rho_l,rho_g
 
-      ! Does it point to temperature?
-      logical :: hasT
-
       ! Boundary condition list
       integer :: nbc                                                     !< Number of bcond for our solver
       type(bcond), pointer :: first_bc                                   !< List of bcond for our solver
@@ -124,8 +121,8 @@ contains
       class(lgpc), intent(inout) :: this
       class(config), target, intent(in) :: cfg
       class(vfs), target, intent(in) :: vf
-      real(WP), target, dimension(cfg%imino_:,cfg%jmino_:,cfg%kmino_:,1:), optional, intent(in) :: SC
-      integer, optional, intent(in) :: iTl,iTg
+      real(WP), target, dimension(cfg%imino_:,cfg%jmino_:,cfg%kmino_:,1:), intent(in) :: SC
+      integer, intent(in) :: iTl,iTg
       real(WP), target, dimension(-1: 0,cfg%imino_+1:cfg%imaxo_,cfg%jmino_  :cfg%jmaxo_,cfg%kmino_  :cfg%kmaxo_), intent(in) :: itp_x
       real(WP), target, dimension(-1: 0,cfg%imino_  :cfg%imaxo_,cfg%jmino_+1:cfg%jmaxo_,cfg%kmino_  :cfg%kmaxo_), intent(in) :: itp_y
       real(WP), target, dimension(-1: 0,cfg%imino_  :cfg%imaxo_,cfg%jmino_  :cfg%jmaxo_,cfg%kmino_+1:cfg%kmaxo_), intent(in) :: itp_z
@@ -156,21 +153,14 @@ contains
       allocate(this%div_vel_old (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));               this%div_vel_old =0.0_WP
       allocate(this%normal      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3));           this%normal      =0.0_WP
       allocate(this%pseudo_vel  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:3));           this%pseudo_vel  =0.0_WP
+      allocate(this%Tl_grd      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));               this%Tl_grd      =0.0_WP
+      allocate(this%Tg_grd      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_));               this%Tg_grd      =0.0_WP
       allocate(this%itp(3))
       allocate(this%div(3))
 
       ! Point to the temperature fields
-      if (present(SC).and.present(iTl).and.present(iTg)) then
-         this%hasT=.true.
-         allocate(this%Tl_grd(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); this%Tl_grd=0.0_WP
-         allocate(this%Tg_grd(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); this%Tg_grd=0.0_WP
-         this%Tl(cfg%imino_:,cfg%jmino_:,cfg%kmino_:)=>SC(:,:,:,iTl)
-         this%Tg(cfg%imino_:,cfg%jmino_:,cfg%kmino_:)=>SC(:,:,:,iTg)
-      else if (.not.present(SC).and..not.present(iTl).and..not.present(iTg)) then
-         this%hasT=.false.
-      else
-         call die('')
-      end if
+      this%Tl(cfg%imino_:,cfg%jmino_:,cfg%kmino_:)=>SC(:,:,:,iTl)
+      this%Tg(cfg%imino_:,cfg%jmino_:,cfg%kmino_:)=>SC(:,:,:,iTg)
 
       ! Set metrics
       this%itp(1)%arr(-1:,this%cfg%imino_+1:,this%cfg%jmino_  :,this%cfg%kmino_  :)=>itp_x
@@ -1637,12 +1627,10 @@ contains
                               this%normal (i_out,j,k,3)      = this%normal (i_in,j,k,3)
                               this%mdot3pLG(i_out,j,k,Lphase)= this%mdot3pLG(i_in,j,k,Lphase)
                               this%mdot3pLG(i_out,j,k,Gphase)= this%mdot3pLG(i_in,j,k,Gphase)
-                              if (this%hasT) then
-                                 this%Tl     (i_out,j,k)        = this%Tl     (i_in,j,k)
-                                 this%Tg     (i_out,j,k)        = this%Tg     (i_in,j,k)
-                                 this%Tl_grd (i_out,j,k)        = this%Tl_grd (i_in,j,k)
-                                 this%Tg_grd (i_out,j,k)        = this%Tg_grd (i_in,j,k)
-                              end if
+                              this%Tl     (i_out,j,k)        = this%Tl     (i_in,j,k)
+                              this%Tg     (i_out,j,k)        = this%Tg     (i_in,j,k)
+                              this%Tl_grd (i_out,j,k)        = this%Tl_grd (i_in,j,k)
+                              this%Tg_grd (i_out,j,k)        = this%Tg_grd (i_in,j,k)
                            end do
                         end do
                      case ('y')
@@ -1657,12 +1645,10 @@ contains
                               this%normal (i,j_out,k,3)      = this%normal (i,j_in,k,3)
                               this%mdot3pLG(i,j_out,k,Lphase)= this%mdot3pLG(i,j_in,k,Lphase)
                               this%mdot3pLG(i,j_out,k,Gphase)= this%mdot3pLG(i,j_in,k,Gphase)
-                              if (this%hasT) then
-                                 this%Tl     (i,j_out,k)        = this%Tl     (i,j_in,k)
-                                 this%Tg     (i,j_out,k)        = this%Tg     (i,j_in,k)
-                                 this%Tl_grd (i,j_out,k)        = this%Tl_grd (i,j_in,k)
-                                 this%Tg_grd (i,j_out,k)        = this%Tg_grd (i,j_in,k)
-                              end if
+                              this%Tl     (i,j_out,k)        = this%Tl     (i,j_in,k)
+                              this%Tg     (i,j_out,k)        = this%Tg     (i,j_in,k)
+                              this%Tl_grd (i,j_out,k)        = this%Tl_grd (i,j_in,k)
+                              this%Tg_grd (i,j_out,k)        = this%Tg_grd (i,j_in,k)
                            end do
                         end do
                      case ('z')
@@ -1677,12 +1663,10 @@ contains
                               this%normal (i,j,k_out,3)      =-this%normal (i,j,k_in,3)
                               this%mdot3pLG(i,j,k_out,Lphase)= this%mdot3pLG(i,j,k_in,Lphase)
                               this%mdot3pLG(i,j,k_out,Gphase)= this%mdot3pLG(i,j,k_in,Gphase)
-                              if (this%hasT) then
-                                 this%Tl     (i,j,k_out)        = this%Tl     (i,j,k_in)
-                                 this%Tg     (i,j,k_out)        = this%Tg     (i,j,k_in)
-                                 this%Tl_grd (i,j,k_out)        = this%Tl_grd (i,j,k_in)
-                                 this%Tg_grd (i,j,k_out)        = this%Tg_grd (i,j,k_in)
-                              end if
+                              this%Tl     (i,j,k_out)        = this%Tl     (i,j,k_in)
+                              this%Tg     (i,j,k_out)        = this%Tg     (i,j,k_in)
+                              this%Tl_grd (i,j,k_out)        = this%Tl_grd (i,j,k_in)
+                              this%Tg_grd (i,j,k_out)        = this%Tg_grd (i,j,k_in)
                            end do
                         end do
                   end select
@@ -1705,12 +1689,10 @@ contains
       end do
       call this%cfg%sync(this%mdot3pLG(:,:,:,Lphase))
       call this%cfg%sync(this%mdot3pLG(:,:,:,Gphase))
-      if (this%hasT) then
-         call this%cfg%sync(this%Tl)
-         call this%cfg%sync(this%Tg)
-         call this%cfg%sync(this%Tl_grd)
-         call this%cfg%sync(this%Tg_grd)
-      end if
+      call this%cfg%sync(this%Tl)
+      call this%cfg%sync(this%Tg)
+      call this%cfg%sync(this%Tl_grd)
+      call this%cfg%sync(this%Tg_grd)
       
    end subroutine apply_bcond
 
