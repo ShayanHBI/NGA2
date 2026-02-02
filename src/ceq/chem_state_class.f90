@@ -1399,6 +1399,9 @@ module chem_state_class
          this%T=T
          ! Re-initialize mole numbers using the current temperature
          call this%N_re_init()
+         if (.not.this%success) then
+            return
+         end if
          ! Determine equilibrium composition at current temperature
          call this%get_ceq_PT()
          ! Obtain species h/(RT)

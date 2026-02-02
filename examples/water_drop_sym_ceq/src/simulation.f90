@@ -330,7 +330,8 @@ contains
       real(WP) :: theta_s,theta_e,dtheta,theta
       real(WP) :: phi_s,phi_e,dphi,phi
       real(WP) :: sinTheta,cosTheta,sinPhi,cosPhi
-      real(WP) :: l,dR,R_s,R_e,x,y,z,r_out,T_out,Yv_out
+      real(WP) :: l,dR,R_s,R_e,x,y,z
+      real(WP), target :: r_out,T_out,Yv_out
       real(WP), dimension(:), allocatable :: r_,T_,T_avg,Yv_,Yv_avg
       integer  :: ntheta,itheta,nphi,iphi,nr,r_ind,nunsumble,ind(3),i,j,k,ierr
       character(len=str_medium) :: tstr
@@ -353,7 +354,7 @@ contains
       dphi=(phi_e-phi_s)/real(nphi-1,WP)
       ! Grid for radius
       R_s=0.0_WP
-      R_e=600e-6
+      R_e=590e-6
       dR=cfg%dx(1)
       nr=int((R_e-R_s)/dR)+1
       allocate(r_(nr))
@@ -415,7 +416,9 @@ contains
          call TYvfile%write()
       end do
       ! Deallocate the arrays
-      deallocate(r_,T_,T_avg)
+      deallocate(r_,T_,T_avg,Yv_,Yv_avg)
+      ! Finalize the monitor object
+      call TYvfile%finalize()
    end subroutine get_T_Yv
 
 
@@ -511,6 +514,8 @@ contains
          stz=0
       end if
 
+      ! if (cfg%amRoot) print*,'beginning of jump: VOF(31,12,1) = ',vf%VF(31,12,1)
+
       ! Loop over the interfacial cells
       do index=1,vf%band_count(0)
 
@@ -536,7 +541,7 @@ contains
          Tl=sc%SC(i,j,k,iTl)
          Tg=sc%SC(i,j,k,iTg)
 
-         ! if (i.eq.16.and.j.eq.27.and.k.eq.12) then
+         ! if (i.eq.31.and.j.eq.12.and.k.eq.1) then
          !    print*,'*******'
          !    print*,'Before CEQ:'
          !    print*,'VOF = ',vf%VF(i,j,k)
@@ -548,6 +553,24 @@ contains
          !    print*,'Vold = ',sum(vol_old)
          ! end if
          call get_equilibrium()
+         ! Debug
+         ! if (.not.state%Nming_success) then
+         !       print*,'*******'
+         !       print*,'This cell failed ceq get_Nming:'
+         !       print*,'i,j,k = ',i,j,k
+         !       print*,'x, y, z = ',cfg%xm(i),cfg%ym(j),cfg%zm(k)
+         !       print*,'Tg = ',Tg
+         !       print*,'Tl = ',Tl
+         !       print*,'Y = ',Y
+         !       print*,'mp = ',mp
+         !       print*,'PVF = ',sc%PVF(i,j,k,:)
+         !       print*,'VF = ',vf%VF(i,j,k)
+         !       print*,'N = ',N
+         !       print*,'state%N = ',state%N
+         !       print*,'state%HoR0 = ',state%HoR0
+         !       print*,'*******'
+         !       call die('')
+         ! end if
 
          ! Cluster cells if the equilibrium failed
          if ((.not.state%success).or.(state%N(iWl)/(state%N(iWl)+state%N(iWv)).lt.5e-2)) then
@@ -659,7 +682,7 @@ contains
                print*,'VOF = ',vf%VF(i,j,k)
                print*,'SD = ',vf%SD(i,j,k)
             end do
-            call die('line 372')
+            call die('line 685')
          end if
 
          ! Update the phase masses
@@ -805,6 +828,11 @@ contains
 
       end do
 
+      ! Sync VOF
+      call cfg%sync(vf%VF)
+
+      ! if (cfg%amRoot) print*,'after cluster operations and before the IRL stuff: VOF(31,12,1) = ',vf%VF(31,12,1)
+
       ! Update the interface (Do I need it? I don't think so)
       ! call vf%advect_interface(0.0_WP,fs%U,fs%V,fs%W)
 
@@ -839,6 +867,8 @@ contains
       ! Reset moments to guarantee compatibility with interface reconstruction
       call vf%reset_moments()
 
+      ! if (cfg%amRoot) print*,'after the IRL stuff: VOF(31,12,1) = ',vf%VF(31,12,1)
+
       ! Sync fields
       do isc=1,sc%nscalar
          call cfg%sync(sc%SC(:,:,:,isc))
@@ -856,6 +886,27 @@ contains
 
       ! Deallocate arrays
       deallocate(vol_new,vol_old,mp,N,phasicHoR,Y,clustered,cell_indices,Vscaled,vof_old,vof_new,w,active)
+
+      ! Debug
+      ! debug: block
+      !    use messager, only: die
+      !    use irl_fortran_interface, only: getNumberOfVertices
+      !    if (cfg%amRoot) print*,'NumberOfVertices for cell 31,12,1',getNumberOfVertices(vf%interface_polygon(1,31,12,1))
+      !    do k=cfg%kmin_,cfg%kmax_
+      !       do j=cfg%jmin_,cfg%jmax_
+      !          do i=cfg%imin_,cfg%imax_
+      !             if (vf%VF(i,j,k) > 0.0_WP .and. vf%VF(i,j,k) < 1.0_WP) then
+      !                if (getNumberOfVertices(vf%interface_polygon(1,i,j,k)) == 0) then
+      !                   print *, "empty poly:", i,j,k, "VF=",vf%VF(i,j,k), "mask=",vf%mask(i,j,k)
+      !                   call die('')
+      !                end if
+      !             end if
+      !          end do
+      !       end do
+      !    end do
+      ! end block debug
+
+      ! if (cfg%amRoot) print*,'End of the interface jump: VOF(31,12,1) = ',vf%VF(31,12,1)
 
       contains
 
@@ -889,7 +940,7 @@ contains
                print*,'VOF = ',vf%VF(i,j,k)
                print*,'SD = ',vf%SD(i,j,k)
             end do
-            call die('line 587')
+            call die('line 943')
          end if
 
          ! Get the chemical equilibrium
@@ -1088,6 +1139,11 @@ contains
          call sp%destroy()
          call comp%destroy()
          call thermo%destroy()
+         ! Destroy and deallocate species array (no longer needed after data extraction)
+         do isc=1,ns
+            call species(isc)%destroy()
+         end do
+         deallocate(species)
          deallocate(sp_names_copy,const_sp_copy)
          if (allocated(const_sp_copy)) deallocate(const_sp_copy)
       end block parse_mech
@@ -1619,6 +1675,18 @@ contains
          call lgfile%write()
       end block create_monitor
 
+      ! debug
+      ! find_cell: block
+      !    integer :: ind(3)
+      !    ind=cfg%get_ijk_local(pos=[0.000118_WP,0.0_WP,0.000097_WP],ind_guess=[20,20,1])
+      !    print*,'ind = ',ind
+      !    print*,'x = ',cfg%xm(ind(1)),'y = ',cfg%ym(ind(2)),'z = ',cfg%zm(ind(3))
+      !    print*,'cfg%rank = ',cfg%rank
+      !    print*,'cfg%imin_ = ',cfg%imin_,'cfg%imax_ = ',cfg%imax_
+      !    print*,'cfg%jmin_ = ',cfg%jmin_,'cfg%jmax_ = ',cfg%jmax_
+      !    print*,'cfg%kmin_ = ',cfg%kmin_,'cfg%kmax_ = ',cfg%kmax_
+      ! end block find_cell
+
       
    end subroutine simulation_init
    
@@ -1658,9 +1726,52 @@ contains
          ! Prepare old staggered density (at n)
          call fs%get_olddensity(vf=vf)
 
+         ! if (cfg%amRoot) print*,'Beggining of time step, before advancing VOF: VOF(31,12,1) = ',vf%VF(31,12,1)
+
          ! VOF solver step
          call vf%advance(dt=time%dt,U=fs%U,V=fs%V,W=fs%W)
          call vf%apply_bcond(time%t,time%dt)
+
+         ! if (cfg%amRoot) print*,'After advancing VOF: VOF(31,12,1) = ',vf%VF(31,12,1)
+
+
+         ! debug_vof_div: block
+         !    integer, parameter :: i0=26, j0=1, k0=21
+         !    real(WP) :: vfold, vfnew, dvf
+         !    real(WP) :: net, dtdiv_face
+         !    real(WP) :: dt, vol
+
+         !    if (cfg%amRoot) then
+         !       vfold = vf%VFold(i0,j0,k0)
+         !       vfnew = vf%VF   (i0,j0,k0)
+
+         !       ! Only print when it actually becomes nonzero (your case: ~2.6e-9)
+         !       if (vfnew > 1.0e-12_WP .or. vfold > 1.0e-12_WP) then
+         !          dt  = time%dt
+         !          vol = cfg%vol(i0,j0,k0)
+         !          dvf = vfnew - vfold
+
+         !          ! Net "dt * div" computed exactly like the crude face volumes (dt*U*A etc.)
+         !          net = (-dt*fs%U(i0+1,j0,k0)*cfg%dy(j0)*cfg%dz(k0) + dt*fs%U(i0,j0,k0)*cfg%dy(j0)*cfg%dz(k0)) &
+         !             + (-dt*fs%V(i0,j0+1,k0)*cfg%dz(k0)*cfg%dx(i0) + dt*fs%V(i0,j0,k0)*cfg%dz(k0)*cfg%dx(i0)) &
+         !             + (-dt*fs%W(i0,j0,k0+1)*cfg%dx(i0)*cfg%dy(j0) + dt*fs%W(i0,j0,k0)*cfg%dx(i0)*cfg%dy(j0))
+
+         !          dtdiv_face = net / vol
+
+         !          print*, 'VOFDBG step=',time%n,' cell=',i0,j0,k0, &
+         !                   ' band=',vf%band(i0,j0,k0), &
+         !                   ' VFold=',vfold,' VF=',vfnew,' dVF=',dvf, &
+         !                   ' dtDiv_face=',dtdiv_face
+         !       end if
+         !    end if
+         ! end block debug_vof_div
+
+
+         ! Debug
+         ! debug1: block
+         !    use irl_fortran_interface, only: getNumberOfVertices
+         !    if (cfg%amRoot) print*,'NumberOfVertices for cell 31,12,1',getNumberOfVertices(vf%interface_polygon(1,31,12,1))
+         ! end block debug1
 
          ! ================== SCALAR ================== !
 
@@ -1691,16 +1802,16 @@ contains
             sc%PVF(:,:,:,Gphase)=1.0_WP-vf%VF
             call sc%get_face_apt()
 
-            if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-               ! print*,'PVF(9 :11)',sc%PVF(9:11,27,15,Gphase)
-               ! print*,'face_apt_x(10:11) = ',sc%face_apt_x(10:11,27,15,Gphase)
-               ! print*,'PVF(26:28)',sc%PVF(10,26:28,15,Gphase)
-               ! print*,'face_apt_y(27:28) = ',sc%face_apt_y(10,27:28,15,Gphase)
-               ! print*,'PVF(14:16)',sc%PVF(10,27,14:16,Gphase)
-               ! print*,'face_apt_z(15:16) = ',sc%face_apt_z(10,27,15:16,Gphase)
-               ! print*,'before extrapolation Tl = ',sc%SC(16,27,12,iTl)
-               ! print*,'VOF = ',vf%VF(16,27,12)
-            end if
+            ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
+            !    ! print*,'PVF(9 :11)',sc%PVF(9:11,27,15,Gphase)
+            !    ! print*,'face_apt_x(10:11) = ',sc%face_apt_x(10:11,27,15,Gphase)
+            !    ! print*,'PVF(26:28)',sc%PVF(10,26:28,15,Gphase)
+            !    ! print*,'face_apt_y(27:28) = ',sc%face_apt_y(10,27:28,15,Gphase)
+            !    ! print*,'PVF(14:16)',sc%PVF(10,27,14:16,Gphase)
+            !    ! print*,'face_apt_z(15:16) = ',sc%face_apt_z(10,27,15:16,Gphase)
+            !    print*,'before extrapolation Tl = ',sc%SC(31,12,1,iTl)
+            !    print*,'VOF = ',vf%VF(31,12,1)
+            ! end if
 
             ! Correct for the emptied out and new interfacial cells
             do isc=1,sc%nscalar
@@ -1716,14 +1827,14 @@ contains
             end do
 
             ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-            !    print*,'after extrapolation Tl = ',sc%SC(16,27,12,iTl)
+            !    print*,'after extrapolation Tl = ',sc%SC(31,12,1,iTl)
             ! end if
 
             ! Explicit calculation of dVOFSC/dt from scalar advection
             call sc%get_dSCdt_adv(dSCdt=resSC,U=fs%U,V=fs%V,W=fs%W,detailed_face_flux=vf%detailed_face_flux,dt=timeSC%dt)
 
             ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-            !    print*,'advection res Tl = ',resSC(16,27,12,iTl)
+            !    print*,'advection res Tl = ',resSC(31,12,1,iTl)
             ! end if
 
             ! Advance scalar advection
@@ -1734,10 +1845,10 @@ contains
             end do
 
             ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-            !    print*,'VOFold*TlOld/VOF = ',sc%PVFold(16,27,12,Lphase)*sc%SCold(16,27,12,iTl)/sc%PVF(16,27,12,Lphase)
-            !    print*,'dt*div(VOF*u*Tl)/VOF = ',timeSC%dt*resSC(16,27,12,iTl)/sc%PVF(16,27,12,Lphase)
-            !    print*,'dt*div(u)*TlOld/VOF = ',timeSC%dt*lg%div_vel_old(16,27,12)*sc%SCold(16,27,12,iTl)/sc%PVF(16,27,12,Lphase)
-            !    print*,'after advection Tl = ',sc%SC(16,27,12,iTl)
+            !    print*,'VOFold*TlOld/VOF = ',sc%PVFold(31,12,1,Lphase)*sc%SCold(31,12,1,iTl)/sc%PVF(31,12,1,Lphase)
+            !    print*,'dt*div(VOF*u*Tl)/VOF = ',timeSC%dt*resSC(31,12,1,iTl)/sc%PVF(31,12,1,Lphase)
+            !    print*,'dt*div(u)*TlOld/VOF = ',timeSC%dt*lg%div_vel_old(31,12,1)*sc%SCold(31,12,1,iTl)/sc%PVF(31,12,1,Lphase)
+            !    print*,'after advection Tl = ',sc%SC(31,12,1,iTl)
             ! end if
 
             ! Explicit calculation of dVOFSC/dt from scalar diffusion
@@ -1748,7 +1859,7 @@ contains
                where (sc%PVF(:,:,:,p).eq.0.0_WP) resSC(:,:,:,isc)=0.0_WP
             end do
             ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-            !    print*,'rhs Tl for linear solver = ',resSC(16,27,12,iTl)
+            !    print*,'rhs Tl for linear solver = ',resSC(31,12,1,iTl)
             ! end if
 
             ! Form implicit diffusive residual
@@ -1758,7 +1869,7 @@ contains
             sc%SC=sc%SC+resSC
 
             ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-            !    print*,'after diffusion Tl = ',sc%SC(16,27,12,iTl)
+            !    print*,'after diffusion Tl = ',sc%SC(31,12,1,iTl)
             ! end if
 
             ! 
@@ -1808,7 +1919,7 @@ contains
             end do
 
             ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-            !    print*,'after bc Tl = ',sc%SC(16,27,12,iTl)
+            !    print*,'after bc Tl = ',sc%SC(31,12,1,iTl)
             ! end if
 
          end block advance_scalar
@@ -1818,11 +1929,11 @@ contains
          ! Apply the interface jump conditions
          call interface_jump()
          ! if (cfg%amRoot) print*,'After jumping'
-         ! if (16.ge.cfg%imin_.and.16.le.cfg%imax_.and.27.ge.cfg%jmin_.and.27.le.cfg%jmax_.and.12.ge.cfg%kmin_.and.12.le.cfg%kmax_) print*,'VOF = ',vf%VF(16,27,12)
+         ! if (16.ge.cfg%imin_.and.16.le.cfg%imax_.and.27.ge.cfg%jmin_.and.27.le.cfg%jmax_.and.12.ge.cfg%kmin_.and.12.le.cfg%kmax_) print*,'VOF = ',vf%VF(31,12,1)
          ! if (cfg%amRoot) print*,'*******'
 
          ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-         !    print*,'Tl = ',sc%SC(16,27,12,iTl)
+         !    print*,'Tl = ',sc%SC(31,12,1,iTl)
          !    ! print*,'x,y,z = ',cfg%xm(16),cfg%ym(27),cfg%zm(12)
          ! end if
          
@@ -1836,7 +1947,7 @@ contains
          call lg%get_div()
 
          ! if (cfg%iproc.eq.1.and.cfg%jproc.eq.1.and.cfg%kproc.eq.1) then
-         !    print*,'after lgpc shift Tl = ',sc%SC(16,27,12,iTl)
+         !    print*,'after lgpc shift Tl = ',sc%SC(31,12,1,iTl)
          ! end if
 
          ! ================== VELOCITY ================== !

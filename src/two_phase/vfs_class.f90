@@ -1641,22 +1641,53 @@ contains
       real(WP), dimension(3,2) :: bounding_pts
       integer, dimension(3,2) :: bb_indices
       type(SepVM_type) :: my_SepVM
+      ! debug
+      logical :: intersects
+      integer :: ii,jj,kk,ni,p
+      real(WP) :: eps_plane, dmin, dmax, dist
+      real(WP), dimension(4) :: plane
+      real(WP), dimension(3) :: pcent
+      integer,  dimension(3) :: ic
+      real(WP) :: vfc,sP,sL,sG
+      integer :: poly_phase, phase_here
+      logical :: ok
       
       ! Allocate
       call new(flux_polyhedron)
       
-      ! Reset face fluxes to crude estimate (just needs to be valid for volume away from interface)
+      ! ! Reset face fluxes to crude estimate (just needs to be valid for volume away from interface)
+      ! do k=this%cfg%kmino_,this%cfg%kmaxo_
+      !    do j=this%cfg%jmino_,this%cfg%jmaxo_
+      !       do i=this%cfg%imino_,this%cfg%imaxo_
+      !          if (this%band(i,j,k).lt.0) then
+      !             call construct(this%face_flux(1,i,j,k),[dt*U(i,j,k)*this%cfg%dy(j)*this%cfg%dz(k),[0.0_WP,0.0_WP,0.0_WP],0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
+      !             call construct(this%face_flux(2,i,j,k),[dt*V(i,j,k)*this%cfg%dz(k)*this%cfg%dx(i),[0.0_WP,0.0_WP,0.0_WP],0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
+      !             call construct(this%face_flux(3,i,j,k),[dt*W(i,j,k)*this%cfg%dx(i)*this%cfg%dy(j),[0.0_WP,0.0_WP,0.0_WP],0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
+      !          else
+      !             call construct(this%face_flux(1,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*U(i,j,k)*this%cfg%dy(j)*this%cfg%dz(k),0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
+      !             call construct(this%face_flux(2,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*V(i,j,k)*this%cfg%dz(k)*this%cfg%dx(i),0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
+      !             call construct(this%face_flux(3,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*W(i,j,k)*this%cfg%dx(i)*this%cfg%dy(j),0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
+      !          end if
+      !          ! Also empty out detailed fluxes
+      !          call clear(this%detailed_face_flux(1,i,j,k))
+      !          call clear(this%detailed_face_flux(2,i,j,k))
+      !          call clear(this%detailed_face_flux(3,i,j,k))
+      !       end do
+      !    end do
+      ! end do
+
+      ! I think the following is the correct form: Reset face fluxes to crude estimate (just needs to be valid for volume away from interface)
       do k=this%cfg%kmino_,this%cfg%kmaxo_
          do j=this%cfg%jmino_,this%cfg%jmaxo_
             do i=this%cfg%imino_,this%cfg%imaxo_
                if (this%band(i,j,k).lt.0) then
+                  call construct(this%face_flux(1,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*U(i,j,k)*this%cfg%dy(j)*this%cfg%dz(k),[0.0_WP,0.0_WP,0.0_WP]])
+                  call construct(this%face_flux(2,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*V(i,j,k)*this%cfg%dz(k)*this%cfg%dx(i),[0.0_WP,0.0_WP,0.0_WP]])
+                  call construct(this%face_flux(3,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*W(i,j,k)*this%cfg%dx(i)*this%cfg%dy(j),[0.0_WP,0.0_WP,0.0_WP]])
+               else
                   call construct(this%face_flux(1,i,j,k),[dt*U(i,j,k)*this%cfg%dy(j)*this%cfg%dz(k),[0.0_WP,0.0_WP,0.0_WP],0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
                   call construct(this%face_flux(2,i,j,k),[dt*V(i,j,k)*this%cfg%dz(k)*this%cfg%dx(i),[0.0_WP,0.0_WP,0.0_WP],0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
                   call construct(this%face_flux(3,i,j,k),[dt*W(i,j,k)*this%cfg%dx(i)*this%cfg%dy(j),[0.0_WP,0.0_WP,0.0_WP],0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
-               else
-                  call construct(this%face_flux(1,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*U(i,j,k)*this%cfg%dy(j)*this%cfg%dz(k),0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
-                  call construct(this%face_flux(2,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*V(i,j,k)*this%cfg%dz(k)*this%cfg%dx(i),0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
-                  call construct(this%face_flux(3,i,j,k),[0.0_WP,[0.0_WP,0.0_WP,0.0_WP],dt*W(i,j,k)*this%cfg%dx(i)*this%cfg%dy(j),0.0_WP,[0.0_WP,0.0_WP,0.0_WP]])
                end if
                ! Also empty out detailed fluxes
                call clear(this%detailed_face_flux(1,i,j,k))
@@ -1690,6 +1721,92 @@ contains
                   bb_indices(:,2)=this%cfg%get_ijk_local(bounding_pts(:,2),[i,j,k])
                   ! Crudely check phase information for flux polyhedron
                   crude_VF=this%crude_phase_test(bb_indices)
+
+                  ! Guard
+                  if (crude_VF .lt. 0.0_WP) then
+
+                     intersects = .false.
+                     eps_plane  = 1.0e-12_WP * max(this%cfg%dx(i), this%cfg%dy(j), this%cfg%dz(k))
+
+                     ! centroid of the flux polyhedron (vertex-average)
+                     pcent = 0.0_WP
+                     do p=1,8
+                        pcent = pcent + face(:,p)
+                     end do
+                     pcent = pcent / 8.0_WP
+
+                     ! Check if ANY plane intersects the polyhedron
+                     do kk=bb_indices(3,1), bb_indices(3,2)
+                        do jj=bb_indices(2,1), bb_indices(2,2)
+                           do ii=bb_indices(1,1), bb_indices(1,2)
+
+                              if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) then
+                                 do ni=0, getNumberOfPlanes(this%liquid_gas_interface(ii,jj,kk))-1
+                                    plane = getPlane(this%liquid_gas_interface(ii,jj,kk), ni)
+
+                                    dmin = huge(1.0_WP)
+                                    dmax = -huge(1.0_WP)
+                                    do p=1,8
+                                       dist = dot_product(plane(1:3), face(:,p)) + plane(4)
+                                       dmin = min(dmin, dist)
+                                       dmax = max(dmax, dist)
+                                    end do
+
+                                    if (dmin <= eps_plane .and. dmax >= -eps_plane) then
+                                       intersects = .true.
+                                       exit
+                                    end if
+                                 end do
+                              end if
+
+                              if (intersects) exit
+                           end do
+                           if (intersects) exit
+                        end do
+                        if (intersects) exit
+                     end do
+
+                     ! If no intersection: classify the polyhedron centroid using isPtInt
+                     if (.not. intersects) then
+
+                        ok = .true.
+                        poly_phase = -1
+
+                        do kk=bb_indices(3,1), bb_indices(3,2)
+                           do jj=bb_indices(2,1), bb_indices(2,2)
+                              do ii=bb_indices(1,1), bb_indices(1,2)
+
+                                 if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) then
+
+                                    ! isPtInt returns logical; map to 1(liquid) / 0(gas)
+                                    phase_here = merge(1, 0, isPtInt(pcent, this%liquid_gas_interface(ii,jj,kk)))
+
+                                    if (poly_phase == -1) then
+                                       poly_phase = phase_here
+                                    else if (poly_phase /= phase_here) then
+                                       ok = .false.
+                                       exit
+                                    end if
+
+                                 end if
+
+                              end do
+                              if (.not. ok) exit
+                           end do
+                           if (.not. ok) exit
+                        end do
+
+                        if (ok .and. poly_phase /= -1) then
+                           crude_VF = real(poly_phase, WP)   ! forces simple branch, skips IRL
+                           ! if (this%cfg%amRoot .and. i==26 .and. j==1 .and. k==21) then
+                           !    write(*,*) 'GUARD-X: intersects=',intersects,' forced crude_VF=',crude_VF,' ok=',ok,' poly_phase=',poly_phase
+                           ! end if
+                        end if
+
+                     end if
+
+                  end if
+
                   if (crude_VF.lt.0.0_WP) then
                      ! Need full geometric flux
                      call getMoments(flux_polyhedron,this%localized_separator_link(i,j,k),this%detailed_face_flux(1,i,j,k))
@@ -1727,6 +1844,93 @@ contains
                   bb_indices(:,2)=this%cfg%get_ijk_local(bounding_pts(:,2),[i,j,k])
                   ! Crudely check phase information for flux polyhedron
                   crude_VF=this%crude_phase_test(bb_indices)
+                  
+                  ! Guard
+                  if (crude_VF .lt. 0.0_WP) then
+
+                     intersects = .false.
+                     eps_plane  = 1.0e-12_WP * max(this%cfg%dx(i), this%cfg%dy(j), this%cfg%dz(k))
+
+                     ! centroid of the flux polyhedron (vertex-average)
+                     pcent = 0.0_WP
+                     do p=1,8
+                        pcent = pcent + face(:,p)
+                     end do
+                     pcent = pcent / 8.0_WP
+
+                     ! Check if ANY plane intersects the polyhedron
+                     do kk=bb_indices(3,1), bb_indices(3,2)
+                        do jj=bb_indices(2,1), bb_indices(2,2)
+                           do ii=bb_indices(1,1), bb_indices(1,2)
+
+                              if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) then
+                                 do ni=0, getNumberOfPlanes(this%liquid_gas_interface(ii,jj,kk))-1
+                                    plane = getPlane(this%liquid_gas_interface(ii,jj,kk), ni)
+
+                                    dmin = huge(1.0_WP)
+                                    dmax = -huge(1.0_WP)
+                                    do p=1,8
+                                       dist = dot_product(plane(1:3), face(:,p)) + plane(4)
+                                       dmin = min(dmin, dist)
+                                       dmax = max(dmax, dist)
+                                    end do
+
+                                    if (dmin <= eps_plane .and. dmax >= -eps_plane) then
+                                       intersects = .true.
+                                       exit
+                                    end if
+                                 end do
+                              end if
+
+                              if (intersects) exit
+                           end do
+                           if (intersects) exit
+                        end do
+                        if (intersects) exit
+                     end do
+
+                     ! If no intersection: classify the polyhedron centroid using isPtInt
+                     if (.not. intersects) then
+
+                        ok = .true.
+                        poly_phase = -1
+
+                        do kk=bb_indices(3,1), bb_indices(3,2)
+                           do jj=bb_indices(2,1), bb_indices(2,2)
+                              do ii=bb_indices(1,1), bb_indices(1,2)
+
+                                 if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) then
+
+                                    ! isPtInt returns logical; map to 1(liquid) / 0(gas)
+                                    phase_here = merge(1, 0, isPtInt(pcent, this%liquid_gas_interface(ii,jj,kk)))
+
+                                    if (poly_phase == -1) then
+                                       poly_phase = phase_here
+                                    else if (poly_phase /= phase_here) then
+                                       ok = .false.
+                                       exit
+                                    end if
+
+                                 end if
+
+                              end do
+                              if (.not. ok) exit
+                           end do
+                           if (.not. ok) exit
+                        end do
+
+                        if (ok .and. poly_phase /= -1) then
+                           crude_VF = real(poly_phase, WP)   ! forces simple branch, skips IRL
+                           ! if (this%cfg%amRoot .and. i==26 .and. j==1 .and. k==21) then
+                           !    write(*,*) 'GUARD-Y: intersects=',intersects,' forced crude_VF=',crude_VF,' ok=',ok,' poly_phase=',poly_phase
+                           ! end if
+                        end if
+
+                     end if
+
+                  end if
+
+
                   if (crude_VF.lt.0.0_WP) then
                      ! Need full geometric flux
                      call getMoments(flux_polyhedron,this%localized_separator_link(i,j,k),this%detailed_face_flux(2,i,j,k))
@@ -1762,8 +1966,129 @@ contains
                   call getBoundingPts(flux_polyhedron,bounding_pts(:,1),bounding_pts(:,2))
                   bb_indices(:,1)=this%cfg%get_ijk_local(bounding_pts(:,1),[i,j,k])
                   bb_indices(:,2)=this%cfg%get_ijk_local(bounding_pts(:,2),[i,j,k])
+                  ! debug
+                  ! dbg: block
+                  !    integer :: ii,jj,kk,ni,p
+                  !    real(WP), dimension(4) :: plane
+                  !    real(WP) :: dmin, dmax, dist
+                  !    if (this%cfg%amRoot .and. i==26 .and. j==1 .and. k==21) then
+                  !    write(*,*) '--- PLANECHK for z-face (26,1,21) ---'
+                  !    do kk=bb_indices(3,1), bb_indices(3,2)
+                  !       do jj=bb_indices(2,1), bb_indices(2,2)
+                  !          do ii=bb_indices(1,1), bb_indices(1,2)
+
+                  !          if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) then
+                  !             do ni=0, getNumberOfPlanes(this%liquid_gas_interface(ii,jj,kk))-1
+                  !                plane = getPlane(this%liquid_gas_interface(ii,jj,kk), ni)
+
+                  !                dmin = huge(1.0_WP)
+                  !                dmax = -huge(1.0_WP)
+                  !                do p=1,8
+                  !                dist = dot_product(plane(1:3), face(:,p)) + plane(4)
+                  !                dmin = min(dmin, dist)
+                  !                dmax = max(dmax, dist)
+                  !                end do
+
+                  !                write(*,*) 'cell=',ii,jj,kk,' VF=',this%VF(ii,jj,kk), &
+                  !                         ' plane=',ni,' dmin=',dmin,' dmax=',dmax
+                  !             end do
+                  !          end if
+
+                  !          end do
+                  !       end do
+                  !    end do
+                  !    call flush(6)
+                  !    end if
+
+                  ! end block dbg
                   ! Crudely check phase information for flux polyhedron
                   crude_VF=this%crude_phase_test(bb_indices)
+
+                  ! Guard
+                  if (crude_VF .lt. 0.0_WP) then
+
+                     intersects = .false.
+                     eps_plane  = 1.0e-12_WP * max(this%cfg%dx(i), this%cfg%dy(j), this%cfg%dz(k))
+
+                     ! centroid of the flux polyhedron (vertex-average)
+                     pcent = 0.0_WP
+                     do p=1,8
+                        pcent = pcent + face(:,p)
+                     end do
+                     pcent = pcent / 8.0_WP
+
+                     ! Check if ANY plane intersects the polyhedron
+                     do kk=bb_indices(3,1), bb_indices(3,2)
+                        do jj=bb_indices(2,1), bb_indices(2,2)
+                           do ii=bb_indices(1,1), bb_indices(1,2)
+
+                              if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) then
+                                 do ni=0, getNumberOfPlanes(this%liquid_gas_interface(ii,jj,kk))-1
+                                    plane = getPlane(this%liquid_gas_interface(ii,jj,kk), ni)
+
+                                    dmin = huge(1.0_WP)
+                                    dmax = -huge(1.0_WP)
+                                    do p=1,8
+                                       dist = dot_product(plane(1:3), face(:,p)) + plane(4)
+                                       dmin = min(dmin, dist)
+                                       dmax = max(dmax, dist)
+                                    end do
+
+                                    if (dmin <= eps_plane .and. dmax >= -eps_plane) then
+                                       intersects = .true.
+                                       exit
+                                    end if
+                                 end do
+                              end if
+
+                              if (intersects) exit
+                           end do
+                           if (intersects) exit
+                        end do
+                        if (intersects) exit
+                     end do
+
+                     ! If no intersection: classify the polyhedron centroid using isPtInt
+                     if (.not. intersects) then
+
+                        ok = .true.
+                        poly_phase = -1
+
+                        do kk=bb_indices(3,1), bb_indices(3,2)
+                           do jj=bb_indices(2,1), bb_indices(2,2)
+                              do ii=bb_indices(1,1), bb_indices(1,2)
+
+                                 if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) then
+
+                                    ! isPtInt returns logical; map to 1(liquid) / 0(gas)
+                                    phase_here = merge(1, 0, isPtInt(pcent, this%liquid_gas_interface(ii,jj,kk)))
+
+                                    if (poly_phase == -1) then
+                                       poly_phase = phase_here
+                                    else if (poly_phase /= phase_here) then
+                                       ok = .false.
+                                       exit
+                                    end if
+
+                                 end if
+
+                              end do
+                              if (.not. ok) exit
+                           end do
+                           if (.not. ok) exit
+                        end do
+
+                        if (ok .and. poly_phase /= -1) then
+                           crude_VF = real(poly_phase, WP)   ! forces simple branch, skips IRL
+                           ! if (this%cfg%amRoot .and. i==26 .and. j==1 .and. k==21) then
+                           !    write(*,*) 'GUARD-Z: intersects=',intersects,' forced crude_VF=',crude_VF,' ok=',ok,' poly_phase=',poly_phase
+                           ! end if
+                        end if
+
+                     end if
+
+                  end if
+
                   if (crude_VF.lt.0.0_WP) then
                      ! Need full geometric flux
                      call getMoments(flux_polyhedron,this%localized_separator_link(i,j,k),this%detailed_face_flux(3,i,j,k))
@@ -1775,6 +2100,58 @@ contains
                         gvol=gvol+getVolume(my_SepVM,1); gbar=gbar+getCentroid(my_SepVM,1)
                      end do
                      call construct(this%face_flux(3,i,j,k),[lvol,lbar,gvol,gbar])
+                     ! debug
+                     ! zface_forensics: block
+                     !    integer, parameter :: i0=26, j0=1, k0=21
+                     !    integer :: ii,jj,kk, nmix, nliq, ngas
+                     !    real(WP) :: vfmin, vfmax, vol_now_dbg, vol_f, dz_move_max
+                     !    integer :: s, n
+
+                     !    if (this%cfg%amRoot .and. i==i0 .and. j==j0 .and. k==k0) then
+
+                     !       ! Only print when IRL actually produced nonzero liquid (your event)
+                     !       if (abs(lvol) > 1.0e-30_WP) then
+
+                     !          vfmin = huge(1.0_WP); vfmax = -huge(1.0_WP)
+                     !          nmix = 0; nliq = 0; ngas = 0
+
+                     !          do kk=bb_indices(3,1), bb_indices(3,2)
+                     !          do jj=bb_indices(2,1), bb_indices(2,2)
+                     !             do ii=bb_indices(1,1), bb_indices(1,2)
+                     !                vfmin = min(vfmin, this%VF(ii,jj,kk))
+                     !                vfmax = max(vfmax, this%VF(ii,jj,kk))
+                     !                if (this%VF(ii,jj,kk) >= VFlo .and. this%VF(ii,jj,kk) <= VFhi) nmix = nmix + 1
+                     !                if (this%VF(ii,jj,kk) >  VFhi) nliq = nliq + 1
+                     !                if (this%VF(ii,jj,kk) <  VFlo) ngas = ngas + 1
+                     !             end do
+                     !          end do
+                     !          end do
+
+                     !          vol_now_dbg = calculateVolume(flux_polyhedron)
+                     !          vol_f   = dt*W(i,j,k)*this%cfg%dx(i)*this%cfg%dy(j)
+
+                     !          dz_move_max = maxval(abs(face(3,5:8) - face(3,1:4)))  ! backtrack distance on z for the 4 corners
+
+                     !          s = getSize(this%detailed_face_flux(3,i,j,k))
+
+                     !          write(*,*) 'ZFACEDBG (i,j,k)=',i,j,k,' crude_VF=',crude_VF,' size=',s
+                     !          write(*,*) '  W=',W(i,j,k),' dt=',dt,' vol_f=',vol_f,' vol_now=',vol_now_dbg,' dz_move_max=',dz_move_max
+                     !          write(*,*) '  bb_indices:',bb_indices(:,1),' -> ',bb_indices(:,2)
+                     !          write(*,*) '  VF stats in BB: vfmin=',vfmin,' vfmax=',vfmax,' counts (gas,mix,liq)=',ngas,nmix,nliq
+                     !          write(*,*) '  Adjacent cell VF/band: VF(k-1)=',this%VF(i,j,k-1),' band(k-1)=',this%band(i,j,k-1), &
+                     !                   '  VF(k)=',this%VF(i,j,k),' band(k)=',this%band(i,j,k)
+                     !          write(*,*) '  IRL result: lvol=',lvol,' gvol=',gvol,' lfrac=',lvol/(lvol+gvol)
+
+                     !          ! Optional: show each piece’s liquid/gas volume
+                     !          do n=0,s-1
+                     !          call getSepVMAtIndex(this%detailed_face_flux(3,i,j,k),n,my_SepVM)
+                     !          write(*,*) '    piece',n,' VL=',getVolume(my_SepVM,0),' VG=',getVolume(my_SepVM,1)
+                     !          end do
+
+                     !          call flush(6)
+                     !       end if
+                     !    end if
+                     ! end block zface_forensics
                   else
                      ! Simpler flux calculation
                      vol_now=calculateVolume(flux_polyhedron); ctr_now=calculateCentroid(flux_polyhedron)
@@ -1785,12 +2162,19 @@ contains
             end do
          end do
       end do
-      
+
       ! Compute transported moments
       do index=1,sum(this%band_count(0:advect_band))
          i=this%band_map(1,index)
          j=this%band_map(2,index)
          k=this%band_map(3,index)
+
+         ! Debug
+         ! if (i.eq.26.and.j.eq.1.and.k.eq.21) then
+         !    print*,'detailed_face_flux(1,i ,j,k) = ',this%detailed_face_flux(1,i ,j,k),',  detailed_face_flux(1,i+1,j,k) = ',this%detailed_face_flux(1,i+1,j,k)
+         !    print*,'detailed_face_flux(2,i,j ,k) = ',this%detailed_face_flux(2,i,j ,k),',  detailed_face_flux(2,i,j+1,k) = ',this%detailed_face_flux(2,i,j+1,k)
+         !    print*,'detailed_face_flux(3,i,j,k ) = ',this%detailed_face_flux(3,i,j,k ),',  detailed_face_flux(3,i,j,k+1) = ',this%detailed_face_flux(3,i,j,k+1)
+         ! end if
          
          ! Skip wall/bcond cells - bconds need to be provided elsewhere directly!
          if (this%mask(i,j,k).ne.0) cycle
@@ -1813,6 +2197,58 @@ contains
          
          ! Compute new liquid volume fraction
          this%VF(i,j,k)=Lvolnew/(Lvolnew+Gvolnew)
+
+
+         ! dbg_b: block
+         !    integer :: sxm,sxp,sym,syp,szm,szp
+         !    real(WP) :: l_xm,l_xp,l_ym,l_yp,l_zm,l_zp
+         !    real(WP) :: g_xm,g_xp,g_ym,g_yp,g_zm,g_zp
+         !    real(WP) :: t_xm,t_xp,t_ym,t_yp,t_zm,t_zp
+         !    real(WP) :: vol, dvf_from_flux
+         !    if (this%cfg%amRoot .and. i==26 .and. j==1 .and. k==21) then
+
+         !       vol = this%cfg%vol(i,j,k)
+         !       print*,'cell vol = ',vol
+
+         !       ! sizes: >0 means IRL geometric split happened on that face in storage mode
+         !       sxm = getSize(this%detailed_face_flux(1,i  ,j,k))
+         !       sxp = getSize(this%detailed_face_flux(1,i+1,j,k))
+         !       sym = getSize(this%detailed_face_flux(2,i,j  ,k))
+         !       syp = getSize(this%detailed_face_flux(2,i,j+1,k))
+         !       szm = getSize(this%detailed_face_flux(3,i,j,k  ))
+         !       szp = getSize(this%detailed_face_flux(3,i,j,k+1))
+
+         !       ! phase volumes on each face (0=liquid, 1=gas)
+         !       l_xm = getVolumePtr(this%face_flux(1,i  ,j,k),0)
+         !       l_xp = getVolumePtr(this%face_flux(1,i+1,j,k),0)
+         !       l_ym = getVolumePtr(this%face_flux(2,i,j  ,k),0)
+         !       l_yp = getVolumePtr(this%face_flux(2,i,j+1,k),0)
+         !       l_zm = getVolumePtr(this%face_flux(3,i,j,k  ),0)
+         !       l_zp = getVolumePtr(this%face_flux(3,i,j,k+1),0)
+
+         !       g_xm = getVolumePtr(this%face_flux(1,i  ,j,k),1)
+         !       g_xp = getVolumePtr(this%face_flux(1,i+1,j,k),1)
+         !       g_ym = getVolumePtr(this%face_flux(2,i,j  ,k),1)
+         !       g_yp = getVolumePtr(this%face_flux(2,i,j+1,k),1)
+         !       g_zm = getVolumePtr(this%face_flux(3,i,j,k  ),1)
+         !       g_zp = getVolumePtr(this%face_flux(3,i,j,k+1),1)
+
+         !       t_xm = l_xm + g_xm;  t_xp = l_xp + g_xp
+         !       t_ym = l_ym + g_ym;  t_yp = l_yp + g_yp
+         !       t_zm = l_zm + g_zm;  t_zp = l_zp + g_zp
+
+         !       dvf_from_flux = Lvolinc / vol
+
+         !       write(*,*) 'FLUXDBG cell',i,j,k,' VFold=',this%VFold(i,j,k),' band(old)=',this%band(i,j,k)
+         !       write(*,*) '  sizes xm xp ym yp zm zp:', sxm,sxp,sym,syp,szm,szp
+         !       write(*,*) '  L faces xm xp ym yp zm zp:', l_xm,l_xp,l_ym,l_yp,l_zm,l_zp
+         !       write(*,*) '  G faces xm xp ym yp zm zp:', g_xm,g_xp,g_ym,g_yp,g_zm,g_zp
+         !       write(*,*) '  T faces xm xp ym yp zm zp:', t_xm,t_xp,t_ym,t_yp,t_zm,t_zp
+         !       write(*,*) '  Lvolinc=',Lvolinc,' Gvolinc=',Gvolinc,' dvf_from_flux=',dvf_from_flux
+         !       call flush(6)
+         !    end if
+
+         ! end block dbg_b
          
          ! Only work on higher order moments if VF is in [VFlo,VFhi]
          if (this%VF(i,j,k).lt.VFlo) then
