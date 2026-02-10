@@ -48,7 +48,7 @@ T max iterations               : 30
 Max timestep size              : 3e-7
 Max cfl number                 : 0.9
 Sub-iterations                 : 6
-Max time                       : 0.015
+Max time                       : 3e-6
 
 # Phase change
 Max pseudo timestep size       : 4e-6
@@ -66,7 +66,7 @@ Scalar tolerance               : 1e-7
 Scalar iteration               : 100
 
 # Ensight output
-Ensight output period          : 0.001
+Ensight output period          : 3e-7
 
 # Temperature and vapor mass fraction file output
-T and Yv file output period    : 0.005
+T and Yv file output period    : 3e-7

@@ -533,170 +533,6 @@ contains
    end subroutine get_face_apt
 
 
-   ! !> Calculate the explicit SC time derivative from advective term based on U/V/W
-   ! subroutine get_dSCdt_adv(this,dSCdt,U,V,W,detailed_face_flux,dt)
-   !    use irl_fortran_interface
-   !    implicit none
-   !    class(tpscalar), intent(inout) :: this
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:,1:), intent(out) :: dSCdt    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_,1:nscalar)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:)   , intent(in)  :: U        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:)   , intent(in)  :: V        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:)   , intent(in)  :: W        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    type(TagAccVM_SepVM_type), dimension(1:,this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:) :: detailed_face_flux !< Needs to be (1:3,imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-   !    real(WP), intent(in) :: dt  !< This is the time step size that was used to generate the detailed_face_flux geometric data
-   !    type(SepVM_type) :: my_SepVM
-   !    integer :: i,j,k,p,nsc,n
-   !    real(WP), dimension(:,:,:),   allocatable :: FX,FY,FZ
-   !    real(WP), dimension(:,:,:,:), allocatable :: grad
-   !    real(WP) :: my_vol,SCm,SCp
-   !    !real(WP), dimension(3) :: my_bar
-   !    integer, dimension(3) :: ind
-   !    ! Zero out dSC/dt array
-   !    dSCdt=0.0_WP
-   !    ! Allocate flux arrays
-   !    allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-   !    allocate(FY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-   !    allocate(FZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-   !    ! Allocate scalar gradient
-   !    allocate(grad(1:3,this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-   !    ! Work on each scalar
-   !    do nsc=1,this%nscalar
-   !       if (this%skip(nsc)) cycle
-   !       p=this%phase(nsc)
-   !       ! Reset fluxes and gradient to zero
-   !       FX=0.0_WP; FY=0.0_WP; FZ=0.0_WP; grad=0.0_WP
-   !       ! Calculate minmod-limited gradient of SC everywhere
-   !       do k=this%cfg%kmino_+1,this%cfg%kmaxo_-1
-   !          do j=this%cfg%jmino_+1,this%cfg%jmaxo_-1
-   !             do i=this%cfg%imino_+1,this%cfg%imaxo_-1
-   !                ! No need to calculate gradient inside of wall cell
-   !                if (this%mask(i,j,k).eq.1) cycle
-   !                ! Get gradient
-   !                grad(1,i,j,k)=minmod((this%SC(i+1,j,k,nsc)-this%SC(i,j,k,nsc))*this%cfg%dxmi(i+1),(this%SC(i,j,k,nsc)-this%SC(i-1,j,k,nsc))*this%cfg%dxmi(i))
-   !                grad(2,i,j,k)=minmod((this%SC(i,j+1,k,nsc)-this%SC(i,j,k,nsc))*this%cfg%dymi(j+1),(this%SC(i,j,k,nsc)-this%SC(i,j-1,k,nsc))*this%cfg%dymi(j))
-   !                grad(3,i,j,k)=minmod((this%SC(i,j,k+1,nsc)-this%SC(i,j,k,nsc))*this%cfg%dzmi(k+1),(this%SC(i,j,k,nsc)-this%SC(i,j,k-1,nsc))*this%cfg%dzmi(k))
-   !             end do
-   !          end do
-   !       end do
-   !       call this%cfg%sync(grad)
-   !       ! Convective flux of SC
-   !       do k=this%cfg%kmin_,this%cfg%kmax_+1
-   !          do j=this%cfg%jmin_,this%cfg%jmax_+1
-   !             do i=this%cfg%imin_,this%cfg%imax_+1
-   !                ! Flux on x-face
-   !                if (getSize(detailed_face_flux(1,i,j,k)).gt.0) then
-   !                   ! Detailed geometric flux is available, use geometric fluxing
-   !                   do n=0,getSize(detailed_face_flux(1,i,j,k))-1
-   !                      ! Get cell index for nth object
-   !                      ind=this%cfg%get_ijk_from_lexico(getTagForIndex(detailed_face_flux(1,i,j,k),n))
-   !                      ! Get SepVM for nth object
-   !                      call getSepVMAtIndex(detailed_face_flux(1,i,j,k),n,my_SepVM)
-   !                      ! Extract volume for relevant phase
-   !                      my_vol=getVolume(my_SepVM,p)
-   !                      ! Increment flux with first order estimate
-   !                      FX(i,j,k)=FX(i,j,k)-my_vol*this%SCold(ind(1),ind(2),ind(3),nsc)
-   !                      ! Second order correction
-   !                      !my_bar=getCentroid(my_SepVM,p)
-   !                      !FX(i,j,k)=FX(i,j,k)-my_vol*(sum(grad(:,ii,jj,kk)*my_bar(:)-my_barold(:)))
-   !                   end do
-   !                   ! Scale by cell face area and time step size
-   !                   FX(i,j,k)=FX(i,j,k)/(dt*this%cfg%dy(j)*this%cfg%dz(k))
-   !                else
-   !                   ! No detailed geometric flux is available, use MUSCL flux
-   !                   SCm=0.0_WP; if (this%PVFold(i-1,j,k,p).ne.0.0_WP) SCm=this%SC(i-1,j,k,nsc)+0.5_WP*grad(1,i-1,j,k)*this%cfg%dx(i-1)
-   !                   SCp=0.0_WP; if (this%PVFold(i  ,j,k,p).ne.0.0_WP) SCp=this%SC(i  ,j,k,nsc)-0.5_WP*grad(1,i  ,j,k)*this%cfg%dx(i  )
-   !                   FX(i,j,k)=-0.5_WP*(U(i,j,k)+abs(U(i,j,k)))*SCm-0.5_WP*(U(i,j,k)-abs(U(i,j,k)))*SCp
-   !                end if
-   !                ! Flux on y-face
-   !                if (getSize(detailed_face_flux(2,i,j,k)).gt.0) then
-   !                   ! Detailed geometric flux is available, use geometric fluxing
-   !                   do n=0,getSize(detailed_face_flux(2,i,j,k))-1
-   !                      ! Get cell index for nth object
-   !                      ind=this%cfg%get_ijk_from_lexico(getTagForIndex(detailed_face_flux(2,i,j,k),n))
-   !                      ! Get SepVM for nth object
-   !                      call getSepVMAtIndex(detailed_face_flux(2,i,j,k),n,my_SepVM)
-   !                      ! Extract volume for relevant phase
-   !                      my_vol=getVolume(my_SepVM,p)
-   !                      ! Increment flux with first order estimate
-   !                      FY(i,j,k)=FY(i,j,k)-my_vol*this%SCold(ind(1),ind(2),ind(3),nsc)
-   !                      ! Second order correction
-   !                      !my_bar=getCentroid(my_SepVM,p)
-   !                      !FY(i,j,k)=FY(i,j,k)-my_vol*(sum(grad(:,ii,jj,kk)*my_bar(:)-my_barold(:)))
-   !                   end do
-   !                   ! Scale by cell face area and time step size
-   !                   FY(i,j,k)=FY(i,j,k)/(dt*this%cfg%dx(i)*this%cfg%dz(k))
-   !                else
-   !                   ! No detailed geometric flux is available, use MUSCL flux
-   !                   SCm=0.0_WP; if (this%PVFold(i,j-1,k,p).ne.0.0_WP) SCm=this%SC(i,j-1,k,nsc)+0.5_WP*grad(2,i,j-1,k)*this%cfg%dy(j-1)
-   !                   SCp=0.0_WP; if (this%PVFold(i,j  ,k,p).ne.0.0_WP) SCp=this%SC(i,j  ,k,nsc)-0.5_WP*grad(2,i,j  ,k)*this%cfg%dy(j  )
-   !                   FY(i,j,k)=-0.5_WP*(V(i,j,k)+abs(V(i,j,k)))*SCm-0.5_WP*(V(i,j,k)-abs(V(i,j,k)))*SCp
-   !                end if
-   !                ! Flux on z-face
-   !                if (getSize(detailed_face_flux(3,i,j,k)).gt.0) then
-   !                   ! Detailed geometric flux is available, use geometric fluxing
-   !                   do n=0,getSize(detailed_face_flux(3,i,j,k))-1
-   !                      ! Get cell index for nth object
-   !                      ind=this%cfg%get_ijk_from_lexico(getTagForIndex(detailed_face_flux(3,i,j,k),n))
-   !                      ! Get SepVM for nth object
-   !                      call getSepVMAtIndex(detailed_face_flux(3,i,j,k),n,my_SepVM)
-   !                      ! Extract volume for relevant phase
-   !                      my_vol=getVolume(my_SepVM,p)
-   !                      ! Increment flux with first order estimate
-   !                      FZ(i,j,k)=FZ(i,j,k)-my_vol*this%SCold(ind(1),ind(2),ind(3),nsc)
-   !                      ! Second order correction
-   !                      !my_bar=getCentroid(my_SepVM,p)
-   !                      !FZ(i,j,k)=FZ(i,j,k)-my_vol*(sum(grad(:,ii,jj,kk)*my_bar(:)-my_barold(:)))
-   !                   end do
-   !                   ! Scale by cell face area and time step size
-   !                   FZ(i,j,k)=FZ(i,j,k)/(dt*this%cfg%dx(i)*this%cfg%dy(j))
-   !                else
-   !                   ! No detailed geometric flux is available, use MUSCL flux
-   !                   SCm=0.0_WP; if (this%PVFold(i,j,k-1,p).ne.0.0_WP) SCm=this%SC(i,j,k-1,nsc)+0.5_WP*grad(3,i,j,k-1)*this%cfg%dz(k-1)
-   !                   SCp=0.0_WP; if (this%PVFold(i,j,k  ,p).ne.0.0_WP) SCp=this%SC(i,j,k  ,nsc)-0.5_WP*grad(3,i,j,k  )*this%cfg%dz(k  )
-   !                   FZ(i,j,k)=-0.5_WP*(W(i,j,k)+abs(W(i,j,k)))*SCm-0.5_WP*(W(i,j,k)-abs(W(i,j,k)))*SCp
-   !                end if
-   !             end do
-   !          end do
-   !       end do
-   !       ! Time derivative of SC
-   !       do k=this%cfg%kmin_,this%cfg%kmax_
-   !          do j=this%cfg%jmin_,this%cfg%jmax_
-   !             do i=this%cfg%imin_,this%cfg%imax_
-   !                if (this%PVF(i,j,k,p).gt.0.0_WP) then
-   !                   dSCdt(i,j,k,nsc)=sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+&
-   !                   &                sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+&
-   !                   &                sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1))
-   !                end if
-   !             end do
-   !          end do
-   !       end do
-   !       ! Sync residual
-   !       call this%cfg%sync(dSCdt(:,:,:,nsc))
-   !    end do
-   !    ! Deallocate flux arrays
-   !    deallocate(FX,FY,FZ,grad)
-      
-   !    contains
-         
-   !       !> Minmod gradient
-   !       function minmod(g1,g2) result(g)
-   !          implicit none
-   !          real(WP), intent(in) :: g1,g2
-   !          real(WP) :: g
-   !          if (g1*g2.le.0.0_WP) then
-   !             g=0.0_WP
-   !          else
-   !             if (abs(g1).lt.abs(g2)) then
-   !                g=g1
-   !             else
-   !                g=g2
-   !             end if
-   !          end if
-   !       end function minmod
-      
-   ! end subroutine get_dSCdt_adv
-
-
    !> Calculate the explicit SC time derivative from advective term based on U/V/W
    subroutine get_dSCdt_adv(this,dSCdt,U,V,W,detailed_face_flux,dt)
       use irl_fortran_interface
@@ -713,30 +549,22 @@ contains
       real(WP), dimension(:,:,:),   allocatable :: FX,FY,FZ
       real(WP), dimension(:,:,:,:), allocatable :: grad
       real(WP) :: my_vol,SCm,SCp
-      real(WP) :: am, ap
-      real(WP), parameter :: PVeps = 1.0e-12_WP
       !real(WP), dimension(3) :: my_bar
       integer, dimension(3) :: ind
-
       ! Zero out dSC/dt array
       dSCdt=0.0_WP
-
       ! Allocate flux arrays
       allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(FY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
       allocate(FZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-
       ! Allocate scalar gradient
       allocate(grad(1:3,this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
-
       ! Work on each scalar
       do nsc=1,this%nscalar
          if (this%skip(nsc)) cycle
          p=this%phase(nsc)
-
          ! Reset fluxes and gradient to zero
          FX=0.0_WP; FY=0.0_WP; FZ=0.0_WP; grad=0.0_WP
-
          ! Calculate minmod-limited gradient of SC everywhere
          do k=this%cfg%kmino_+1,this%cfg%kmaxo_-1
             do j=this%cfg%jmino_+1,this%cfg%jmaxo_-1
@@ -751,85 +579,85 @@ contains
             end do
          end do
          call this%cfg%sync(grad)
-
          ! Convective flux of SC
          do k=this%cfg%kmin_,this%cfg%kmax_+1
             do j=this%cfg%jmin_,this%cfg%jmax_+1
                do i=this%cfg%imin_,this%cfg%imax_+1
-
                   ! Flux on x-face
                   if (getSize(detailed_face_flux(1,i,j,k)).gt.0) then
                      ! Detailed geometric flux is available, use geometric fluxing
                      do n=0,getSize(detailed_face_flux(1,i,j,k))-1
+                        ! Get cell index for nth object
                         ind=this%cfg%get_ijk_from_lexico(getTagForIndex(detailed_face_flux(1,i,j,k),n))
+                        ! Get SepVM for nth object
                         call getSepVMAtIndex(detailed_face_flux(1,i,j,k),n,my_SepVM)
+                        ! Extract volume for relevant phase
                         my_vol=getVolume(my_SepVM,p)
+                        ! Increment flux with first order estimate
                         FX(i,j,k)=FX(i,j,k)-my_vol*this%SCold(ind(1),ind(2),ind(3),nsc)
+                        ! Second order correction
+                        !my_bar=getCentroid(my_SepVM,p)
+                        !FX(i,j,k)=FX(i,j,k)-my_vol*(sum(grad(:,ii,jj,kk)*my_bar(:)-my_barold(:)))
                      end do
+                     ! Scale by cell face area and time step size
                      FX(i,j,k)=FX(i,j,k)/(dt*this%cfg%dy(j)*this%cfg%dz(k))
                   else
                      ! No detailed geometric flux is available, use MUSCL flux
-                     ! >>> MOD: advect (alpha * SC) instead of SC
-                     am = this%PVFold(i-1,j,k,p)
-                     ap = this%PVFold(i  ,j,k,p)
-
-                     SCm=0.0_WP; if (am.gt.PVeps) SCm=this%SC(i-1,j,k,nsc)+0.5_WP*grad(1,i-1,j,k)*this%cfg%dx(i-1)
-                     SCp=0.0_WP; if (ap.gt.PVeps) SCp=this%SC(i  ,j,k,nsc)-0.5_WP*grad(1,i  ,j,k)*this%cfg%dx(i  )
-
-                     FX(i,j,k)=-0.5_WP*(U(i,j,k)+abs(U(i,j,k)))*(am*SCm) &
-                           -0.5_WP*(U(i,j,k)-abs(U(i,j,k)))*(ap*SCp)
+                     SCm=0.0_WP; if (this%PVFold(i-1,j,k,p).ne.0.0_WP) SCm=this%SC(i-1,j,k,nsc)+0.5_WP*grad(1,i-1,j,k)*this%cfg%dx(i-1)
+                     SCp=0.0_WP; if (this%PVFold(i  ,j,k,p).ne.0.0_WP) SCp=this%SC(i  ,j,k,nsc)-0.5_WP*grad(1,i  ,j,k)*this%cfg%dx(i  )
+                     FX(i,j,k)=-0.5_WP*(U(i,j,k)+abs(U(i,j,k)))*SCm-0.5_WP*(U(i,j,k)-abs(U(i,j,k)))*SCp
                   end if
-
                   ! Flux on y-face
                   if (getSize(detailed_face_flux(2,i,j,k)).gt.0) then
                      ! Detailed geometric flux is available, use geometric fluxing
                      do n=0,getSize(detailed_face_flux(2,i,j,k))-1
+                        ! Get cell index for nth object
                         ind=this%cfg%get_ijk_from_lexico(getTagForIndex(detailed_face_flux(2,i,j,k),n))
+                        ! Get SepVM for nth object
                         call getSepVMAtIndex(detailed_face_flux(2,i,j,k),n,my_SepVM)
+                        ! Extract volume for relevant phase
                         my_vol=getVolume(my_SepVM,p)
+                        ! Increment flux with first order estimate
                         FY(i,j,k)=FY(i,j,k)-my_vol*this%SCold(ind(1),ind(2),ind(3),nsc)
+                        ! Second order correction
+                        !my_bar=getCentroid(my_SepVM,p)
+                        !FY(i,j,k)=FY(i,j,k)-my_vol*(sum(grad(:,ii,jj,kk)*my_bar(:)-my_barold(:)))
                      end do
+                     ! Scale by cell face area and time step size
                      FY(i,j,k)=FY(i,j,k)/(dt*this%cfg%dx(i)*this%cfg%dz(k))
                   else
                      ! No detailed geometric flux is available, use MUSCL flux
-                     ! >>> MOD: advect (alpha * SC) instead of SC
-                     am = this%PVFold(i,j-1,k,p)
-                     ap = this%PVFold(i,j  ,k,p)
-
-                     SCm=0.0_WP; if (am.gt.PVeps) SCm=this%SC(i,j-1,k,nsc)+0.5_WP*grad(2,i,j-1,k)*this%cfg%dy(j-1)
-                     SCp=0.0_WP; if (ap.gt.PVeps) SCp=this%SC(i,j  ,k,nsc)-0.5_WP*grad(2,i,j  ,k)*this%cfg%dy(j  )
-
-                     FY(i,j,k)=-0.5_WP*(V(i,j,k)+abs(V(i,j,k)))*(am*SCm) &
-                           -0.5_WP*(V(i,j,k)-abs(V(i,j,k)))*(ap*SCp)
+                     SCm=0.0_WP; if (this%PVFold(i,j-1,k,p).ne.0.0_WP) SCm=this%SC(i,j-1,k,nsc)+0.5_WP*grad(2,i,j-1,k)*this%cfg%dy(j-1)
+                     SCp=0.0_WP; if (this%PVFold(i,j  ,k,p).ne.0.0_WP) SCp=this%SC(i,j  ,k,nsc)-0.5_WP*grad(2,i,j  ,k)*this%cfg%dy(j  )
+                     FY(i,j,k)=-0.5_WP*(V(i,j,k)+abs(V(i,j,k)))*SCm-0.5_WP*(V(i,j,k)-abs(V(i,j,k)))*SCp
                   end if
-
                   ! Flux on z-face
                   if (getSize(detailed_face_flux(3,i,j,k)).gt.0) then
                      ! Detailed geometric flux is available, use geometric fluxing
                      do n=0,getSize(detailed_face_flux(3,i,j,k))-1
+                        ! Get cell index for nth object
                         ind=this%cfg%get_ijk_from_lexico(getTagForIndex(detailed_face_flux(3,i,j,k),n))
+                        ! Get SepVM for nth object
                         call getSepVMAtIndex(detailed_face_flux(3,i,j,k),n,my_SepVM)
+                        ! Extract volume for relevant phase
                         my_vol=getVolume(my_SepVM,p)
+                        ! Increment flux with first order estimate
                         FZ(i,j,k)=FZ(i,j,k)-my_vol*this%SCold(ind(1),ind(2),ind(3),nsc)
+                        ! Second order correction
+                        !my_bar=getCentroid(my_SepVM,p)
+                        !FZ(i,j,k)=FZ(i,j,k)-my_vol*(sum(grad(:,ii,jj,kk)*my_bar(:)-my_barold(:)))
                      end do
+                     ! Scale by cell face area and time step size
                      FZ(i,j,k)=FZ(i,j,k)/(dt*this%cfg%dx(i)*this%cfg%dy(j))
                   else
                      ! No detailed geometric flux is available, use MUSCL flux
-                     ! >>> MOD: advect (alpha * SC) instead of SC
-                     am = this%PVFold(i,j,k-1,p)
-                     ap = this%PVFold(i,j,k  ,p)
-
-                     SCm=0.0_WP; if (am.gt.PVeps) SCm=this%SC(i,j,k-1,nsc)+0.5_WP*grad(3,i,j,k-1)*this%cfg%dz(k-1)
-                     SCp=0.0_WP; if (ap.gt.PVeps) SCp=this%SC(i,j,k  ,nsc)-0.5_WP*grad(3,i,j,k  )*this%cfg%dz(k  )
-
-                     FZ(i,j,k)=-0.5_WP*(W(i,j,k)+abs(W(i,j,k)))*(am*SCm) &
-                           -0.5_WP*(W(i,j,k)-abs(W(i,j,k)))*(ap*SCp)
+                     SCm=0.0_WP; if (this%PVFold(i,j,k-1,p).ne.0.0_WP) SCm=this%SC(i,j,k-1,nsc)+0.5_WP*grad(3,i,j,k-1)*this%cfg%dz(k-1)
+                     SCp=0.0_WP; if (this%PVFold(i,j,k  ,p).ne.0.0_WP) SCp=this%SC(i,j,k  ,nsc)-0.5_WP*grad(3,i,j,k  )*this%cfg%dz(k  )
+                     FZ(i,j,k)=-0.5_WP*(W(i,j,k)+abs(W(i,j,k)))*SCm-0.5_WP*(W(i,j,k)-abs(W(i,j,k)))*SCp
                   end if
-
                end do
             end do
          end do
-
          ! Time derivative of SC
          do k=this%cfg%kmin_,this%cfg%kmax_
             do j=this%cfg%jmin_,this%cfg%jmax_
@@ -842,35 +670,31 @@ contains
                end do
             end do
          end do
-
          ! Sync residual
          call this%cfg%sync(dSCdt(:,:,:,nsc))
       end do
-
       ! Deallocate flux arrays
       deallocate(FX,FY,FZ,grad)
-
-   contains
-
-      !> Minmod gradient
-      function minmod(g1,g2) result(g)
-         implicit none
-         real(WP), intent(in) :: g1,g2
-         real(WP) :: g
-         if (g1*g2.le.0.0_WP) then
-            g=0.0_WP
-         else
-            if (abs(g1).lt.abs(g2)) then
-               g=g1
+      
+      contains
+         
+         !> Minmod gradient
+         function minmod(g1,g2) result(g)
+            implicit none
+            real(WP), intent(in) :: g1,g2
+            real(WP) :: g
+            if (g1*g2.le.0.0_WP) then
+               g=0.0_WP
             else
-               g=g2
+               if (abs(g1).lt.abs(g2)) then
+                  g=g1
+               else
+                  g=g2
+               end if
             end if
-         end if
-      end function minmod
-
+         end function minmod
+      
    end subroutine get_dSCdt_adv
-
-
 
 
    !> Calculate the explicit SC time derivative term based on U/V/W from diffusive term
