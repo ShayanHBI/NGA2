@@ -20,7 +20,7 @@ module simulation
    use mathtools,         only: Pi
    implicit none
    private
-   
+
    !> Get a couple linear solvers, a two-phase flow solver, a volume fraction solver and corresponding time tracker
    type(hypre_str),   public :: ps,ss
    type(ddadi),       public :: vs
@@ -39,17 +39,17 @@ module simulation
    !> Chemical system and state
    type(chem_sys)   :: sys
    type(chem_state) :: state
-   
+
    !> Ensight postprocessing
    type(surfmesh) :: smesh
    type(ensight)  :: ens_out
    type(event)    :: ens_evt,TYv_evt
-   
+
    !> Simulation monitor file
    type(monitor) :: mfile,cflfile,scfile,lgfile
-   
+
    public :: simulation_init,simulation_run,simulation_final
-   
+
    !> Private work arrays
    real(WP), dimension(:,:,:,:), allocatable :: resSC
    real(WP), dimension(:,:,:),   allocatable :: resU,resV,resW
@@ -58,7 +58,7 @@ module simulation
    real(WP), dimension(:),       allocatable :: MM
    ! Debug
    real(WP), dimension(:,:,:),   allocatable :: dbg_flg
-   
+
    !> Problem definition
    real(WP) :: R0,T_liq,T_amb,T_g,pressure,center(3)
    integer  :: iWv,iWl,iO2,iN2,iTl,iTg
@@ -154,8 +154,8 @@ contains
       isIn=.false.
       if (j.eq.pg%jmin-1) isIn=.true.
    end function ym_locator_sc
-   
-   
+
+
    !> Function that localizes y+ boundary
    function yp_locator(pg,i,j,k) result(isIn)
       use pgrid_class, only: pgrid
@@ -187,8 +187,8 @@ contains
       isIn=.false.
       if (k.eq.pg%kmin-1) isIn=.true.
    end function zm_locator_sc
-   
-   
+
+
    !> Function that localizes z+ boundary
    function zp_locator(pg,i,j,k) result(isIn)
       use pgrid_class, only: pgrid
@@ -215,7 +215,7 @@ contains
          end if
          if (my_bc%itr%amIn) then
             select case (my_bc%face)
-            case ('x')
+             case ('x')
                stag=min(my_bc%dir,0)
                do n=1,my_bc%itr%n_
                   i=my_bc%itr%map(1,n); j=my_bc%itr%map(2,n); k=my_bc%itr%map(3,n)
@@ -228,7 +228,7 @@ contains
                   fs%V(i+stag,j:j+1,k    )=Uy
                   fs%W(i+stag,j    ,k:k+1)=Uz
                end do
-            case ('y')
+             case ('y')
                stag=min(my_bc%dir,0)
                do n=1,my_bc%itr%n_
                   i=my_bc%itr%map(1,n); j=my_bc%itr%map(2,n); k=my_bc%itr%map(3,n)
@@ -241,7 +241,7 @@ contains
                   fs%V(i    ,j     ,k    )=Uy
                   fs%W(i    ,j+stag,k:k+1)=Uz
                end do
-            case ('z')
+             case ('z')
                stag=min(my_bc%dir,0)
                do n=1,my_bc%itr%n_
                   i=my_bc%itr%map(1,n); j=my_bc%itr%map(2,n); k=my_bc%itr%map(3,n)
@@ -526,7 +526,7 @@ contains
 
          ! Skip if already clustered
          if (clustered(i,j,k)) cycle
-         
+
          ! Add current cell to the potential cluster
          n_clustered=1
          cell_indices(:,1)=[i,j,k]
@@ -655,7 +655,7 @@ contains
 
             ! Get the equilibrium state of the cluster
             call get_equilibrium()
-            
+
          end if
 
          ! Calculate the cluster VOF
@@ -839,31 +839,31 @@ contains
       ! Remove flotsams and thin structures if needed
       call vf%remove_flotsams()
       call vf%remove_thinstruct()
-      
+
       ! Synchronize and clean-up barycenter fields
       call vf%sync_and_clean_barycenters()
-      
+
       ! Update the interface band
       call vf%update_band()
-      
+
       ! Perform interface reconstruction from transported moments
       call vf%build_interface()
-      
+
       ! Create discontinuous polygon mesh from IRL interface
       call vf%polygonalize_interface()
-      
+
       ! Perform interface sensing (Do I need it?)
       ! if (vf%two_planes) call vf%sense_interface()
-      
+
       ! Calculate distance from polygons (I don't think it's needed anywhere)
       ! call vf%distance_from_polygon()
-      
+
       ! Calculate subcell phasic volumes (I don't think it's needed anywhere)
       ! call vf%subcell_vol()
-      
+
       ! Calculate curvature
       call vf%get_curvature()
-      
+
       ! Reset moments to guarantee compatibility with interface reconstruction
       call vf%reset_moments()
 
@@ -908,7 +908,7 @@ contains
 
       ! if (cfg%amRoot) print*,'End of the interface jump: VOF(31,12,1) = ',vf%VF(31,12,1)
 
-      contains
+   contains
 
       subroutine get_equilibrium()
          implicit none
@@ -976,7 +976,7 @@ contains
       real(WP), allocatable :: nasa_coef(:,:)
       character(len=str_medium), dimension(:), allocatable :: const_sp
       integer,  dimension(:), allocatable :: CS
-      
+
 
       ! Read problem inputs
       read_inputs: block
@@ -1112,11 +1112,11 @@ contains
             thermo=sp%value_map('thermo')
             T_range=thermo%value_double_1d('temperature-ranges',code)
             select case (size(T_range))
-            case (3)
+             case (3)
                a=thermo%value_double_2d('data',code)
-            case (2)
+             case (2)
                a(1,:)=thermo%value_double_1d('data',code)
-            case default
+             case default
                call die('Invalid temperature range')
             end select
             nasa_coef(isc,1)=T_range(2)
@@ -1148,7 +1148,7 @@ contains
          if (allocated(const_sp_copy)) deallocate(const_sp_copy)
       end block parse_mech
 
-      
+
       ! Allocate work arrays
       allocate_work_arrays: block
          allocate(resSC (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:ns+2))
@@ -1193,8 +1193,8 @@ contains
          ! Deallocate arrays
          deallocate(Bg)
       end block ceq_init
-      
-      
+
+
       ! Initialize time tracker
       initialize_timetracker: block
          time=timetracker(amRoot=cfg%amRoot,name='Main')
@@ -1210,8 +1210,8 @@ contains
          timeSC%dtmax=time%dtmax
          timeSC%dt=timeSC%dtmax
       end block initialize_timetracker
-      
-      
+
+
       ! Initialize our VOF solver and field
       create_and_initialize_vof: block
          use mms_geom,  only: cube_refine_vol
@@ -1518,7 +1518,7 @@ contains
          ! One-field temperature
          T=sc%PVF(:,:,:,Lphase)*sc%SC(:,:,:,iTl)+sc%PVF(:,:,:,Gphase)*sc%SC(:,:,:,iTg)
       end block create_scalar
-      
+
 
       ! Create and initialize an lgpc object
       create_lgpc: block
@@ -1578,10 +1578,10 @@ contains
          call ens_out%add_scalar('pressure',fs%P)
          call ens_out%add_surface('plic',smesh)
          do isc=1,ns
-           call ens_out%add_scalar('Y_'//trim(sc%SCname(isc)),sc%SC(:,:,:,isc))
+            call ens_out%add_scalar('Y_'//trim(sc%SCname(isc)),sc%SC(:,:,:,isc))
          end do
          do isc=ns+1,sc%nscalar
-           call ens_out%add_scalar(trim(sc%SCname(isc)),sc%SC(:,:,:,isc))
+            call ens_out%add_scalar(trim(sc%SCname(isc)),sc%SC(:,:,:,isc))
          end do
          call ens_out%add_scalar('mdot3p',lg%mdot3p)
          call ens_out%add_scalar('evp_div',lg%div_vel)
@@ -1601,8 +1601,8 @@ contains
          TYv_evt=event(time=time,name='T_Yv output')
          call param_read('T and Yv file output period',TYv_evt%tper)
       end block create_ensight
-      
-      
+
+
       ! Create a monitor file
       create_monitor: block
          integer :: isc
@@ -1687,10 +1687,10 @@ contains
       !    print*,'cfg%kmin_ = ',cfg%kmin_,'cfg%kmax_ = ',cfg%kmax_
       ! end block find_cell
 
-      
+
    end subroutine simulation_init
-   
-   
+
+
    !> Perform an NGA2 simulation-this mimicks NGA's old time integration for multiphase
    subroutine simulation_run
       use messager, only: die
@@ -1714,7 +1714,7 @@ contains
 
          ! Remember old lgpc divergence
          lg%div_vel_old=lg%div_vel
-         
+
          ! Remember old velocity
          fs%Uold=fs%U
          fs%Vold=fs%V
@@ -1722,7 +1722,7 @@ contains
 
          ! Apply time-varying Dirichlet conditions
          ! This is where time-dpt Dirichlet would be enforced
-         
+
          ! Prepare old staggered density (at n)
          call fs%get_olddensity(vf=vf)
 
@@ -1872,7 +1872,7 @@ contains
             !    print*,'after diffusion Tl = ',sc%SC(31,12,1,iTl)
             ! end if
 
-            ! 
+            !
             where (vf%VF.gt.0.0_WP) sc%SC(:,:,:,iWl)=1.0_WP
 
             ! do k=cfg%kmin_,cfg%kmax_
@@ -1936,13 +1936,13 @@ contains
          !    print*,'Tl = ',sc%SC(31,12,1,iTl)
          !    ! print*,'x,y,z = ',cfg%xm(16),cfg%ym(27),cfg%zm(12)
          ! end if
-         
+
          ! Get the volumetric lgpc mass flux
          call lg%get_mdot3p()
 
          ! Shift the lgpc mass flux
          call lg%shift_mdot3p()
-         
+
          ! Get the phase-change induced divergence
          call lg%get_div()
 
@@ -1956,29 +1956,29 @@ contains
 
             ! Prepare new staggered viscosity (at n+1)
             call fs%get_viscosity(vf=vf,strat=harmonic_visc)
-            
+
             ! Perform sub-iterations
             do while (time%it.le.time%itmax)
-               
+
                ! Build mid-time velocity
                fs%U=0.5_WP*(fs%U+fs%Uold)
                fs%V=0.5_WP*(fs%V+fs%Vold)
                fs%W=0.5_WP*(fs%W+fs%Wold)
-               
+
                ! Preliminary mass and momentum transport step at the interface
                call fs%prepare_advection_upwind(dt=time%dt)
-               
+
                ! Explicit calculation of drho*u/dt from NS
                call fs%get_dmomdt(resU,resV,resW)
-               
+
                ! Add momentum mass fluxes
                call fs%addsrc_gravity(resU,resV,resW)
-               
+
                ! Assemble explicit residual
                resU=-2.0_WP*fs%rho_U*fs%U+(fs%rho_Uold+fs%rho_U)*fs%Uold+time%dt*resU
                resV=-2.0_WP*fs%rho_V*fs%V+(fs%rho_Vold+fs%rho_V)*fs%Vold+time%dt*resV
                resW=-2.0_WP*fs%rho_W*fs%W+(fs%rho_Wold+fs%rho_W)*fs%Wold+time%dt*resW
-               
+
                ! Form implicit residuals
                call fs%solve_implicit(time%dt,resU,resV,resW)
 
@@ -1986,11 +1986,11 @@ contains
                fs%U=2.0_WP*fs%U-fs%Uold+resU!/fs%rho_U
                fs%V=2.0_WP*fs%V-fs%Vold+resV!/fs%rho_V
                fs%W=2.0_WP*fs%W-fs%Wold+resW!/fs%rho_W
-               
+
                ! Apply boundary conditions
                call fs%apply_bcond(time%t,time%dt)
                call apply_dirichlet()
-               
+
                ! Solve Poisson equation
                call fs%update_laplacian()
                call fs%correct_mfr(src=lg%div_vel)
@@ -2001,7 +2001,7 @@ contains
                fs%psolv%sol=0.0_WP
                call fs%psolv%solve()
                call fs%shift_p(fs%psolv%sol)
-               
+
                ! Correct velocity
                call fs%get_pgrad(fs%psolv%sol,resU,resV,resW)
                call cfg%integrate(fs%psolv%rhs,prhs_int)
@@ -2009,12 +2009,12 @@ contains
                fs%U=fs%U-time%dt*resU/fs%rho_U
                fs%V=fs%V-time%dt*resV/fs%rho_V
                fs%W=fs%W-time%dt*resW/fs%rho_W
-               
+
                ! Increment sub-iteration counter
                time%it=time%it+1
-               
+
             end do
-            
+
             ! Recompute interpolated velocity and divergence
             call fs%interp_vel(Ui,Vi,Wi)
             call fs%get_div(src=lg%div_vel)
@@ -2025,7 +2025,7 @@ contains
             mfr_err=abs(mfr_err-sum(fs%mfr))
 
          end block advance_flow
-         
+
          ! Output to ensight
          T=vf%VF*sc%SC(:,:,:,iTl)+(1.0_WP-vf%VF)*sc%SC(:,:,:,iTg)
          if (ens_evt%occurs()) then
@@ -2041,7 +2041,7 @@ contains
 
          ! Get droplet radius
          call get_R_drp()
-         
+
          ! Perform and output monitoring
          call fs%get_max()
          call vf%get_max()
@@ -2050,26 +2050,26 @@ contains
          call cflfile%write()
          call scfile%write()
          call lgfile%write()
-         
+
       end do
 
    end subroutine simulation_run
-   
-   
+
+
    !> Finalize the NGA2 simulation
    subroutine simulation_final
       implicit none
-      
+
       ! Get rid of all objects-need destructors
       ! monitor
       ! ensight
       ! bcond
       ! timetracker
-      
+
       ! Deallocate work arrays
       deallocate(resU,resV,resW,Ui,Vi,Wi,resSC,T)
 
    end subroutine simulation_final
-   
-   
+
+
 end module simulation
