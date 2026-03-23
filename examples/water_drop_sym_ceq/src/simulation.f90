@@ -57,7 +57,7 @@ module simulation
    real(WP), dimension(:,:,:),   allocatable :: T
    real(WP), dimension(:),       allocatable :: MM
    ! Debug
-   real(WP), dimension(:,:,:),   allocatable :: dbg_flg
+   real(WP), dimension(:,:,:),   allocatable :: cluster_map
 
    !> Problem definition
    real(WP) :: R0,T_liq,T_amb,T_g,pressure,center(3)
@@ -472,12 +472,12 @@ contains
       integer,  dimension(:,:),   allocatable :: cell_indices
       real(WP), dimension(:),     allocatable :: Vscaled,vof_old,vof_new,w
       real(WP) :: Vnew,Vold,Nsum,vof,itf_area,Tl,Tg,Tln,Tgn
-      integer  :: i,j,k,index,isc,p,n_clustered,m,cluster_id
+      integer  :: i,j,k,index,isc,p,n_clustered,m,cluster_id,nf
       integer  :: in,jn,kn
       integer  :: stx,sty,stz
       real(WP) :: mdot2p
       real(WP), parameter :: wmin=1.0e-16_WP,dVlmin=1.0e-16_WP
-      integer, parameter :: nc_max=27
+      integer, parameter :: nc_max=7
       integer :: nc_cap,bfs_head
       integer, dimension(:,:), allocatable :: cell_indices_tmp
       real(WP) :: dVl,dVl_i,dVl_rem,Vref,vof_tmp,interfaceness,wsum
@@ -491,7 +491,7 @@ contains
       real(WP) :: Y_sum
 
       ! Debug
-      dbg_flg=0.0_WP
+      cluster_map=0.0_WP
       cluster_id=0
 
       Vref=minval(cfg%vol)
@@ -597,7 +597,7 @@ contains
             ! Increment cluster ID and mark seed cell
             cluster_id=cluster_id+1
             processed(i,j,k)=.true.
-            dbg_flg(i,j,k)=real(cluster_id,WP)
+            cluster_map(i,j,k)=real(cluster_id,WP)
 
             ! Initialize the species mass
             do isc=1,ns
@@ -621,68 +621,76 @@ contains
                k=cell_indices(3,bfs_head)
                bfs_head=bfs_head+1
 
-               ! Explore all neighbors in the stencil
-               z_loop: do kn=k-stz,k+stz
-                  y_loop: do jn=j-sty,j+sty
-                     x_loop: do in=i-stx,i+stx
+               ! Explore face-connected neighbors (6-connectivity, no diagonal bias)
+               do nf=1,6
+                  in=i; jn=j; kn=k
+                  select case (nf)
+                   case (1); in=i-stx
+                   case (2); in=i+stx
+                   case (3); jn=j-sty
+                   case (4); jn=j+sty
+                   case (5); kn=k-stz
+                   case (6); kn=k+stz
+                  end select
 
-                        ! Check stopping criteria before adding more cells
-                        if (n_clustered.ge.nc_max) then
-                           cluster_done=.true.
-                           exit z_loop
-                        end if
+                  ! Skip if offset is zero (2D case)
+                  if (in.eq.i.and.jn.eq.j.and.kn.eq.k) cycle
 
-                        ! Neighbor must be interfacial, not clustered yet, and also needs clustering
-                        if (vf%VF(in,jn,kn).gt.VFlo.and.vf%VF(in,jn,kn).lt.VFhi.and..not.processed(in,jn,kn).and.needs_clustering_flag(in,jn,kn).eq.1) then
+                  ! Check stopping criteria before adding more cells
+                  if (n_clustered.ge.nc_max) then
+                     cluster_done=.true.
+                     exit
+                  end if
 
-                           ! Mark it as clustered
-                           n_clustered=n_clustered+1
+                  ! Neighbor must be interfacial, not clustered yet, and also needs clustering
+                  if (vf%VF(in,jn,kn).gt.VFlo.and.vf%VF(in,jn,kn).lt.VFhi.and..not.processed(in,jn,kn).and.needs_clustering_flag(in,jn,kn).eq.1) then
 
-                           ! Grow the array if needed
-                           if (n_clustered.gt.nc_cap) then
-                              allocate(cell_indices_tmp(3,nc_cap*2))
-                              cell_indices_tmp(:,1:nc_cap)=cell_indices
-                              nc_cap=nc_cap*2
-                              call move_alloc(cell_indices_tmp,cell_indices)
-                           end if
+                     ! Mark it as clustered
+                     n_clustered=n_clustered+1
 
-                           cell_indices(:,n_clustered)=[in,jn,kn]
-                           processed(in,jn,kn)=.true.
-                           dbg_flg(in,jn,kn)=real(cluster_id,WP)
+                     ! Grow the array if needed
+                     if (n_clustered.gt.nc_cap) then
+                        allocate(cell_indices_tmp(3,nc_cap*2))
+                        cell_indices_tmp(:,1:nc_cap)=cell_indices
+                        nc_cap=nc_cap*2
+                        call move_alloc(cell_indices_tmp,cell_indices)
+                     end if
 
-                           ! Accumulate old volumes
-                           vol_old=vol_old+sc%PVF(in,jn,kn,:)*cfg%vol(in,jn,kn)
+                     cell_indices(:,n_clustered)=[in,jn,kn]
+                     processed(in,jn,kn)=.true.
+                     cluster_map(in,jn,kn)=real(cluster_id,WP)
 
-                           ! Accumulate mass and mass*temperature
-                           do isc=1,ns
-                              p=sc%phase(isc)
-                              Y(isc)=Y(isc)+sc%Prho(p)*sc%PVF(in,jn,kn,p)*cfg%vol(in,jn,kn)*sc%SC(in,jn,kn,isc)
-                           end do
-                           Tln=sc%SC(in,jn,kn,iTl)
-                           Tgn=sc%SC(in,jn,kn,iTg)
-                           Tl=Tl+sc%Prho(Lphase)*sc%PVF(in,jn,kn,Lphase)*cfg%vol(in,jn,kn)*Tln
-                           Tg=Tg+sc%Prho(Gphase)*sc%PVF(in,jn,kn,Gphase)*cfg%vol(in,jn,kn)*Tgn
+                     ! Accumulate old volumes
+                     vol_old=vol_old+sc%PVF(in,jn,kn,:)*cfg%vol(in,jn,kn)
 
-                           ! Accumulate interface area
-                           itf_area=itf_area+cfg%vol(in,jn,kn)*vf%SD(in,jn,kn)
+                     ! Accumulate mass and mass*temperature
+                     do isc=1,ns
+                        p=sc%phase(isc)
+                        Y(isc)=Y(isc)+sc%Prho(p)*sc%PVF(in,jn,kn,p)*cfg%vol(in,jn,kn)*sc%SC(in,jn,kn,isc)
+                     end do
+                     Tln=sc%SC(in,jn,kn,iTl)
+                     Tgn=sc%SC(in,jn,kn,iTg)
+                     Tl=Tl+sc%Prho(Lphase)*sc%PVF(in,jn,kn,Lphase)*cfg%vol(in,jn,kn)*Tln
+                     Tg=Tg+sc%Prho(Gphase)*sc%PVF(in,jn,kn,Gphase)*cfg%vol(in,jn,kn)*Tgn
 
-                           ! Check if cluster now has sufficient liquid fraction
-                           cluster_liq_frac=vol_old(Lphase)/sum(vol_old)
-                           if (cluster_liq_frac.ge.ceq_liq_frac_thld) then
-                              cluster_done=.true.
-                              exit z_loop
-                           end if
-                        end if
+                     ! Accumulate interface area
+                     itf_area=itf_area+cfg%vol(in,jn,kn)*vf%SD(in,jn,kn)
 
-                     end do x_loop
-                  end do y_loop
-               end do z_loop
+                     ! Check if cluster now has sufficient liquid fraction
+                     cluster_liq_frac=vol_old(Lphase)/sum(vol_old)
+                     if (cluster_liq_frac.ge.ceq_liq_frac_thld) then
+                        cluster_done=.true.
+                        exit
+                     end if
+                  end if
+
+               end do
 
             end do
 
             ! If only the seed cell remains, this is not a real cluster
             if (n_clustered.eq.1) then
-               dbg_flg(cell_indices(1,1),cell_indices(2,1),cell_indices(3,1))=0.0_WP
+               cluster_map(cell_indices(1,1),cell_indices(2,1),cell_indices(3,1))=0.0_WP
                cluster_id=cluster_id-1
             end if
 
@@ -744,8 +752,8 @@ contains
       call sc%apply_bcond(time%t,time%dt)
       call vf%apply_bcond(time%t,time%dt)
 
-      ! Debug: dbg_flg already contains per-cluster IDs from the loop above
-      call cfg%sync(dbg_flg)
+      ! Sync cluster map (contains per-cluster IDs from the loop above)
+      call cfg%sync(cluster_map)
 
       ! Deallocate arrays
       deallocate(vol_new,vol_old,mp,N,phasicHoR,Y,processed,needs_clustering_flag,cell_indices)
@@ -2297,7 +2305,7 @@ contains
          allocate(T     (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(MM(ns)); MM=[32.0_WP,18.0_WP,18.0_WP,28.0_WP]; MM=0.001_WP*MM
          ! Debug
-         allocate(dbg_flg(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); dbg_flg=0.0_WP
+         allocate(cluster_map(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)); cluster_map=0.0_WP
       end block allocate_work_arrays
 
 
@@ -2728,7 +2736,7 @@ contains
          call ens_out%add_scalar('Temperature',T)
          call ens_out%add_vector('normal',lg%normal(:,:,:,1),lg%normal(:,:,:,2),lg%normal(:,:,:,3))
          ! Debug
-         call ens_out%add_scalar('dbg_flg',dbg_flg)
+         call ens_out%add_scalar('cluster_map',cluster_map)
          call ens_out%add_scalar('PVFL',sc%PVF(:,:,:,Lphase))
          call ens_out%add_scalar('PVFG',sc%PVF(:,:,:,Gphase))
          ! Output to ensight
