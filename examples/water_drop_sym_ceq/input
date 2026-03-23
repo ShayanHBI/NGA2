@@ -63,7 +63,7 @@ Max coarsening levels          : 18
 
 # Scalar solver
 Scalar tolerance               : 1e-7
-Scalar iteration               : 100
+Scalar iteration               : 50
 
 # Ensight output
 Ensight output period          : 3e-7
