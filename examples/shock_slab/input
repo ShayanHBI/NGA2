@@ -1,0 +1,32 @@
+# Adimensional flow parameters
+!---------- eos ----------
+Gas gamma :         1.4
+Liquid gamma :      6.12
+!--- fluids definition ---
+Density ratio :     815
+Sound speed ratio : 4.3
+!------- inviscid --------
+Shock Mach number : 1.5
+Shock location :   -1.0
+!--- slab definition -----
+Slab left :   0.0
+Slab right :  1.0
+
+# Maximum simulation time
+Max time : 10
+
+# Postprocessing output
+Ensight output period : 0.1
+
+# Simulation parameters
+!- Parallelization ----
+Partition : 4 1 1
+!- Mesh ---------------
+dx :     0.005
+nx :     1000
+ny :     10
+nz :     1
+X0 :    -3.0
+!- Time ---------------
+Max dt :  1e-3
+Max CFL : 0.25
