@@ -284,6 +284,7 @@ contains
          call this%ens_out%add_scalar('beta',this%beta)
          call this%ens_out%add_scalar('visc',this%visc)
          call this%ens_out%add_scalar('label',this%ccl%id)
+         call this%ens_out%add_scalar('cluster_map',this%fs%cluster_map)
          ! Create surface mesh for PLIC
          this%smesh=surfmesh(nvar=1,name='plic')
          this%smesh%varname(1)='label'

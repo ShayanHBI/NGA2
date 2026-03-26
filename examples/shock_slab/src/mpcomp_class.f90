@@ -112,6 +112,9 @@ module mpcomp_class
       ! Semi-Lagrangian conservative variable increments
       real(WP), dimension(:,:,:,:), allocatable :: SLdQ
       
+      ! Cluster map for relaxation visualization
+      real(WP), dimension(:,:,:), allocatable :: cluster_map
+      
       ! IRL-native data
       type(ByteBuffer_type) :: send_byte_buffer,recv_byte_buffer
       type(ObjServer_PlanarSep_type)  :: planar_separator_allocation,old_planar_separator_allocation
@@ -180,11 +183,12 @@ module mpcomp_class
          real(WP), intent(in) :: P
       end function Sfunc_type
       !> Mixture relaxation (acts only on the conserved quantities)
-      subroutine relax_type(VF,Q)
+      subroutine relax_type(VF,Q,success)
          import :: WP
          implicit none
          real(WP),                intent(inout) :: VF
          real(WP), dimension(1:), intent(inout) :: Q
+         logical,                 intent(out)   :: success
       end subroutine relax_type
    end interface
    
@@ -230,6 +234,9 @@ contains
       
       ! Allocate semi-Lagrangian increments
       allocate(this%SLdQ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_,1:this%nQ)); this%SLdQ=0.0_WP
+      
+      ! Allocate cluster map for relaxation visualization
+      allocate(this%cluster_map(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); this%cluster_map=0.0_WP
       
       ! Initialize Interface Reconstruction Library and its data
       call this%initialize_irl()
@@ -1772,45 +1779,209 @@ contains
    end subroutine interp_vel
    
    
-   !> Apply user-provided relaxation model to interfacial cells
+   !> Apply user-provided relaxation model to interfacial cells with BFS clustering
+   !> Two-pass algorithm: try single-cell relaxation first, then BFS-cluster failures
    subroutine apply_relax(this)
       implicit none
       class(mpcomp), intent(inout) :: this
-      integer :: i,j,k
+      integer :: i,j,k,m,nf,in,jn,kn
+      integer :: stx,sty,stz
+      integer :: n_clustered,bfs_head,nc_cap
+      integer :: cluster_id
+      integer, parameter :: nc_max=7
+      real(WP) :: VF_cluster,Vtot
+      real(WP), dimension(4) :: Q_cluster
+      logical :: success,cluster_done
+      logical,  dimension(:,:,:), allocatable :: processed
+      integer,  dimension(:,:,:), allocatable :: needs_clustering_flag
+      integer,  dimension(:,:),   allocatable :: cell_indices,cell_indices_tmp
       type(RectCub_type) :: cell
       type(SepVM_type)   :: separated_volume_moments
+      
       ! If no relaxation model was provided, return
       if (.not.associated(this%relax)) return
+
+      ! Reset cluster map and cluster ID counter
+      this%cluster_map=0.0_WP
+      cluster_id=0
+      
       ! Allocate IRL objects
       call new(cell)
       call new(separated_volume_moments)
-      ! Loop over the full domain
+      
+      ! Allocate work arrays
+      allocate(processed(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); processed=.false.
+      allocate(needs_clustering_flag(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); needs_clustering_flag=0
+      
+      ! Initial capacity for BFS queue / cluster cell list
+      nc_cap=64
+      allocate(cell_indices(3,nc_cap))
+      
+      ! Clustering stencil: set neighbor offsets based on dimensionality
+      if (this%cfg%nx.gt.1) then; stx=1; else; stx=0; end if
+      if (this%cfg%ny.gt.1) then; sty=1; else; sty=0; end if
+      if (this%cfg%nz.gt.1) then; stz=1; else; stz=0; end if
+      
+      ! ========================================================================
+      ! Pass 1: Try single-cell relaxation on all interfacial cells
+      ! Mark failures for clustering
+      ! ========================================================================
       do k=this%cfg%kmino_,this%cfg%kmaxo_; do j=this%cfg%jmino_,this%cfg%jmaxo_; do i=this%cfg%imino_,this%cfg%imaxo_
          ! Ignore single-phase cells
          if (this%VF(i,j,k).lt.VFlo.or.this%VF(i,j,k).gt.VFhi) cycle
-         ! Apply user-provided relaxation model
-         call this%relax(this%VF(i,j,k),this%Q(i,j,k,:))
-         ! Adjust PLIC interface location
-         call construct_2pt(cell,[this%cfg%x(i),this%cfg%y(j),this%cfg%z(k)],[this%cfg%x(i+1),this%cfg%y(j+1),this%cfg%z(k+1)])
-         call matchVolumeFraction(cell,this%VF(i,j,k),this%PLIC(i,j,k))
-         ! Adjust volume moments to ensure consistency
-         call getNormMoments(cell,this%PLIC(i,j,k),separated_volume_moments)
-         this%VF  (i,j,k)=getVolumePtr(separated_volume_moments,0)/this%cfg%vol(i,j,k)
-         this%BL(:,i,j,k)= getCentroid(separated_volume_moments,0)
-         this%BG(:,i,j,k)= getCentroid(separated_volume_moments,1)
-         if (this%VF(i,j,k).lt.VFlo) then
-            this%VF  (i,j,k)=0.0_WP
-            this%BL(:,i,j,k)=[this%cfg%xm(i),this%cfg%ym(j),this%cfg%zm(k)]
-            this%BG(:,i,j,k)=[this%cfg%xm(i),this%cfg%ym(j),this%cfg%zm(k)]
+         ! Try single-cell relaxation
+         call this%relax(this%VF(i,j,k),this%Q(i,j,k,:),success)
+         if (.not.success) print*,'Interfacial cell ',i,j,k,' with VOF = ',this%VF(i,j,k),': success = ',success
+         if (success) then
+            ! Single-cell succeeded: update interface geometry
+            call update_cell_geometry(i,j,k)
+            processed(i,j,k)=.true.
+         else
+            ! Mark for clustering
+            needs_clustering_flag(i,j,k)=1
          end if
-         if (this%VF(i,j,k).gt.VFhi) then
-            this%VF  (i,j,k)=1.0_WP
-            this%BL(:,i,j,k)=[this%cfg%xm(i),this%cfg%ym(j),this%cfg%zm(k)]
-            this%BG(:,i,j,k)=[this%cfg%xm(i),this%cfg%ym(j),this%cfg%zm(k)]
+      end do; end do; end do
+      
+      ! Sync clustering flag across MPI boundaries
+      call this%cfg%sync(needs_clustering_flag)
+      
+      ! ========================================================================
+      ! Pass 2: BFS-cluster failed cells and apply relaxation on pooled state
+      ! ========================================================================
+      do k=this%cfg%kmino_,this%cfg%kmaxo_; do j=this%cfg%jmino_,this%cfg%jmaxo_; do i=this%cfg%imino_,this%cfg%imaxo_
+         ! Skip single-phase, already processed, or non-flagged cells
+         if (this%VF(i,j,k).lt.VFlo.or.this%VF(i,j,k).gt.VFhi) cycle
+         if (processed(i,j,k)) cycle
+         if (needs_clustering_flag(i,j,k).ne.1) cycle
+         
+         ! Initialize cluster with seed cell
+         n_clustered=1
+         cell_indices(:,1)=[i,j,k]
+         processed(i,j,k)=.true.
+         
+         ! Assign cluster ID
+         cluster_id=cluster_id+1
+         this%cluster_map(i,j,k)=real(cluster_id,WP)
+         
+         ! Initialize cluster-averaged quantities: volume-weighted VF and summed Q(1:4)
+         VF_cluster=this%VF(i,j,k)*this%cfg%vol(i,j,k)
+         Q_cluster=this%Q(i,j,k,1:4)*this%cfg%vol(i,j,k)
+         Vtot=this%cfg%vol(i,j,k)
+         
+         ! BFS flood-fill: explore connected interfacial neighbors
+         bfs_head=1
+         cluster_done=.false.
+         do while (bfs_head.le.n_clustered.and..not.cluster_done)
+            ! Pop the next cell from the BFS queue
+            in=cell_indices(1,bfs_head)
+            jn=cell_indices(2,bfs_head)
+            kn=cell_indices(3,bfs_head)
+            bfs_head=bfs_head+1
+            
+            ! Explore face-connected neighbors (6-connectivity)
+            do nf=1,6
+               ! Compute neighbor index
+               select case (nf)
+                case (1); if (stx.eq.0) cycle; in=cell_indices(1,bfs_head-1)-1; jn=cell_indices(2,bfs_head-1); kn=cell_indices(3,bfs_head-1)
+                case (2); if (stx.eq.0) cycle; in=cell_indices(1,bfs_head-1)+1; jn=cell_indices(2,bfs_head-1); kn=cell_indices(3,bfs_head-1)
+                case (3); if (sty.eq.0) cycle; in=cell_indices(1,bfs_head-1); jn=cell_indices(2,bfs_head-1)-1; kn=cell_indices(3,bfs_head-1)
+                case (4); if (sty.eq.0) cycle; in=cell_indices(1,bfs_head-1); jn=cell_indices(2,bfs_head-1)+1; kn=cell_indices(3,bfs_head-1)
+                case (5); if (stz.eq.0) cycle; in=cell_indices(1,bfs_head-1); jn=cell_indices(2,bfs_head-1); kn=cell_indices(3,bfs_head-1)-1
+                case (6); if (stz.eq.0) cycle; in=cell_indices(1,bfs_head-1); jn=cell_indices(2,bfs_head-1); kn=cell_indices(3,bfs_head-1)+1
+               end select
+               
+               ! Check max cluster size
+               if (n_clustered.ge.nc_max) then
+                  cluster_done=.true.
+                  exit
+               end if
+               
+               ! Neighbor must be interfacial, not yet processed, and also flagged
+               if (this%VF(in,jn,kn).gt.VFlo.and.this%VF(in,jn,kn).lt.VFhi.and. &
+               &   .not.processed(in,jn,kn).and.needs_clustering_flag(in,jn,kn).eq.1) then
+                  
+                  n_clustered=n_clustered+1
+                  
+                  ! Grow array if needed
+                  if (n_clustered.gt.nc_cap) then
+                     allocate(cell_indices_tmp(3,nc_cap*2))
+                     cell_indices_tmp(:,1:nc_cap)=cell_indices
+                     nc_cap=nc_cap*2
+                     call move_alloc(cell_indices_tmp,cell_indices)
+                  end if
+                  
+                  cell_indices(:,n_clustered)=[in,jn,kn]
+                  processed(in,jn,kn)=.true.
+                  this%cluster_map(in,jn,kn)=real(cluster_id,WP)
+                  
+                  ! Accumulate cluster quantities
+                  VF_cluster=VF_cluster+this%VF(in,jn,kn)*this%cfg%vol(in,jn,kn)
+                  Q_cluster=Q_cluster+this%Q(in,jn,kn,1:4)*this%cfg%vol(in,jn,kn)
+                  Vtot=Vtot+this%cfg%vol(in,jn,kn)
+               end if
+            end do
+         end do
+         
+         ! Compute cluster-averaged VF and Q(1:4)
+         VF_cluster=VF_cluster/Vtot
+         Q_cluster=Q_cluster/Vtot
+         
+         ! Apply relaxation on the pooled cluster state
+         call this%relax(VF_cluster,Q_cluster,success)
+         
+         ! If relaxation still fails, skip this cluster
+         if (.not.success) cycle
+         
+         ! Distribute the relaxed state back to cluster cells
+         ! Each cell gets the same VF and intensive Q (per unit volume)
+         do m=1,n_clustered
+            in=cell_indices(1,m); jn=cell_indices(2,m); kn=cell_indices(3,m)
+            this%VF(in,jn,kn)=VF_cluster
+            this%Q(in,jn,kn,1:4)=Q_cluster(1:4)
+            ! Update interface geometry
+            call update_cell_geometry(in,jn,kn)
+         end do
+         
+      end do; end do; end do
+      
+      ! Sync cluster map
+      call this%cfg%sync(this%cluster_map)
+      
+      ! Clean up
+      deallocate(processed,needs_clustering_flag,cell_indices)
+      
+   contains
+      
+      !> Update PLIC and volume moments for a cell after VF/Q modification
+      subroutine update_cell_geometry(ii,jj,kk)
+         implicit none
+         integer, intent(in) :: ii,jj,kk
+         ! Adjust PLIC interface location
+         call construct_2pt(cell,[this%cfg%x(ii),this%cfg%y(jj),this%cfg%z(kk)], &
+         &                       [this%cfg%x(ii+1),this%cfg%y(jj+1),this%cfg%z(kk+1)])
+         call matchVolumeFraction(cell,this%VF(ii,jj,kk),this%PLIC(ii,jj,kk))
+         ! Adjust volume moments
+         call getNormMoments(cell,this%PLIC(ii,jj,kk),separated_volume_moments)
+         this%VF  (ii,jj,kk)=getVolumePtr(separated_volume_moments,0)/this%cfg%vol(ii,jj,kk)
+         this%BL(:,ii,jj,kk)= getCentroid(separated_volume_moments,0)
+         this%BG(:,ii,jj,kk)= getCentroid(separated_volume_moments,1)
+         if (this%VF(ii,jj,kk).lt.VFlo) then
+            this%VF  (ii,jj,kk)=0.0_WP
+            this%BL(:,ii,jj,kk)=[this%cfg%xm(ii),this%cfg%ym(jj),this%cfg%zm(kk)]
+            this%BG(:,ii,jj,kk)=[this%cfg%xm(ii),this%cfg%ym(jj),this%cfg%zm(kk)]
+         end if
+         if (this%VF(ii,jj,kk).gt.VFhi) then
+            this%VF  (ii,jj,kk)=1.0_WP
+            this%BL(:,ii,jj,kk)=[this%cfg%xm(ii),this%cfg%ym(jj),this%cfg%zm(kk)]
+            this%BG(:,ii,jj,kk)=[this%cfg%xm(ii),this%cfg%ym(jj),this%cfg%zm(kk)]
          end if
          ! Update polygon for visualization
-         call zeroPolygon(this%interface_polygon(i,j,k)); if (this%VF(i,j,k).ge.VFlo.and.this%VF(i,j,k).le.VFhi) call getPoly(cell,this%PLIC(i,j,k),0,this%interface_polygon(i,j,k))
-      end do; end do; end do
+         call zeroPolygon(this%interface_polygon(ii,jj,kk))
+         if (this%VF(ii,jj,kk).ge.VFlo.and.this%VF(ii,jj,kk).le.VFhi) then
+            call getPoly(cell,this%PLIC(ii,jj,kk),0,this%interface_polygon(ii,jj,kk))
+         end if
+      end subroutine update_cell_geometry
+      
    end subroutine apply_relax
    
    
@@ -2246,6 +2417,7 @@ contains
       if (allocated(this%Qmax))      deallocate(this%Qmax)
       if (allocated(this%Qint))      deallocate(this%Qint)
       if (allocated(this%SLdQ))      deallocate(this%SLdQ)
+      if (allocated(this%cluster_map)) deallocate(this%cluster_map)
       if (allocated(this%iSL))       deallocate(this%iSL)
       ! Deallocate IRL data - should be automatically deleted by C++
       if (allocated(this%PLIC))      deallocate(this%PLIC)

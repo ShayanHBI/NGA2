@@ -100,14 +100,15 @@ contains
 
 
    !> Mechanical relaxation model (implicit)
-   subroutine P_relax_implicit(VF,Q)
+   subroutine P_relax_implicit(VF,Q,success)
       implicit none
       real(WP),                intent(inout) :: VF
       real(WP), dimension(1:), intent(inout) :: Q
+      logical,                 intent(out)   :: success
       real(WP) :: a,b,d,d1,d0,Peq,VFeq,invG1G,invG1L,facG,facL
       real(WP), parameter :: RHOGmin=1.0e-3_WP
       ! Handle gas flotsams
-      if (Q(2)/(1.0_WP-VF).lt.RHOGmin) return
+      if (Q(2)/(1.0_WP-VF).lt.RHOGmin) then; success=.false.; return; end if
       ! Setup quadratic problem
       invG1G=1.0_WP/(GammaG-1.0_WP); invG1L=1.0_WP/(GammaL-1.0_WP)
       d0=PinfL*GammaL*invG1L; d1=1.0_WP+invG1L
@@ -118,13 +119,15 @@ contains
       ! Get equilibrium pressure
       Peq=(-b+sqrt(b**2-4.0_WP*a*d))/(2.0_WP*a)
       ! Check if pressure is sound
-      if (Peq.le.max(-PinfG,-PinfL)) return
+      if (Peq.le.max(-PinfG,-PinfL)) then; success=.false.; return; end if
       ! Get equilibrium volume fraction
       VFeq=(VF*Peq+Q(3))/(d1*Peq+d0)
       ! Adjust conserved quantities
       Q(3)=Q(3)-Peq*(VFeq-VF)
       Q(4)=Q(4)+Peq*(VFeq-VF)
       VF=VFeq
+      ! Relaxation succeeded
+      success=.true.
    end subroutine P_relax_implicit
 
 
@@ -234,50 +237,41 @@ contains
       ! Generate initial conditions for shock-slab problem
       initialize_ss: block
          use irl_fortran_interface, only: setNumberOfPlanes,setPlane
+         use mms_geom,              only: initialize_volume_moments
+         use mpcomp_class,          only: VFlo
          integer :: i,j,k
-         real(WP) :: xloc
          ! Initialize primary variables
          do k=ss%cfg%kmino_,ss%cfg%kmaxo_; do j=ss%cfg%jmino_,ss%cfg%jmaxo_; do i=ss%cfg%imino_,ss%cfg%imaxo_
-                  xloc=ss%fs%cfg%xm(i)
-                  ! Initialize VOF for a liquid slab between slab_left and slab_right
-                  if (xloc.ge.slab_left.and.xloc.le.slab_right) then
-                     ss%fs%VF(i,j,k)=1.0_WP
-                  else
-                     ss%fs%VF(i,j,k)=0.0_WP
-                  end if
-                  ! Set volume moment barycenters
-                  ss%fs%BL(:,i,j,k)=[ss%fs%cfg%xm(i),ss%fs%cfg%ym(j),ss%fs%cfg%zm(k)]
-                  ss%fs%BG(:,i,j,k)=[ss%fs%cfg%xm(i),ss%fs%cfg%ym(j),ss%fs%cfg%zm(k)]
-                  ! Set PLIC interface
-                  call setNumberOfPlanes(ss%fs%PLIC(i,j,k),1)
-                  if (abs(xloc-slab_left).lt.0.5_WP*ss%fs%dx) then
-                     ! Left interface of slab: normal pointing left (gas on left)
-                     call setPlane(ss%fs%PLIC(i,j,k),0,[+1.0_WP,0.0_WP,0.0_WP],slab_left)
-                  else if (abs(xloc-slab_right).lt.0.5_WP*ss%fs%dx) then
-                     ! Right interface of slab: normal pointing right (gas on right)
-                     call setPlane(ss%fs%PLIC(i,j,k),0,[-1.0_WP,0.0_WP,0.0_WP],-slab_right)
-                  else
-                     ! Pure gas or pure liquid cell
-                     call setPlane(ss%fs%PLIC(i,j,k),0,[0.0_WP,0.0_WP,0.0_WP],sign(1.0_WP,ss%fs%VF(i,j,k)-0.5_WP))
-                  end if
-                  ! Initialize mixture velocity to normal shock
-                  ss%fs%U(i,j,k)=u2*Hshock(Xs-ss%fs%cfg%x(i),delta=0.5_WP*ss%fs%dx)
-                  ss%fs%V(i,j,k)=0.0_WP
-                  ss%fs%W(i,j,k)=0.0_WP
-                  ! Gas variables
-                  if (ss%fs%VF(i,j,k).lt.1.0_WP) then
-                     ss%fs%RHOG(i,j,k)=rho1+(rho2-rho1)*Hshock(Xs-ss%fs%cfg%xm(i),delta=0.5_WP*ss%fs%dx)
-                     ss%fs%PG  (i,j,k)=p1  +(p2  -p1  )*Hshock(Xs-ss%fs%cfg%xm(i),delta=0.5_WP*ss%fs%dx)
-                     ss%fs%IG  (i,j,k)=(ss%fs%PG(i,j,k)+GammaG*PinfG)/(ss%fs%RHOG(i,j,k)*(GammaG-1.0_WP))
-                  end if
-                  ! Liquid variables
-                  if (ss%fs%VF(i,j,k).gt.0.0_WP) then
-                     ss%fs%RHOL(i,j,k)=rhoL
-                     ss%fs%PL  (i,j,k)=p1
-                     ss%fs%IL  (i,j,k)=(ss%fs%PL(i,j,k)+GammaL*PinfL)/(ss%fs%RHOL(i,j,k)*(GammaL-1.0_WP))
-                  end if
-               end do; end do; end do
-         ! Build PLIC interface
+            ! Start from pure gas and let the level set / volume-moment initializer
+            ! carve the slab so that cut cells get proper 0<VF<1 values.
+            ss%fs%VF(i,j,k)=0.0_WP
+            ss%fs%BL(:,i,j,k)=[ss%fs%cfg%xm(i),ss%fs%cfg%ym(j),ss%fs%cfg%zm(k)]
+            ss%fs%BG(:,i,j,k)=[ss%fs%cfg%xm(i),ss%fs%cfg%ym(j),ss%fs%cfg%zm(k)]
+            call setNumberOfPlanes(ss%fs%PLIC(i,j,k),1)
+            call setPlane(ss%fs%PLIC(i,j,k),0,[0.0_WP,0.0_WP,0.0_WP],sign(1.0_WP,ss%fs%VF(i,j,k)-0.5_WP))
+            ! Initialize slab volume moments from an actual level set.
+            call initialize_volume_moments(lo=[ss%fs%cfg%x(i),ss%fs%cfg%y(j),ss%fs%cfg%z(k)], &
+                 hi=[ss%fs%cfg%x(i+1),ss%fs%cfg%y(j+1),ss%fs%cfg%z(k+1)],                        &
+                 levelset=levelset_slab,time=0.0_WP,level=5,VFlo=VFlo,                             &
+                 VF=ss%fs%VF(i,j,k),BL=ss%fs%BL(:,i,j,k),BG=ss%fs%BG(:,i,j,k))
+            ! Initialize mixture velocity to normal shock
+            ss%fs%U(i,j,k)=u2*Hshock(Xs-ss%fs%cfg%x(i),delta=0.5_WP*ss%fs%dx)
+            ss%fs%V(i,j,k)=0.0_WP
+            ss%fs%W(i,j,k)=0.0_WP
+            ! Gas variables
+            if (ss%fs%VF(i,j,k).lt.1.0_WP) then
+               ss%fs%RHOG(i,j,k)=rho1+(rho2-rho1)*Hshock(Xs-ss%fs%cfg%xm(i),delta=0.5_WP*ss%fs%dx)
+               ss%fs%PG  (i,j,k)=p1  +(p2  -p1  )*Hshock(Xs-ss%fs%cfg%xm(i),delta=0.5_WP*ss%fs%dx)
+               ss%fs%IG  (i,j,k)=(ss%fs%PG(i,j,k)+GammaG*PinfG)/(ss%fs%RHOG(i,j,k)*(GammaG-1.0_WP))
+            end if
+            ! Liquid variables
+            if (ss%fs%VF(i,j,k).gt.0.0_WP) then
+               ss%fs%RHOL(i,j,k)=rhoL
+               ss%fs%PL  (i,j,k)=p1
+               ss%fs%IL  (i,j,k)=(ss%fs%PL(i,j,k)+GammaL*PinfL)/(ss%fs%RHOL(i,j,k)*(GammaL-1.0_WP))
+            end if
+         end do; end do; end do
+         ! Build PLIC interface from the initialized volume moments
          call ss%fs%build_interface()
          ! Initialize conserved variables
          ss%fs%Q(:,:,:,1)=        ss%fs%VF *ss%fs%RHOL
@@ -318,6 +312,17 @@ contains
          call timefile%add_column(time%t,'Time')
          call timefile%add_column(tstep%time,trim(tstep%name))
       end block initialize_timers
+
+   contains
+      !> Level-set function for a planar slab spanning slab_left <= x <= slab_right.
+      !> Positive inside the liquid slab, zero on the interfaces, negative outside.
+      function levelset_slab(xyz,t) result(G)
+         implicit none
+         real(WP), dimension(3), intent(in) :: xyz
+         real(WP), intent(in) :: t
+         real(WP) :: G
+         G=min(xyz(1)-slab_left, slab_right-xyz(1))
+      end function levelset_slab
 
    end subroutine simulation_init
 
