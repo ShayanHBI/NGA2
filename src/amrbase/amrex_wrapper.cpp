@@ -306,6 +306,31 @@ void amrcore_get_distromap(void **dm_ptr, int lev, void *core) {
       const_cast<amrex::DistributionMapping *>(&(amr->DistributionMap(lev)));
 }
 
+//-----------------------------------------------------------------------------
+// Standalone cost-weighted DistributionMapping factories
+//   - amrdm_make_knapsack: KnapSack algorithm (cost vector only)
+//   - amrdm_make_sfc:      Space-filling curve (cost vector + BoxArray)
+//   - amrdm_destroy:       Free a heap-allocated DM
+//-----------------------------------------------------------------------------
+void amrdm_make_knapsack(void **dm_out, double *costs, int nboxes) {
+  amrex::Vector<amrex::Real> rcost(costs, costs + nboxes);
+  auto *dm = new amrex::DistributionMapping(
+      amrex::DistributionMapping::makeKnapSack(rcost));
+  *dm_out = dm;
+}
+
+void amrdm_make_sfc(void **dm_out, double *costs, int nboxes, void *ba_ptr) {
+  amrex::Vector<amrex::Real> rcost(costs, costs + nboxes);
+  auto *ba = static_cast<amrex::BoxArray *>(ba_ptr);
+  auto *dm = new amrex::DistributionMapping(
+      amrex::DistributionMapping::makeSFC(rcost, *ba));
+  *dm_out = dm;
+}
+
+void amrdm_destroy(void *dm) {
+  delete static_cast<amrex::DistributionMapping *>(dm);
+}
+
 //=============================================================================
 // MultiFab Operations - amrmfab_* prefix
 //=============================================================================
@@ -811,6 +836,48 @@ void amrmfab_average_down_cell(void *fine_mf, void *crse_mf, void *crse_geom,
   } else {
     cmf->ParallelCopy(ctmp, 0, 0, ncomp, ngcrse, ngcrse);
   }
+}
+
+// Restrict-SUM fine deposits (valid+ghost) into the coarse level with ADD semantics.
+// Delegates to AMReX's sum_fine_to_coarse (AMReX_MultiFabUtil.H), which:
+//   - requires nGrow % ratio == 0 (i.e., nover must be a multiple of refinement ratio)
+//   - iterates over growntilebox(nGrow/ratio) to capture ghost deposits at C/F boundaries
+//   - uses ParallelCopy(..., nGrow, IntVect(0), ..., ADD) to merge into coarse valid cells
+// Call after SumBoundary at the fine level; average_down afterward fixes double-counted cells.
+extern "C" void amrmfab_sum_downto(void *fine_mf_ptr, void *crse_mf_ptr,
+                                   void *crse_geom_ptr, void *fine_geom_ptr,
+                                   const int *ref_ratio) {
+    auto *fmf   = static_cast<amrex::MultiFab *>(fine_mf_ptr);
+    auto *cmf   = static_cast<amrex::MultiFab *>(crse_mf_ptr);
+    auto *cgeom = static_cast<amrex::Geometry *>(crse_geom_ptr);
+    auto *fgeom = static_cast<amrex::Geometry *>(fine_geom_ptr);
+    amrex::IntVect ratio(AMREX_D_DECL(ref_ratio[0], ref_ratio[1], ref_ratio[2]));
+    amrex::sum_fine_to_coarse(*fmf, *cmf, 0, fmf->nComp(), ratio, *cgeom, *fgeom);
+}
+
+// Interpolate coarse-level cell-centered data onto a fine-level MultiFab using
+// piecewise-constant (PCInterp) interpolation with no-op physical BCs.
+// Used to propagate coarse particle deposits into fine-covered cells so that
+// average_down preserves them.  Mirrors AMReX AssignDensity's InterpFromCoarseLevel call.
+// scomp is 0-indexed (C convention).
+extern "C" void amrmfab_interp_from_coarse(void *fine_mf_ptr, void *crse_mf_ptr,
+                                           void *crse_geom_ptr, void *fine_geom_ptr,
+                                           int scomp, int ncomp, const int *ref_ratio) {
+    auto *fmf   = static_cast<amrex::MultiFab *>(fine_mf_ptr);
+    auto *cmf   = static_cast<amrex::MultiFab *>(crse_mf_ptr);
+    auto *cgeom = static_cast<amrex::Geometry *>(crse_geom_ptr);
+    auto *fgeom = static_cast<amrex::Geometry *>(fine_geom_ptr);
+    amrex::IntVect ratio(AMREX_D_DECL(ref_ratio[0], ref_ratio[1], ref_ratio[2]));
+
+    int lo_bc[] = {amrex::BCType::int_dir, amrex::BCType::int_dir, amrex::BCType::int_dir};
+    int hi_bc[] = {amrex::BCType::int_dir, amrex::BCType::int_dir, amrex::BCType::int_dir};
+    amrex::Vector<amrex::BCRec> bcs(ncomp, amrex::BCRec(lo_bc, hi_bc));
+    amrex::PCInterp mapper;
+    amrex::PhysBCFunctNoOp cbc, fbc;
+
+    amrex::InterpFromCoarseLevel(*fmf, 0.0, *cmf, scomp, scomp, ncomp,
+                                 *cgeom, *fgeom, cbc, 0, fbc, 0,
+                                 ratio, &mapper, bcs, 0);
 }
 
 // Average down face-centered MultiFab (nodal in 1 dir, cell in 2)
