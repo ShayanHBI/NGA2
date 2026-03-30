@@ -214,10 +214,11 @@ contains
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pTG,pVF,pQ,pVisc,pBeta,pDiff,pRHOL,pRHOG
-      real(WP) :: r_cyl,blend,nu_spg,mu_g,mu_l,k_g,k_l
+      real(WP) :: r_cyl,blend,nu_spg,mu_spg,mu_g,mu_l,k_g,k_l
       real(WP), parameter :: Tmax_visc=10.0_WP
       real(WP), parameter :: myeps=1.0e-15_WP
       real(WP), parameter :: max_cfl=0.5_WP
+      real(WP), parameter :: Cdiff=0.1_WP
       ! Get maximum allowable kinematic viscosity in the sponge at finest level
       nu_spg=max_cfl*amr%min_meshsize(amr%clvl())**2/(4.0_WP*time%dt)
       ! Loop over levels
@@ -260,9 +261,9 @@ contains
                if (amr%nz.eq.1) r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2) ! Enable quasi-2D runs
                if (r_cyl.gt.R_spg) then
                   blend=min((r_cyl-R_spg)/L_spg,1.0_WP)**2
-                  pVisc(i,j,k,1)=max(pVisc(i,j,k,1),blend*nu_spg/(pVF(i,j,k,1)/max(pRHOL(i,j,k,1),myeps)+(1.0_WP-pVF(i,j,k,1))/max(pRHOG(i,j,k,1),myeps)))
-                  pBeta(i,j,k,1)=pVisc(i,j,k,1)
-                  !pDiff(i,j,k,1)=max(pDiff(i,j,k,1),blend*nu_spg/(pVF(i,j,k,1)/max(pRHOL(i,j,k,1),myeps)+(1.0_WP-pVF(i,j,k,1))/max(pRHOG(i,j,k,1),myeps)))
+                  mu_spg=nu_spg/(pVF(i,j,k,1)/max(pRHOL(i,j,k,1),myeps)+(1.0_WP-pVF(i,j,k,1))/max(pRHOG(i,j,k,1),myeps))
+                  pVisc(i,j,k,1)=max(pVisc(i,j,k,1),blend*mu_spg)
+                  pDiff(i,j,k,1)=max(pDiff(i,j,k,1),Cdiff*blend*mu_spg)
                end if
             end do; end do; end do
          end do
@@ -374,10 +375,10 @@ contains
       character(kind=c_char), dimension(:,:,:,:), contiguous, pointer :: tagarr
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ
       real(WP) :: dx,dy,dz,dxi,dyi,dzi
-      real(WP) ::  rho_cc, rho_xp, rho_xm, rho_yp, rho_ym, rho_zp, rho_zm
       real(WP) :: irho_cc,irho_xp,irho_xm,irho_yp,irho_ym,irho_zp,irho_zm
-      real(WP) :: vort_x,vort_y,vort_z,vort_mag,rho_ratio
-      integer :: i,j,k
+      real(WP) :: vort_x,vort_y,vort_z,vort_mag
+      real(WP) :: rho_max,rho_min,rho_nb,rho_ratio,r_cyl
+      integer :: i,j,k,ii,jj,kk
       ! Get mesh size
       dx=solver%amr%dx(lvl); dxi=1.0_WP/dx
       dy=solver%amr%dy(lvl); dyi=1.0_WP/dy
@@ -393,25 +394,30 @@ contains
          ! Loop over tile
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-            ! Get local densities and their inverse
-            rho_cc=max(sum(pQ(i  ,j,  k,  1:2)),solver%rho_floor); irho_cc=1.0_WP/rho_cc
-            rho_xp=max(sum(pQ(i+1,j,  k,  1:2)),solver%rho_floor); irho_xp=1.0_WP/rho_xp
-            rho_xm=max(sum(pQ(i-1,j,  k,  1:2)),solver%rho_floor); irho_xm=1.0_WP/rho_xm
-            rho_yp=max(sum(pQ(i,  j+1,k,  1:2)),solver%rho_floor); irho_yp=1.0_WP/rho_yp
-            rho_ym=max(sum(pQ(i,  j-1,k,  1:2)),solver%rho_floor); irho_ym=1.0_WP/rho_ym
-            rho_zp=max(sum(pQ(i,  j,  k+1,1:2)),solver%rho_floor); irho_zp=1.0_WP/rho_zp
-            rho_zm=max(sum(pQ(i,  j,  k-1,1:2)),solver%rho_floor); irho_zm=1.0_WP/rho_zm
+            ! Get local inverse densities
+            irho_cc=1.0_WP/max(sum(pQ(i  ,j,  k,  1:2)),solver%rho_floor)
+            irho_xp=1.0_WP/max(sum(pQ(i+1,j,  k,  1:2)),solver%rho_floor)
+            irho_xm=1.0_WP/max(sum(pQ(i-1,j,  k,  1:2)),solver%rho_floor)
+            irho_yp=1.0_WP/max(sum(pQ(i,  j+1,k,  1:2)),solver%rho_floor)
+            irho_ym=1.0_WP/max(sum(pQ(i,  j-1,k,  1:2)),solver%rho_floor)
+            irho_zp=1.0_WP/max(sum(pQ(i,  j,  k+1,1:2)),solver%rho_floor)
+            irho_zm=1.0_WP/max(sum(pQ(i,  j,  k-1,1:2)),solver%rho_floor)
             ! Compute vorticity and tag based on it
             vort_x=(pQ(i,j+1,k,7)*irho_yp-pQ(i,j-1,k,7)*irho_ym)*0.5_WP*dyi-(pQ(i,j,k+1,6)*irho_zp-pQ(i,j,k-1,6)*irho_zm)*0.5_WP*dzi
             vort_y=(pQ(i,j,k+1,5)*irho_zp-pQ(i,j,k-1,5)*irho_zm)*0.5_WP*dzi-(pQ(i+1,j,k,7)*irho_xp-pQ(i-1,j,k,7)*irho_xm)*0.5_WP*dxi
             vort_z=(pQ(i+1,j,k,6)*irho_xp-pQ(i-1,j,k,6)*irho_xm)*0.5_WP*dxi-(pQ(i,j+1,k,5)*irho_yp-pQ(i,j-1,k,5)*irho_ym)*0.5_WP*dyi
             vort_mag=sqrt(vort_x**2+vort_y**2+vort_z**2)
             if (vort_mag.gt.vorticity_tag) tagarr(i,j,k,1)=SETtag
-            ! Compute density ratio and tag based on it
-            rho_ratio=max(rho_cc*irho_xp,rho_xp*irho_cc,rho_cc*irho_xm,rho_xm*irho_cc,&
-            &             rho_cc*irho_yp,rho_yp*irho_cc,rho_cc*irho_ym,rho_ym*irho_cc,&
-            &             rho_cc*irho_zp,rho_zp*irho_cc,rho_cc*irho_zm,rho_zm*irho_cc)
-            if (rho_ratio.gt.rho_ratio_tag) tagarr(i,j,k,1)=SETtag
+            ! Compute density ratio in 3x3x3 stencil and tag based on it
+            rho_max=solver%rho_floor; rho_min=huge(1.0_WP)
+            do kk=-1,1; do jj=-1,1; do ii=-1,1
+               rho_nb=sum(pQ(i+ii,j+jj,k+kk,1:2))
+               rho_max=max(rho_max,rho_nb)
+               rho_min=min(rho_min,max(rho_nb,solver%rho_floor))
+            end do; end do; end do
+            rho_ratio=rho_max/rho_min
+            r_cyl=sqrt((solver%amr%ylo+(real(j,WP)+0.5_WP)*dy)**2+(solver%amr%zlo+(real(k,WP)+0.5_WP)*dz)**2)
+            if (rho_ratio.gt.rho_ratio_tag.and.(r_cyl.lt.R_spg+L_spg.or.lvl.lt.solver%amr%maxlvl-1)) tagarr(i,j,k,1)=SETtag
          end do; end do; end do
       end do
       call solver%amr%mfiter_destroy(mfi)
@@ -581,7 +587,7 @@ contains
          ! Compute viscosities
          call get_viscosities()
          ! Add SGS models
-         call fs%add_viscartif(dt=time%dt)
+         call fs%add_viscartif(dt=time%dt,Cvisc=1.0e-2_WP)
          call fs%add_vreman(dt=time%dt)
          ! Compute Umag and Mach number
          call Umag%get_magnitude(fs%U,fs%V,fs%W)
@@ -766,7 +772,7 @@ contains
          call get_viscosities()
 
          ! Add SGS models
-         call fs%add_viscartif(dt=time%dt)
+         call fs%add_viscartif(dt=time%dt,Cvisc=1.0e-2_WP)
          call fs%add_vreman(dt=time%dt)
 
          ! Compute Umag and Mach number
