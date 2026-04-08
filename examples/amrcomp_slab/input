@@ -7,6 +7,7 @@ Max level: 3
 # Regridding parameters
 Regrid nsteps:     10
 Tagging rho ratio: 1.5
+Tagging vorticity: 100.0
 
 # Gammas
 GammaG: 1.3
@@ -23,6 +24,7 @@ Slab right:  0.5
 # Liquid state
 Density ratio:      133.5
 Liquid Mach number: 1.0
+Liquid pressure offset: -0.1
 
 # Viscous parameters
 Reynolds number:        3e5
@@ -40,4 +42,4 @@ Max time: 1e2
 # Output
 Output period:     1e-1
 Checkpoint period: 1
-Restart from:      !restart/slab_2.10000E+01
+Restart from:      !restart/slab_1.00000E+00

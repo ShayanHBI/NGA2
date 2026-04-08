@@ -21,7 +21,7 @@ module simulation
    !> Timetracker and compressible multiphase solver
    type(timetracker) :: time
    type(amrmpcomp), target :: fs
-   type(amrdata) :: dQdt,Umag,Mach
+   type(amrdata) :: dQdt,Umag,Mach,PMIX,RHOMIX
    
    !> Visualization
    type(event) :: viz_evt
@@ -38,7 +38,12 @@ module simulation
    real(WP) :: restart_time
    
    !> Simulation monitoring
-   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile
+   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,relaxfile
+
+   !> Relaxation diagnostics (module-level for monitor binding)
+   integer :: rlx_n_mixture,rlx_n_pass1_ok,rlx_n_need_cluster
+   integer :: rlx_n_cluster_ok,rlx_n_skip_no_normal,rlx_n_skip_no_gas,rlx_n_skip_cluster_fail
+   integer :: rlx_stage
    
    !> Stiffened gas EOS parameters (liquid and gas)
    real(WP) :: GammaL,PinfL,CvL
@@ -62,7 +67,12 @@ module simulation
    !> Slab geometry
    real(WP) :: slab_left,slab_right
 
-   !> Tagging parameter
+   !> Sponge parameters
+   real(WP) :: Y_spg=3.0_WP              !< Sponge start distance from y-center
+   real(WP) :: L_spg=1.0_WP              !< Sponge width
+
+   !> Tagging parameters
+   real(WP) :: vorticity_tag=huge(1.0_WP)
    real(WP) :: rho_ratio_tag=huge(1.0_WP)
 
 contains
@@ -75,10 +85,18 @@ contains
 
    !> Levelset function for slab (between slab_left and slab_right in x)
    function slab_levelset(xyz,t) result(G)
+      use mathtools, only: twoPi
       real(WP), dimension(3), intent(in) :: xyz
       real(WP), intent(in) :: t
-      real(WP) :: G
-      G=min(xyz(1)-slab_left,slab_right-xyz(1))
+      real(WP) :: G,ymid,sl,sr,sin_pert,amp
+      integer  :: per
+      amp=0.2_WP
+      per=4
+      ymid=0.5_WP*(amr%yhi+amr%ylo)
+      sin_pert=1.0_WP+amp*sin(twoPi*real(per,WP)*(xyz(2)-ymid)/(amr%yhi-amr%ylo))
+      sl=slab_left *sin_pert
+      sr=slab_right*sin_pert
+      G=min(xyz(1)-sl,sr-xyz(1))
    end function slab_levelset
 
    !> Liquid EOS: P=f(RHO,I) - Stiffened gas
@@ -168,17 +186,22 @@ contains
    !> Solves quadratic for equilibrium pressure Peq where PL=PG=Peq,
    !> then adjusts VF and internal energies via p*dV work exchange.
    !> Conserves: phasic masses Q(1:2), total internal energy Q(3)+Q(4), momentum Q(5:7)
-   subroutine P_relax_implicit(VF,Q)
+   !> If success is present, it is set to .true./.false. and the routine
+   !> returns early on failure WITHOUT modifying VF or Q.
+   subroutine P_relax_implicit(VF,Q,success)
       use amrmpcomp_class, only: VFlo,VFhi
       implicit none
       real(WP),               intent(inout) :: VF
       real(WP), dimension(:), intent(inout) :: Q
-      real(WP) :: a,b,d,Peq,VFeq
+      logical, intent(out), optional :: success
+      real(WP) :: a,b,disc,Peq,VFeq
       real(WP) :: invG1G,invG1L,d0,d1,facG,facL
       real(WP), parameter :: RHOGmin=1.0e-2_WP
+      if (present(success)) success=.false.
       ! Skip if any conserved quantity is non-positive (EOS undefined)
       if (any(Q(1:4).le.0.0_WP)) return
       ! Skip near-pure-liquid cells (gas density too low)
+      if (VF.gt.VFhi) return
       if (Q(2)/(1.0_WP-VF).lt.RHOGmin) return
       ! Precompute EOS constants
       invG1G=1.0_WP/(GammaG-1.0_WP)
@@ -187,13 +210,13 @@ contains
       d1=1.0_WP+invG1L
       facG=GammaG*PinfG*invG1G
       facL=invG1G+VF
-      ! Quadratic coefficients: a*Peq^2 + b*Peq + d = 0
+      ! Quadratic coefficients: a*Peq^2 + b*Peq + disc_term = 0
       a=d1*facL-VF*(invG1G+1.0_WP)
       b=d1*(facG-Q(4))-VF*facG+d0*facL-Q(3)*(invG1G+1.0_WP)
-      d=d0*(facG-Q(4))-Q(3)*facG
+      disc=d0*(facG-Q(4))-Q(3)*facG
       ! Solve for equilibrium pressure (positive root)
-      if (b**2-4.0_WP*a*d.lt.0.0_WP) return
-      Peq=(-b+sqrt(b**2-4.0_WP*a*d))/(2.0_WP*a)
+      if (b**2-4.0_WP*a*disc.lt.0.0_WP) return
+      Peq=(-b+sqrt(b**2-4.0_WP*a*disc))/(2.0_WP*a)
       ! Bail if pressure is unphysical
       if (Peq.le.max(-PinfG,-PinfL)) return
       ! Equilibrium volume fraction from liquid energy constraint
@@ -202,7 +225,312 @@ contains
       Q(3)=Q(3)-Peq*(VFeq-VF)
       Q(4)=Q(4)+Peq*(VFeq-VF)
       VF=VFeq
+      if (present(success)) success=.true.
    end subroutine P_relax_implicit
+
+   !> Cluster-based pressure relaxation (generic 3D)
+   !> Pass 1: Attempt single-cell relaxation; mark failures
+   !> Pass 2: For failures, find a pure-gas neighbor along the interface normal,
+   !>         form a 2-cell cluster, relax the aggregate, distribute back
+   subroutine apply_cluster_relax()
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      use amrmpcomp_class,  only: VFlo,VFhi
+      use mpi_f08,          only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM,MPI_INTEGER
+      use parallel,         only: MPI_REAL_WP
+      implicit none
+      integer :: lvl,i,j,k,i1,j1,k1,nf,i2,j2,k2
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pSD,pQ,pCL,pCG,pPLIC
+      real(WP) :: dx,dy,dz
+      ! Flags
+      logical, dimension(:,:,:), allocatable :: needs_clustering, processed
+      integer :: ilo,ihi,jlo,jhi,klo,khi
+      ! Normal computation
+      real(WP) :: nx,ny,nz,nmag
+      ! Neighbor search
+      integer :: in,jn,kn
+      integer, dimension(3,6) :: offsets
+      real(WP) :: alignment,best_alignment
+      logical :: found_gas,ok
+      ! Cluster work variables
+      real(WP) :: VF_c,Q_c(7),VF_orig(2),Q_orig(7,2)
+      real(WP) :: VF_c_old,dVF_cluster,dQ3,dQ4
+      real(WP) :: w1,w2,wsum,dVF1,dVF2
+      real(WP), parameter :: wmin=1.0e-16_WP
+      ! Temporaries for try
+      real(WP) :: VF_tmp,Q_tmp(7)
+      ! ===== Diagnostics =====
+      integer :: ierr,n_print_cluster,n_print_skip
+      integer, parameter :: max_print=5
+      real(WP) :: rhoG
+
+      ! 6 face-connected neighbor offsets
+      offsets(:,1)=[+1, 0, 0]
+      offsets(:,2)=[-1, 0, 0]
+      offsets(:,3)=[ 0,+1, 0]
+      offsets(:,4)=[ 0,-1, 0]
+      offsets(:,5)=[ 0, 0,+1]
+      offsets(:,6)=[ 0, 0,-1]
+
+      ! Operate on finest level only
+      lvl=fs%amr%maxlvl
+      dx=fs%amr%dx(lvl); dy=fs%amr%dy(lvl); dz=fs%amr%dz(lvl)
+
+      ! Initialize counters
+      rlx_n_mixture=0; rlx_n_pass1_ok=0; rlx_n_need_cluster=0
+      rlx_n_cluster_ok=0; rlx_n_skip_no_normal=0; rlx_n_skip_no_gas=0; rlx_n_skip_cluster_fail=0
+      n_print_cluster=0; n_print_skip=0
+
+      call fs%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         ! Get pointers to data
+         pVF  =>fs%VF%mf(lvl)%dataptr(mfi)
+         pSD  =>fs%SD%dataptr(mfi)
+         pQ   =>fs%Q%mf(lvl)%dataptr(mfi)
+         pCL  =>fs%CL%dataptr(mfi)
+         pCG  =>fs%CG%dataptr(mfi)
+         pPLIC=>fs%PLIC%dataptr(mfi)
+
+         ! Grown box (includes ghost cells)
+         bx=mfi%growntilebox(fs%nover)
+         ilo=bx%lo(1); ihi=bx%hi(1)
+         jlo=bx%lo(2); jhi=bx%hi(2)
+         klo=bx%lo(3); khi=bx%hi(3)
+
+         ! Allocate per-box flag arrays
+         allocate(needs_clustering(ilo:ihi,jlo:jhi,klo:khi)); needs_clustering=.false.
+         allocate(processed       (ilo:ihi,jlo:jhi,klo:khi)); processed=.false.
+
+         ! ===============================================================
+         ! Pass 1: Try single-cell relaxation on temporaries, mark failures
+         ! ===============================================================
+         do k=klo,khi; do j=jlo,jhi; do i=ilo,ihi
+            ! Only relax interfacial cells
+            if (pVF(i,j,k,1).lt.VFlo.or.pVF(i,j,k,1).gt.VFhi) cycle
+            rlx_n_mixture=rlx_n_mixture+1
+            ! Try relaxation on copies
+            VF_tmp=pVF(i,j,k,1)
+            Q_tmp =pQ(i,j,k,:)
+            call P_relax_implicit(VF_tmp,Q_tmp,ok)
+            if (ok) then
+               ! Apply result directly
+               pVF(i,j,k,1)=VF_tmp
+               pQ(i,j,k,:) =Q_tmp
+               call cleanup_cell(i,j,k,pVF,pQ,pCL,pCG,dx,dy,dz)
+               processed(i,j,k)=.true.
+               rlx_n_pass1_ok=rlx_n_pass1_ok+1
+            else
+               needs_clustering(i,j,k)=.true.
+               rlx_n_need_cluster=rlx_n_need_cluster+1
+            end if
+         end do; end do; end do
+
+         ! Sync needs_clustering? Use fill boundary if sure we are away from the coarse-fine boundary and we are at the max level
+
+         ! ===============================================================
+         ! Pass 2: Cluster failures with neighbor along normal
+         ! ===============================================================
+         do k1=klo,khi; do j1=jlo,jhi; do i1=ilo,ihi
+            if (.not.needs_clustering(i1,j1,k1)) cycle
+            if (processed(i1,j1,k1)) cycle
+
+            ! ============================================================
+            ! Get interface normal from PLIC reconstruction
+            ! PLIC stores (nx, ny, nz, d); normal points from liquid to gas
+            ! ============================================================
+            nx=pPLIC(i1,j1,k1,1)
+            ny=pPLIC(i1,j1,k1,2)
+            nz=pPLIC(i1,j1,k1,3)
+            nmag=sqrt(nx**2+ny**2+nz**2)
+            if (nmag.gt.0.0_WP) then
+               nx=nx/nmag; ny=ny/nmag; nz=nz/nmag
+            else
+               ! Degenerate: no normal available, skip
+               rlx_n_skip_no_normal=rlx_n_skip_no_normal+1
+               if (n_print_skip.lt.max_print) then
+                  n_print_skip=n_print_skip+1
+                  rhoG=0.0_WP; if (pVF(i1,j1,k1,1).lt.1.0_WP) rhoG=pQ(i1,j1,k1,2)/(1.0_WP-pVF(i1,j1,k1,1))
+                  print '(A,I6,A,3I5,A,ES12.5,A,ES12.5,A)', &
+                     '  [SKIP:no_norm] n=',time%n,' ijk=',i1,j1,k1,' VF=',pVF(i1,j1,k1,1),' rhoG=',rhoG,' PLIC=(0,0,0)'
+               end if
+               cycle
+            end if
+
+            ! ============================================================
+            ! Search 6 face-connected neighbors for the best gas cell
+            ! "Best" = pure gas (VF < VFlo) AND most aligned with normal
+            ! ============================================================
+            found_gas=.false.
+            best_alignment=-huge(1.0_WP)
+            i2=i1; j2=j1; k2=k1   ! will hold the chosen gas neighbor
+            do nf=1,6
+               in=i1+offsets(1,nf)
+               jn=j1+offsets(2,nf)
+               kn=k1+offsets(3,nf)
+               ! Bounds check (Remove after figuring out how to sync needs_clustering)
+               if (in.lt.lbound(pVF,1).or.in.gt.ubound(pVF,1)) cycle
+               if (jn.lt.lbound(pVF,2).or.jn.gt.ubound(pVF,2)) cycle
+               if (kn.lt.lbound(pVF,3).or.kn.gt.ubound(pVF,3)) cycle
+               ! Must be pure gas
+               ! if (pVF(in,jn,kn,1).ge.VFlo) cycle
+               ! Skip if liquid
+               if (pVF(in,jn,kn,1).gt.VFhi) cycle
+               ! Compute alignment with normal
+               alignment=abs(real(offsets(1,nf),WP)*nx+real(offsets(2,nf),WP)*ny+real(offsets(3,nf),WP)*nz)
+               if (alignment.gt.best_alignment) then
+                  best_alignment=alignment
+                  i2=in; j2=jn; k2=kn
+                  found_gas=.true.
+               end if
+            end do
+
+            ! If no pure-gas neighbor found, skip (leave unrelaxed)
+            if (.not.found_gas) then
+               rlx_n_skip_no_gas=rlx_n_skip_no_gas+1
+               if (n_print_skip.lt.max_print) then
+                  n_print_skip=n_print_skip+1
+                  rhoG=0.0_WP; if (pVF(i1,j1,k1,1).lt.1.0_WP) rhoG=pQ(i1,j1,k1,2)/(1.0_WP-pVF(i1,j1,k1,1))
+                  print '(A,I6,A,3I5,A,ES12.5,A,ES12.5,A,3F8.4,A)', &
+                     '  [SKIP:no_gas] n=',time%n,' ijk=',i1,j1,k1,' VF=',pVF(i1,j1,k1,1),' rhoG=',rhoG, &
+                     ' n=(',nx,ny,nz,')'
+               end if
+               cycle
+            end if
+
+            ! ============================================================
+            ! Form 2-cell cluster and relax the aggregate
+            ! Both cells have equal volume -> cluster average = simple mean
+            ! ============================================================
+            VF_orig(1)=pVF(i1,j1,k1,1)
+            VF_orig(2)=pVF(i2,j2,k2,1)
+            Q_orig(:,1)=pQ(i1,j1,k1,:)
+            Q_orig(:,2)=pQ(i2,j2,k2,:)
+
+            VF_c=0.5_WP*(VF_orig(1)+VF_orig(2))
+            Q_c =0.5_WP*(Q_orig(:,1)+Q_orig(:,2))
+            VF_c_old=VF_c
+
+            ! Relax the cluster aggregate
+            call P_relax_implicit(VF_c,Q_c,ok)
+            if (.not.ok) then
+               ! Cluster relaxation also failed, skip
+               rlx_n_skip_cluster_fail=rlx_n_skip_cluster_fail+1
+               if (n_print_skip.lt.max_print) then
+                  n_print_skip=n_print_skip+1
+                  rhoG=0.0_WP; if (VF_c.lt.1.0_WP) rhoG=Q_c(2)/(1.0_WP-VF_c)
+                  print '(A,I6,A,3I5,A,ES12.5,A,3I5,A,ES12.5,A,ES12.5)', &
+                     '  [SKIP:clst_fail] n=',time%n,' ijk=',i1,j1,k1,' VF=',VF_orig(1), &
+                     ' gas=',i2,j2,k2,' VF_c=',VF_c,' rhoG_c=',rhoG
+               end if
+               cycle
+            end if
+
+            ! Cluster-level deltas
+            dVF_cluster=VF_c-VF_c_old
+            dQ3=Q_c(3)-0.5_WP*(Q_orig(3,1)+Q_orig(3,2))
+            dQ4=Q_c(4)-0.5_WP*(Q_orig(4,1)+Q_orig(4,2))
+
+            ! Print successful clustering info
+            rlx_n_cluster_ok=rlx_n_cluster_ok+1
+            if (n_print_cluster.lt.max_print) then
+               n_print_cluster=n_print_cluster+1
+               rhoG=0.0_WP; if (VF_orig(1).lt.1.0_WP) rhoG=Q_orig(2,1)/(1.0_WP-VF_orig(1))
+               print '(A,I6,A,3I5,A,ES12.5,A,ES12.5,A,3I5,A,ES12.5,A,ES12.5)', &
+                  '  [CLUSTER] n=',time%n,' ijk=',i1,j1,k1,' VF=',VF_orig(1),' rhoG=',rhoG, &
+                  ' gas=',i2,j2,k2,' dVF=',dVF_cluster,' dQ3=',dQ3
+
+            end if
+
+            ! ============================================================
+            ! Distribute VF change
+            ! ============================================================
+            w1=max(amr%cell_vol(amr%maxlvl)*pSD(i1,j1,k1,1)*min(VF_orig(1),1.0_WP-VF_orig(1)),wmin)
+            w2=max(amr%cell_vol(amr%maxlvl)*pSD(i2,j2,k2,1)*min(VF_orig(2),1.0_WP-VF_orig(2)),wmin)
+            wsum=w1+w2
+
+            dVF1=dVF_cluster*(w1/wsum)
+            dVF2=dVF_cluster*(w2/wsum)
+
+            ! Clip and redistribute remainder
+            if (VF_orig(1)+dVF1.gt.1.0_WP) then
+               dVF1=1.0_WP-VF_orig(1)
+               dVF2=dVF_cluster-dVF1
+            else if (VF_orig(1)+dVF1.lt.0.0_WP) then
+               dVF1=-VF_orig(1)
+               dVF2=dVF_cluster-dVF1
+            end if
+            ! if (VF_orig(2)+dVF2.gt.1.0_WP) then
+            !    dVF2=1.0_WP-VF_orig(2)
+            ! else if (VF_orig(2)+dVF2.lt.0.0_WP) then
+            !    dVF2=-VF_orig(2)
+            ! end if
+
+            ! Apply VF changes
+            pVF(i1,j1,k1,1)=VF_orig(1)+dVF1
+            pVF(i2,j2,k2,1)=VF_orig(2)+dVF2
+
+            ! ============================================================
+            ! Distribute Q changes: gradient-preserving (additive delta)
+            ! Only Q(3) and Q(4) change from relaxation
+            ! ============================================================
+            pQ(i1,j1,k1,3)=Q_orig(3,1)+dQ3
+            pQ(i1,j1,k1,4)=Q_orig(4,1)+dQ4
+            pQ(i2,j2,k2,3)=Q_orig(3,2)+dQ3
+            pQ(i2,j2,k2,4)=Q_orig(4,2)+dQ4
+
+            ! Cleanup both cells
+            ! call cleanup_cell(i1,j1,k1,pVF,pQ,pCL,pCG,dx,dy,dz)
+            ! call cleanup_cell(i2,j2,k2,pVF,pQ,pCL,pCG,dx,dy,dz)
+            processed(i1,j1,k1)=.true.
+            processed(i2,j2,k2)=.true.
+            ! How do I make other processors aware of this?
+
+         end do; end do; end do
+
+         deallocate(needs_clustering,processed)
+      end do
+      call fs%amr%mfiter_destroy(mfi)
+
+      call MPI_ALLREDUCE(MPI_IN_PLACE,rlx_n_mixture,          1,MPI_INTEGER,MPI_SUM,fs%amr%comm,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,rlx_n_pass1_ok,         1,MPI_INTEGER,MPI_SUM,fs%amr%comm,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,rlx_n_need_cluster,     1,MPI_INTEGER,MPI_SUM,fs%amr%comm,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,rlx_n_cluster_ok,       1,MPI_INTEGER,MPI_SUM,fs%amr%comm,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,rlx_n_skip_no_normal,   1,MPI_INTEGER,MPI_SUM,fs%amr%comm,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,rlx_n_skip_no_gas,      1,MPI_INTEGER,MPI_SUM,fs%amr%comm,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,rlx_n_skip_cluster_fail,1,MPI_INTEGER,MPI_SUM,fs%amr%comm,ierr)
+      if (rlx_n_need_cluster.gt.0) call relaxfile%write()
+
+   contains
+
+      !> Cleanup a cell after relaxation: handle pure-liquid/pure-gas transitions
+      subroutine cleanup_cell(ic,jc,kc,pVF,pQ,pCL,pCG,dx,dy,dz)
+         implicit none
+         integer, intent(in) :: ic,jc,kc
+         real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG
+         real(WP), intent(in) :: dx,dy,dz
+         real(WP) :: xc,yc,zc
+         xc=fs%amr%xlo+(real(ic,WP)+0.5_WP)*dx
+         yc=fs%amr%ylo+(real(jc,WP)+0.5_WP)*dy
+         zc=fs%amr%zlo+(real(kc,WP)+0.5_WP)*dz
+         if (pVF(ic,jc,kc,1).lt.VFlo) then
+            ! Pure gas
+            pVF(ic,jc,kc,1)=0.0_WP
+            pCL(ic,jc,kc,1:3)=[xc,yc,zc]
+            pCG(ic,jc,kc,1:3)=[xc,yc,zc]
+            pQ(ic,jc,kc,1)=0.0_WP
+            pQ(ic,jc,kc,3)=0.0_WP
+         else if (pVF(ic,jc,kc,1).gt.VFhi) then
+            ! Pure liquid
+            pVF(ic,jc,kc,1)=1.0_WP
+            pCL(ic,jc,kc,1:3)=[xc,yc,zc]
+            pCG(ic,jc,kc,1:3)=[xc,yc,zc]
+            pQ(ic,jc,kc,2)=0.0_WP
+            pQ(ic,jc,kc,4)=0.0_WP
+         end if
+      end subroutine cleanup_cell
+
+   end subroutine apply_cluster_relax
 
    !> Compute viscosity: Sutherland for gas, VF-weighted blend with liquid
    subroutine get_viscosities()
@@ -210,10 +538,14 @@ contains
       integer :: lvl,i,j,k
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pTG,pVF,pQ,pVisc,pBeta,pDiff
-      real(WP) :: mu_g,mu_l,k_g,k_l
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pTG,pVF,pQ,pVisc,pBeta,pDiff,pRHOL,pRHOG
+      real(WP) :: mu_g,mu_l,k_g,k_l,y_cc,y_dist,blend,nu_spg,mu_spg
       real(WP), parameter :: Tmax_visc=10.0_WP
+      real(WP), parameter :: max_cfl=0.5_WP
+      real(WP), parameter :: Cdiff=0.1_WP
       real(WP), parameter :: myeps=1.0e-15_WP
+      ! Get maximum allowable kinematic viscosity in the sponge at finest level
+      nu_spg=max_cfl*amr%min_meshsize(amr%clvl())**2/(4.0_WP*time%dt)
       ! Loop over levels
       do lvl=0,amr%clvl()
          ! Loop over domain
@@ -226,6 +558,8 @@ contains
             pVisc=>fs%visc%mf(lvl)%dataptr(mfi)
             pBeta=>fs%beta%mf(lvl)%dataptr(mfi)
             pDiff=>fs%diff%mf(lvl)%dataptr(mfi)
+            pRHOL=>fs%RHOL%mf(lvl)%dataptr(mfi)
+            pRHOG=>fs%RHOG%mf(lvl)%dataptr(mfi)
             ! Get tilebox with overlap
             bx=mfi%growntilebox(fs%nover)
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
@@ -245,12 +579,51 @@ contains
                ! Mixture diffusivity
                !pDiff(i,j,k,1)=pVF(i,j,k,1)*k_l+(1.0_WP-pVF(i,j,k,1))*k_g ! Arithmetic averaging
                pDiff(i,j,k,1)=1.0_WP/(pVF(i,j,k,1)/max(k_l,myeps)+(1.0_WP-pVF(i,j,k,1))/max(k_g,myeps)) ! Harmonic averaging
+               ! Apply sponge layer viscosity (distance from domain y-center)
+               y_cc=amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl)
+               y_dist=abs(y_cc-0.5_WP*(amr%ylo+amr%yhi))
+               if (y_dist.gt.Y_spg) then
+                  blend=min((y_dist-Y_spg)/L_spg,1.0_WP)**2
+                  mu_spg=nu_spg/(pVF(i,j,k,1)/max(pRHOL(i,j,k,1),myeps)+(1.0_WP-pVF(i,j,k,1))/max(pRHOG(i,j,k,1),myeps))
+                  pVisc(i,j,k,1)=max(pVisc(i,j,k,1),blend*mu_spg)
+                  pDiff(i,j,k,1)=max(pDiff(i,j,k,1),Cdiff*blend*mu_spg)
+               end if
             end do; end do; end do
          end do
          call amr%mfiter_destroy(mfi)
       end do
    end subroutine get_viscosities
-   
+
+   !> Compute mixture quantities: PMIX = VF*PL + (1-VF)*PG, RHOMIX = VF*RHOL + (1-VF)*RHOG
+   subroutine compute_mix()
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      implicit none
+      integer :: lvl,i,j,k
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pPL,pPG,pRHOL,pRHOG,pPMIX,pRHOMIX
+      real(WP) :: vf
+      do lvl=0,amr%clvl()
+         call amr%mfiter_build(lvl,mfi)
+         do while (mfi%next())
+            pVF    =>fs%VF%mf(lvl)%dataptr(mfi)
+            pPL    =>fs%PL%mf(lvl)%dataptr(mfi)
+            pPG    =>fs%PG%mf(lvl)%dataptr(mfi)
+            pRHOL  =>fs%RHOL%mf(lvl)%dataptr(mfi)
+            pRHOG  =>fs%RHOG%mf(lvl)%dataptr(mfi)
+            pPMIX  =>PMIX%mf(lvl)%dataptr(mfi)
+            pRHOMIX=>RHOMIX%mf(lvl)%dataptr(mfi)
+            bx=mfi%tilebox()
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               vf=pVF(i,j,k,1)
+               pPMIX(i,j,k,1)  =vf*pPL(i,j,k,1)+(1.0_WP-vf)*pPG(i,j,k,1)
+               pRHOMIX(i,j,k,1)=vf*pRHOL(i,j,k,1)+(1.0_WP-vf)*pRHOG(i,j,k,1)
+            end do; end do; end do
+         end do
+         call amr%mfiter_destroy(mfi)
+      end do
+   end subroutine compute_mix
+
    !> User init callback - set Q and VF/barycenters for a slab at rest with a shock
    subroutine shockslab_init(solver,lvl,time,ba,dm)
       use amrex_amr_module, only: amrex_boxarray,amrex_distromap,amrex_mfiter,amrex_box
@@ -354,8 +727,15 @@ contains
       type(amrex_box) :: bx
       character(kind=c_char), dimension(:,:,:,:), contiguous, pointer :: tagarr
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ
-      real(WP) :: rho_max,rho_min,rho_nb,rho_ratio
+      real(WP) :: dx,dy,dz,dxi,dyi,dzi
+      real(WP) :: irho_cc,irho_xp,irho_xm,irho_yp,irho_ym,irho_zp,irho_zm
+      real(WP) :: vort_x,vort_y,vort_z,vort_mag
+      real(WP) :: rho_max,rho_min,rho_nb,rho_ratio,y_dist
       integer :: i,j,k,ii,jj,kk
+      ! Get mesh size
+      dx=solver%amr%dx(lvl); dxi=1.0_WP/dx
+      dy=solver%amr%dy(lvl); dyi=1.0_WP/dy
+      dz=solver%amr%dz(lvl); dzi=1.0_WP/dz
       ! Recast tags
       tags=tags_ptr
       ! Compute tags
@@ -367,6 +747,19 @@ contains
          ! Loop over tile
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            ! Compute vorticity and tag based on it
+            irho_cc=1.0_WP/max(sum(pQ(i  ,j,  k,  1:2)),solver%rho_floor)
+            irho_xp=1.0_WP/max(sum(pQ(i+1,j,  k,  1:2)),solver%rho_floor)
+            irho_xm=1.0_WP/max(sum(pQ(i-1,j,  k,  1:2)),solver%rho_floor)
+            irho_yp=1.0_WP/max(sum(pQ(i,  j+1,k,  1:2)),solver%rho_floor)
+            irho_ym=1.0_WP/max(sum(pQ(i,  j-1,k,  1:2)),solver%rho_floor)
+            irho_zp=1.0_WP/max(sum(pQ(i,  j,  k+1,1:2)),solver%rho_floor)
+            irho_zm=1.0_WP/max(sum(pQ(i,  j,  k-1,1:2)),solver%rho_floor)
+            vort_x=(pQ(i,j+1,k,7)*irho_yp-pQ(i,j-1,k,7)*irho_ym)*0.5_WP*dyi-(pQ(i,j,k+1,6)*irho_zp-pQ(i,j,k-1,6)*irho_zm)*0.5_WP*dzi
+            vort_y=(pQ(i,j,k+1,5)*irho_zp-pQ(i,j,k-1,5)*irho_zm)*0.5_WP*dzi-(pQ(i+1,j,k,7)*irho_xp-pQ(i-1,j,k,7)*irho_xm)*0.5_WP*dxi
+            vort_z=(pQ(i+1,j,k,6)*irho_xp-pQ(i-1,j,k,6)*irho_xm)*0.5_WP*dxi-(pQ(i,j+1,k,5)*irho_yp-pQ(i,j-1,k,5)*irho_ym)*0.5_WP*dyi
+            vort_mag=sqrt(vort_x**2+vort_y**2+vort_z**2)
+            if (vort_mag.gt.vorticity_tag) tagarr(i,j,k,1)=SETtag
             ! Compute density ratio in 3x3x3 stencil and tag based on it
             rho_max=solver%rho_floor; rho_min=huge(1.0_WP)
             do kk=-1,1; do jj=-1,1; do ii=-1,1
@@ -375,7 +768,9 @@ contains
                rho_min=min(rho_min,max(rho_nb,solver%rho_floor))
             end do; end do; end do
             rho_ratio=rho_max/rho_min
-            if (rho_ratio.gt.rho_ratio_tag) tagarr(i,j,k,1)=SETtag
+            ! Only tag outside sponge for density ratio (prevent over-refining in sponge)
+            y_dist=abs(solver%amr%ylo+(real(j,WP)+0.5_WP)*dy-0.5_WP*(solver%amr%ylo+solver%amr%yhi))
+            if (rho_ratio.gt.rho_ratio_tag.and.(y_dist.lt.Y_spg+L_spg.or.lvl.lt.solver%amr%maxlvl-1)) tagarr(i,j,k,1)=SETtag
          end do; end do; end do
       end do
       call solver%amr%mfiter_destroy(mfi)
@@ -425,7 +820,9 @@ contains
          call param_read('Liquid Mach number',ML)
          rhoL1=density_ratio
          PinfL=rhoL1/(GammaL*ML**2)-pG1
-         pL1=pG1                                                        ! Force pressure equilibrium
+         pL1=pG1                                                        ! Default: pressure equilibrium
+         call param_read('Liquid pressure offset',pL1,default=0.0_WP)    ! Optional: shift to negative
+         pL1=pG1+pL1                                                     ! Apply offset (negative = tension)
          CvL=(pL1+PinfL)/(rhoL1*(GammaL-1.0_WP)*get_TG(rhoG1,pG1))      ! Force thermal equilibrium
          ! Viscous parameters
          call param_read('Reynolds number',Reynolds)
@@ -523,6 +920,8 @@ contains
          call dQdt%initialize(amr,name='dQdt',ncomp=7,ng=0,interp=amrex_interp_none); call dQdt%register()
          call Umag%initialize(amr,name='Umag',ncomp=1,ng=0,interp=amrex_interp_none); call Umag%register()
          call Mach%initialize(amr,name='Mach',ncomp=1,ng=0,interp=amrex_interp_none); call Mach%register()
+         call PMIX%initialize(amr,name='PMIX',ncomp=1,ng=0,interp=amrex_interp_none); call PMIX%register()
+         call RHOMIX%initialize(amr,name='RHOMIX',ncomp=1,ng=0,interp=amrex_interp_none); call RHOMIX%register()
       end block create_workspace
 
       ! Initialize regridding
@@ -535,6 +934,7 @@ contains
          ! Set case-specific tagging
          fs%user_mpcomp_tagging=>my_tagger
          call param_read('Tagging rho ratio',rho_ratio_tag)
+         call param_read('Tagging vorticity',vorticity_tag,default=huge(1.0_WP))
          ! Build the grid
          if (restarted) then
             ! Restore grid hierarchy from checkpoint
@@ -555,6 +955,7 @@ contains
          ! Compute Umag and Mach number
          call Umag%get_magnitude(fs%U,fs%V,fs%W)
          call Mach%copy(src=Umag); call Mach%divide(src=fs%C)
+         call compute_mix()
       end block init_regridding
 
       ! Initialize checkpoint save event
@@ -582,6 +983,8 @@ contains
          call viz%add_scalar(fs%W,1,'W')
          call viz%add_scalar(Umag,1,'Umag')
          call viz%add_scalar(Mach,1,'Mach')
+         call viz%add_scalar(PMIX,1,'PMIX')
+         call viz%add_scalar(RHOMIX,1,'RHOMIX')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -617,6 +1020,18 @@ contains
          call mfile%add_column(fs%VFint,'VFint')
          call mfile%add_column(fs%dPmax,'dPmax')
          call mfile%write()
+         ! Create relaxation monitor
+         relaxfile=monitor(amRoot=amr%amRoot,name='relaxation')
+         call relaxfile%add_column(time%n,'Timestep number')
+         call relaxfile%add_column(time%t,'Time')
+         call relaxfile%add_column(rlx_stage,'Stage')
+         call relaxfile%add_column(rlx_n_mixture,'Interfacial cells')
+         call relaxfile%add_column(rlx_n_pass1_ok,'Pass 1 OK')
+         call relaxfile%add_column(rlx_n_need_cluster,'Need cluster')
+         call relaxfile%add_column(rlx_n_cluster_ok,'Cluster OK')
+         call relaxfile%add_column(rlx_n_skip_no_normal,'Skip no normal')
+         call relaxfile%add_column(rlx_n_skip_no_gas,'Skip no gas')
+         call relaxfile%add_column(rlx_n_skip_cluster_fail,'Skip cluster fail')
          ! Create CFL monitor
          cflfile=monitor(amRoot=amr%amRoot,name='cfl')
          call cflfile%add_column(time%n,'Timestep')
@@ -708,7 +1123,8 @@ contains
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=0.5_WP*time%dt,src=dQdt)
          call fs%Q%average_down(); call fs%Q%fill(time=time%t+0.5_WP*time%dt)
          call check_Q('RK1   ')
-         call fs%apply_relax(time=time%t+0.5_WP*time%dt)
+         rlx_stage=1
+         call apply_cluster_relax()
          call check_Q('RELAX1')
          call fs%get_dQdt(Q=fs%Q,dQdt=dQdt,dt=time%dt,time=time%t+0.5_WP*time%dt)
 
@@ -716,7 +1132,8 @@ contains
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=time%dt,src=dQdt)
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          call check_Q('RK2   ')
-         call fs%apply_relax(time=time%t)
+         rlx_stage=2
+         call apply_cluster_relax()
          call check_Q('RELAX2')
 
          ! Rebuild PLIC
@@ -741,6 +1158,7 @@ contains
          ! Compute Umag and Mach number
          call Umag%get_magnitude(fs%U,fs%V,fs%W)
          call Mach%copy(src=Umag); call Mach%divide(src=fs%C)
+         call compute_mix()
 
          ! Visualization output
          if (viz_evt%occurs()) call viz%write(time%t)
@@ -777,6 +1195,8 @@ contains
       call dQdt%finalize()
       call Umag%finalize()
       call Mach%finalize()
+      call PMIX%finalize()
+      call RHOMIX%finalize()
       ! Finalize visualization
       call viz%finalize()
       call viz_evt%finalize()
@@ -789,6 +1209,7 @@ contains
       call consfile%finalize()
       call gridfile%finalize()
       call tfile%finalize()
+      call relaxfile%finalize()
    end subroutine simulation_final
    
    !> Diagnostic: scan Q/primitives for extreme values
