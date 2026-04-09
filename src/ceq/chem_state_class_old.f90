@@ -9,17 +9,17 @@ module chem_state_class
    public :: chem_state
 
    !> List of available equilibrium conditions
-   integer, parameter, public :: fixed_PT=1                       !< Fixed pressure and temperature
-   integer, parameter, public :: fixed_PH=2                       !< Fixed pressure and enthalpy
-   integer, parameter, public :: fixed_UV=3                       !< Fixed internal energy and volume
+   integer, parameter, public :: fixed_PT=1                      !< Fixed pressure and temperature
+   integer, parameter, public :: fixed_PH=2                      !< Fixed pressure and enthalpy
+   integer, parameter, public :: fixed_UV=3                      !< Fixed internal energy and volume
 
    !> List of available fixed_PH algorithms
-   integer, parameter, public :: NR=1                             !< Newton-Raphson
-   integer, parameter, public :: BS=2                             !< Bi-section
+   integer, parameter, public :: NR=1                            !< Newton-Raphson
+   integer, parameter, public :: BS=2                            !< Bi-section
 
    !> List of available methods for dN/dT calculation
-   integer, parameter, public :: FD=1                             !< Finite Difference
-   integer, parameter, public :: LS=2                             !< Least Squares
+   integer, parameter, public :: FD=1                            !< Finite Difference
+   integer, parameter, public :: LS=2                            !< Least Squares
 
    !> Fraction of Nm used in initial guess
    real(WP), parameter :: frac_Nm=0.1_WP
@@ -34,7 +34,6 @@ module chem_state_class
 
    !> Chemical statete object definition
    type :: chem_state
-      logical :: success
 
       ! This is our chemical system
       class(chem_sys), pointer :: sys                            !< This is the chemical system the solver is build for
@@ -66,20 +65,19 @@ module chem_state_class
       procedure(get_ceq_interface), pointer :: get_ceq=>NULL()   !< Get the chemical equilibrium
 
       ! Pointer to the avaiable dN/dT calculation procedures
-      procedure(get_dNdT_interface), pointer :: get_dNdT=>NULL() !< Get the temperature derivative of N
-      procedure(get_dNdp_interface), pointer :: get_dNdp=>NULL() !< Get the pressure derivative of N
+      procedure(get_dNdT_interface), pointer :: get_dNdpar=>NULL() !< Get the derivative of N
 
       ! Numerical parameters
       real(WP) :: Tlo                                            !< Lowest temperature at which h has been evaluated
       real(WP) :: Thi                                            !< Highest temperature at which h has been evaluated
       real(WP) :: tol_N                                          !< Tolerance for the residual norm
       real(WP) :: tol_T                                          !< Tolerance for the temperature
-      real(WP) :: tol_P                                          !< Tolerance for the pressure
+      real(WP) :: tol_p                                          !< Tolerance for the pressure
       real(WP) :: tol_H                                          !< Tolerance for the enthalpy residual
       real(WP) :: tol_U                                          !< Tolerance for the internal-energy residual
       real(WP) :: tol_V                                          !< Tolerance for the volume residual
       real(WP) :: dT                                             !< Residual error for the temperature
-      real(WP) :: dP                                             !< Residual error for the pressure
+      real(WP) :: dp                                             !< Residual error for the pressure
       real(WP) :: RH                                             !< Residual error for the enthalpy
       real(WP) :: RU,RV                                          !< Residual errors for the internal energy and the volume
       integer  :: iter_N                                         !< Number of Newton-Raphson iterations
@@ -88,6 +86,7 @@ module chem_state_class
       integer  :: iter_T_max                                     !< Maximum number of temperature iterations
       integer  :: PH_method                                      !< Fixed PH algorithm
       integer  :: dNdT_method                                    !< dNdT calculation method
+      logical  :: success                                        !< Flag for successful equilibrium calculations
 
    contains
       procedure :: initialize                                    !< Object initializer
@@ -98,7 +97,7 @@ module chem_state_class
       procedure :: get_gort                                      !< Get the normalized Gibbs free energy
       procedure :: hor2T                                         !< Convert enthalpy to temperature
       procedure :: get_dgdT                                      !< Get the temperature derivative of the gibbs function
-      procedure :: get_dgdP                                      !< Get the pressure derivative of the gibbs function
+      procedure :: get_dgdp                                      !< Get the pressure derivative of the gibbs function
       procedure :: perturb                                       !< Perturb the chemical equilibrium problem
       procedure :: get_Nming                                     !< Get the composition that minimized G and satisfies the constraints
       procedure :: min_pert                                      !< Get the purturbed maxmin composition
@@ -110,17 +109,13 @@ module chem_state_class
       procedure :: x_init                                        !< Initialize the chemical state solution vector
       procedure :: equilibrate                                   !< Obtain the chemical equilibrium state of the system
       procedure :: get_Cp_eff                                    !< Get the effective Cp
-      procedure :: get_dxdT                                      !< Get the temperature derivative of the solution vector
-      procedure :: get_dxdP                                      !< Get the pressure derivative of the solution vector
-      procedure :: get_UV_state                                  !< Get U/R and V for the current state
-      procedure :: get_UV_resJac                                 !< Get the residuals and Jacobian for the UV solver
+      procedure :: get_dxdpar                                    !< Get the temperature derivative of the solution vector
       procedure :: get_BP                                        !< Get the coefficient matrices for constraints and phase summation
       procedure, private :: get_ceq_PT                           !< Get the chemical equilibrium state at constant pressure and temperature
       procedure, private :: get_ceq_PH_NR,get_ceq_PH_BS          !< Get the chemical equilibrium state at constant pressure and emthalpy
       procedure, private :: get_ceq_UV                           !< Get the chemical equilibrium state at constant internal energy and volume
-      procedure, private :: get_dNdT_FD,get_dNdT_LS              !< Get the temperature derivative of the mole numbers
-      procedure, private :: get_dNdp_LS                          !< Get the pressure derivative of the mole numbers
-      procedure :: iterate_H                                     !< 
+      procedure, private :: get_dNdpar_FD,get_dNdpar_LS          !< Get the derivative of the mole numbers
+      procedure :: get_RH                                        !< Get the enthalpy residual
    end type chem_state
 
    !> Interface for get_ceq
@@ -134,22 +129,12 @@ module chem_state_class
 
    !> Interface for get_dNdT
    interface
-      subroutine get_dNdT_interface(this,dNdT)
+      subroutine get_dNdpar_interface(this,dNdpar)
          use precision, only: WP
          import chem_state
          class(chem_state), intent(inout) :: this
-         real(WP), dimension(this%sys%ns), intent(out) :: dNdT
-      end subroutine get_dNdT_interface
-   end interface
-
-   !> Interface for get_dNdp
-   interface
-      subroutine get_dNdp_interface(this,dNdp)
-         use precision, only: WP
-         import chem_state
-         class(chem_state), intent(inout) :: this
-         real(WP), dimension(this%sys%ns), intent(out) :: dNdp
-      end subroutine get_dNdp_interface
+         real(WP), dimension(this%sys%ns), intent(out) :: dNdpar
+      end subroutine get_dNdpar_interface
    end interface
 
 
@@ -782,21 +767,22 @@ module chem_state_class
 
 
       !> Return d/dp of the normalized Gibbs functions at temperature T
-      subroutine get_dgdP(this,ns,T,p,isGas,vliq,dgdP)
+      subroutine get_dgdp(this,ns,T,pid,p,v,dgdp)
          implicit none
          class(chem_state), intent(in) :: this
          integer,  intent(in)  :: ns
-         real(WP), intent(in)  :: T,p,isGas(ns),vliq(ns)
-         real(WP), intent(out) :: dgdP(ns)
+         real(WP), intent(in)  :: T,p,v(ns)
+         real(WP), intent(out) :: dgdp(ns)
+         real(WP) :: isGas(ns)
          ! input:
          !   T      - temperature (K)
          !   p      - pressure (Pa)
-         !   isGas  - 1 if gas, 0 if liquid
-         !   vliq   - liquid molar volume (m^3/mol)
+         !   v      - molar volume (m^3/mol)
          ! output:
-         !   dgdP   - d/dp (g_j/(RT))
-         dgdP=isGas/p+(1.0_WP-isGas)*vliq/(Ru*T)
-      end subroutine get_dgdP
+         !   dgdp   - d/dp (g_j/(RT))
+         isGas=this%sys%P(:,Gphase)
+         dgdp=isGas/p+(1.0_WP-isGas)*v/(Ru*T)
+      end subroutine get_dgdp
 
 
       !> Generate (possibly) perturbed CE problem
@@ -1353,7 +1339,7 @@ module chem_state_class
          integer :: i
          ! Allocate arrays
          allocate(hort(this%sys%ns))
-         ! Initialize
+         ! Initialize the constant PH iterations
          this%HoR0=this%HoR
          this%dT=1e5*this%tol_T*this%T
          this%iter_T=0
@@ -1369,8 +1355,9 @@ module chem_state_class
                ! write(output_unit,'(" >   [chem_state get_ceq_PH]: Reached max number of temperature iterations")')
                return
             end if
+            ! Store the old mole numbers
             this%Nuold=this%Nu
-            call this%iterate_H(T=this%T,RH=this%RH)
+            call this%get_RH(T=this%T,RH=this%RH)
             if (.not.this%success) then
                return
             end if
@@ -1437,7 +1424,7 @@ module chem_state_class
          do iter=1,this%iter_T_max
             ! Get equilibrium for Tm
             Tm=0.5_WP*(this%Tlo+this%Thi)
-            call this%iterate_H(T=Tm,RH=this%RH)
+            call this%get_RH(T=Tm,RH=this%RH)
             if (.not.this%success) then
                return
             end if
@@ -1454,12 +1441,12 @@ module chem_state_class
                return
             end if
             ! Get the equilibrium for Tlo
-            call this%iterate_H(T=this%Tlo,RH=Rlo)
+            call this%get_RH(T=this%Tlo,RH=Rlo)
             if (.not.this%success) then
                return
             end if
             ! Get the equilibrium for Thi
-            call this%iterate_H(T=this%Thi,RH=Rhi)
+            call this%get_RH(T=this%Thi,RH=Rhi)
             if (.not.this%success) then
                return
             end if
@@ -1480,34 +1467,87 @@ module chem_state_class
          use, intrinsic :: iso_fortran_env, only: output_unit
          implicit none
          class(chem_state), intent(inout) :: this
-         real(WP) :: J11,J12,J21,J22,det,alpha,pn,Tn
-         integer  :: i
+         real(WP), dimension(:,:), allocatable :: Jac
+         real(WP), dimension(:),   allocatable :: isGas,isLiq,hort,cpor,dNdT,dNdp,uor,v,rhs
+         real(WP) :: alpha,pn,Tn
+         integer  :: info,i
+         ! Allocate the intermediate arrays
+         allocate(Jac(1:2,1:2))
+         allocate(isGas(this%sys%ns))
+         allocate(isLiq(this%sys%ns))
+         allocate(hort (this%sys%ns))
+         allocate(cpor (this%sys%ns))
+         allocate(dNdT (this%sys%ns))
+         allocate(dNdp (this%sys%ns))
+         allocate(uor  (this%sys%ns))
+         allocate(v    (this%sys%ns))
+         allocate(rhs  (1:2))
+         ! Get the gas and liquid indices
+         isGas=this%sys%P(:,Gphase)
+         isLiq=1.0_WP-isGas
+         ! Initialize the constant UV iterations
          this%UoR0=this%UoR
          this%V0  =this%V
-         this%dT  =1e5_WP*this%tol_T*max(this%T,1.0_WP)
-         this%dP  =1e5_WP*this%tol_P*max(this%p,1.0_WP)
+         this%dT=1e5_WP*this%tol_T*this%T
+         this%dp=1e5_WP*this%tol_p*this%p
          this%iter_T=0
-         do while((abs(this%dT/max(this%T,1.0_WP)).ge.this%tol_T).or.(abs(this%dP/max(this%p,1.0_WP)).ge.this%tol_P))
+         ! Iterate over temperature and pressure
+         do while((abs(this%dT/this%T).ge.this%tol_T).and.(abs(this%dp/this%p).ge.this%tol_p))
+            ! Increment the iterations
             this%iter_T=this%iter_T+1
             if (this%iter_T.gt.this%iter_T_max) then
                this%iter_T=this%iter_T-1
                this%success=.false.
                return
             end if
-            call this%get_UV_resJac(this%RU,this%RV,J11,J12,J21,J22)
-            if (.not.this%success) return
-            if ((abs(this%RU).le.this%tol_U*max(abs(this%UoR0),1.0_WP)).and.(abs(this%RV).le.this%tol_V*max(abs(this%V0),1.0_WP))) exit
-            det=J11*J22-J12*J21
-            if (abs(det).le.tiny(1.0_WP)) then
+            ! Store the old mole numbers
+            this%Nuold=this%Nu
+            ! Re-initialize mole numbers using the current temperature and pressure
+            call this%N_re_init()
+            if (.not.this%success) then
+               return
+            end if
+            ! Determine equilibrium composition at current temperature and pressure
+            call this%get_ceq_PT()
+            if (.not.this%success) then
+               return
+            end if
+            ! Obtain species molar h/(RT) and Cp/R
+            call this%get_hort(this%sys%ns,this%T,this%sys%thermo,hort)
+            call this%get_cpor(this%sys%ns,this%T,this%sys%thermo,cpor)
+            ! Obtain the temperature and pressure derivatives of the mole numbers
+            call this%get_dNdpar(dNdT)
+            call this%get_dNdpar(dNdp)
+            ! Get the internal energy: u/R = (h - pv) / R = T * (h/(R*T) - pv/(RT)); pv/(RT) = 1 for ideal gas
+            uor=this%T*(hort-isGas)-isLiq*this%p*this%vliq/Ru
+            ! Get the molar volumes
+            v=isGas*Ru*this%T/this%p+isLiq*this%vliq
+            ! Update the internal energy and volume
+            this%UoR=sum(this%Ndu*uor)
+            this%V  =sum(this%Ndu*v)
+            this%RU=this%UoR-this%UoR0
+            this%RV=this%V  -this%V0
+            ! Get the constrained effective specific heat at constant pressure
+            Cp_eff=sum(cpor*this%Ndu)+this%T*sum(hort*dNdT)
+            ! Form the Jacobian
+            Jac(1,1)=sum(uor*dNdT)+sum(this%Ndu*(cpor-isGas)))
+            Jac(1,2)=sum(uor*dNdp)
+            Jac(2,1)=Ru*(Cp_eff-J11)/this%p
+            Jac(2,2)=sum(v*dNdp)+sum(this%Ndu*isGas*(-Ru*this%T/this%p**2))
+            ! Solve for the residuals using LU decomposition
+            rhs=[-this%RU,-this%RV]
+            call dgesv(2,1,Jac,2,ipiv,rhs,2,info)
+            this%dT=rhs(1)
+            this%dp=rhs(2)
+            if (info.ne.0) then
                this%success=.false.
                return
             end if
-            this%dT=(-this%RU*J22+this%RV*J12)/det
-            this%dP=(-J11*this%RV+J21*this%RU)/det
+            ! Relax the residuals
             alpha=1.0_WP
             do
                Tn=this%T+alpha*this%dT
-               pn=this%p+alpha*this%dP
+               pn=this%p+alpha*this%dp
                if (Tn.ge.T_low.and.Tn.le.T_high.and.pn.gt.0.0_WP) exit
                alpha=0.5_WP*alpha
                if (alpha.lt.1e-8_WP) then
@@ -1516,85 +1556,20 @@ module chem_state_class
                end if
             end do
             this%dT=alpha*this%dT
-            this%dP=alpha*this%dP
-            this%T =Tn
-            this%p =pn
+            this%dp=alpha*this%dp
+            this%T=Tn
+            this%p=pn
          end do
          this%Ndu=[this%Nd,this%Nu]
          do i=1,this%sys%ns
             this%N(this%sys%sp_order(i))=this%Ndu(i)
          end do
+         ! Deallocate the intermediate arrays
+         deallocate(isGas,isLiq,hort,cpor,dNdT,dNdp,v,rhs)
       end subroutine get_ceq_UV
 
-
-      !> Get U/R and V for the current state
-      subroutine get_UV_state(this,UoR,V)
-         implicit none
-         class(chem_state), intent(in) :: this
-         real(WP), intent(out) :: UoR,V
-         real(WP), dimension(:), allocatable :: hort,vbar,isGas
-         allocate(hort(this%sys%ns))
-         allocate(vbar(this%sys%ns))
-         allocate(isGas(this%sys%ns))
-         call this%get_hort(this%sys%ns,this%T,this%sys%thermo,hort)
-         isGas=this%sys%P(:,Gphase)
-         vbar=isGas*Ru*this%T/this%p+(1.0_WP-isGas)*this%vliq
-         V  =sum(this%Ndu*vbar)
-         UoR=sum(this%Ndu*(this%T*hort-this%p*vbar/Ru))
-         deallocate(hort,vbar,isGas)
-      end subroutine get_UV_state
-
-
-      !> Get the residuals and Jacobian for the UV solver
-      subroutine get_UV_resJac(this,RU,RV,J11,J12,J21,J22)
-         implicit none
-         class(chem_state), intent(inout) :: this
-         real(WP), intent(out) :: RU,RV,J11,J12,J21,J22
-         real(WP), dimension(:), allocatable :: hort,cpor,dNdT,dNdp,vbar,dvdT,dvdp,uor,duordT,isGas
-         allocate(hort (this%sys%ns))
-         allocate(cpor (this%sys%ns))
-         allocate(dNdT (this%sys%ns))
-         allocate(dNdp (this%sys%ns))
-         allocate(vbar (this%sys%ns))
-         allocate(dvdT (this%sys%ns))
-         allocate(dvdp (this%sys%ns))
-         allocate(uor  (this%sys%ns))
-         allocate(duordT(this%sys%ns))
-         allocate(isGas(this%sys%ns))
-         call this%N_re_init()
-         if (.not.this%success) then
-            deallocate(hort,cpor,dNdT,dNdp,vbar,dvdT,dvdp,uor,duordT,isGas)
-            return
-         endif
-         call this%get_ceq_PT()
-         if (.not.this%success) then
-            deallocate(hort,cpor,dNdT,dNdp,vbar,dvdT,dvdp,uor,duordT,isGas)
-            return
-         endif
-         call this%get_hort(this%sys%ns,this%T,this%sys%thermo,hort)
-         call this%get_cpor(this%sys%ns,this%T,this%sys%thermo,cpor)
-         call this%get_dNdT(dNdT)
-         call this%get_dNdp(dNdp)
-         isGas =this%sys%P(:,Gphase)
-         vbar  =isGas*Ru*this%T/this%p+(1.0_WP-isGas)*this%vliq
-         dvdT  =isGas*Ru/this%p
-         dvdp  =-isGas*Ru*this%T/(this%p*this%p)
-         uor   =this%T*hort-this%p*vbar/Ru
-         duordT=cpor-this%p*dvdT/Ru
-         this%V  =sum(this%Ndu*vbar)
-         this%UoR=sum(this%Ndu*uor)
-         RU=this%UoR-this%UoR0
-         RV=this%V  -this%V0
-         J11=sum(uor*dNdT)+sum(this%Ndu*duordT)
-         J12=sum(uor*dNdp)
-         J21=sum(vbar*dNdT)+sum(this%Ndu*dvdT)
-         J22=sum(vbar*dNdp)+sum(this%Ndu*dvdp)
-         deallocate(hort,cpor,dNdT,dNdp,vbar,dvdT,dvdp,uor,duordT,isGas)
-      end subroutine get_UV_resJac
-
-
-      !> 
-      subroutine iterate_H(this,T,RH)
+      !> Get the enthalpy residual for a constant PH iteration
+      subroutine get_RH(this,T,RH)
          class(chem_state), intent(inout) :: this
          real(WP), intent(in)  :: T
          real(WP), intent(out) :: RH
@@ -1615,7 +1590,7 @@ module chem_state_class
          ! Mixture H/R
          this%HoR=this%T*sum(this%Ndu*hort)
          RH=this%HoR-this%HoR0
-      end subroutine iterate_H
+      end subroutine get_RH
 
 
       !> Evaluate the effective heat capacity (extensive)
@@ -1639,42 +1614,40 @@ module chem_state_class
       end subroutine get_Cp_eff
 
 
-      !> Get the temperature derivative of the solution vector
-      subroutine get_dxdT(this,dgudT,dxdT)
+      !> Get the derivative of the solution vector with respect to generic parameter (par)
+      subroutine get_dxdpar(this,dgudpar,dxdpar)
          use messager,  only: die
          use mathtools, only: lss
          class(chem_state), intent(inout) :: this
-         real(WP), dimension(this%sys%nsu), intent(in) :: dgudT
-         real(WP), dimension(this%sys%nrc+this%sys%np), intent(out) :: dxdT
-         real(WP), dimension(:),   allocatable :: lamdotg,Sig,Sinv,work,y,Ygdot,dlnNbardT,rhs
+         real(WP), dimension(this%sys%nsu), intent(in) :: dgudpar
+         real(WP), dimension(this%sys%nrc+this%sys%np), intent(out) :: dxdpar
+         real(WP), dimension(:),   allocatable :: lamdotg,Sig,Sinv,work,y,Ygdot,dlnNbardpar,rhs
          real(WP), dimension(:,:), allocatable :: Btildeinv,lamdoty,U,VT,M,Btilde_cp
          real(WP) :: srlim=1e-9
          integer :: info,lwork,i,n_small
          ! Allocate arrays
-         allocate(Btildeinv(this%sys%nrc,this%sys%nsu))
-         allocate(lamdotg  (this%sys%nrc))
-         allocate(Sig      (this%sys%nrc))
-         allocate(Sinv     (this%sys%nrc))
-         allocate(work     (20*(this%sys%nsu+this%sys%nrc)))
-         allocate(y        (this%sys%nsu))
-         allocate(Ygdot    (this%sys%nsu))
-         allocate(dlnNbardT(this%sys%np))
-         allocate(rhs      (this%sys%np))
-         allocate(lamdoty  (this%sys%nrc,this%sys%np))
-         allocate(U        (this%sys%nsu,this%sys%nrc))
-         allocate(VT       (this%sys%nrc,this%sys%nrc))
-         allocate(M        (this%sys%np,this%sys%np))
-         allocate(Btilde_cp(this%sys%nsu,this%sys%nrc))
+         allocate(Btildeinv (this%sys%nrc,this%sys%nsu))
+         allocate(lamdotg   (this%sys%nrc))
+         allocate(Sig       (this%sys%nrc))
+         allocate(Sinv      (this%sys%nrc))
+         allocate(work      (20*(this%sys%nsu+this%sys%nrc)))
+         allocate(y         (this%sys%nsu))
+         allocate(Ygdot     (this%sys%nsu))
+         allocate(dlnNbardpar(this%sys%np))
+         allocate(rhs       (this%sys%np))
+         allocate(lamdoty   (this%sys%nrc,this%sys%np))
+         allocate(U         (this%sys%nsu,this%sys%nrc))
+         allocate(VT        (this%sys%nrc,this%sys%nrc))
+         allocate(M         (this%sys%np,this%sys%np))
+         allocate(Btilde_cp (this%sys%nsu,this%sys%nrc))
          lwork=size(work)
          ! Get the y vector and update the coefficient matrices
          y=this%get_y()
          call this%get_BP(y)
          Btilde_cp=this%Btilde(1:this%sys%nsu,1:this%sys%nrc)
          ! Get the SVD of Btilde
-         call dgesvd('S','A',this%sys%nsu,this%sys%nrc,Btilde_cp,this%sys%nsu,Sig(1:this%sys%nrc), &
-         &           U(1:this%sys%nsu,1:this%sys%nrc),this%sys%nsu,VT(1:this%sys%nrc,1:this%sys%nrc),this%sys%nrc,work(1:lwork),    &
-         &           lwork,info)
-         if (info.ne.0) call die('[chem_state get_dxdT] SVD of B tilde failed')
+         call dgesvd('S','A',this%sys%nsu,this%sys%nrc,Btilde_cp,this%sys%nsu,Sig(1:this%sys%nrc),U(1:this%sys%nsu,1:this%sys%nrc),this%sys%nsu,VT(1:this%sys%nrc,1:this%sys%nrc),this%sys%nrc,work(1:lwork),lwork,info)
+         if (info.ne.0) call die('[chem_state get_dxdpar] SVD of B tilde failed')
          ! Get the inverse of Sigma
          call get_Sinv(this%sys%nrc,Sig,Sinv,srlim,n_small)
          ! Store Sinv * V' in VT
@@ -1683,18 +1656,18 @@ module chem_state_class
          end do
          ! Btilde^-1 = V * Sinv * U'
          Btildeinv=transpose(matmul(U,VT))
-         ! Solve for dxdT
-         Ygdot=y*dgudT
+         ! Solve for dxd(par)
+         Ygdot=y*dgudpar
          lamdotg=matmul(Btildeinv,Ygdot)
          lamdoty=matmul(Btildeinv,this%Ptilde)
          M=matmul(this%PtildeT,matmul(this%Btilde,lamdoty))
          rhs=matmul(this%PtildeT,matmul(this%Btilde,lamdotg)-Ygdot)
-         call lss(this%sys%np,this%sys%np,M,rhs,dlnNbardT,info)
-         if (info.ne.0) call die('[chem_state get_dxdT] Least squares solver failed')
-         dxdT(1:this%sys%nrc)=lamdotg-matmul(lamdoty,dlnNbardT)
-         dxdT(this%sys%nrc+1:this%sys%nrc+this%sys%np)=dlnNbardT
+         call lss(this%sys%np,this%sys%np,M,rhs,dlnNbardpar,info)
+         if (info.ne.0) call die('[chem_state get_dxdpar] Least squares solver failed')
+         dxdpar(1:this%sys%nrc)=lamdotg-matmul(lamdoty,dlnNbardpar)
+         dxdpar(this%sys%nrc+1:this%sys%nrc+this%sys%np)=dlnNbardpar
          ! Deallocate arrays
-         deallocate(Btildeinv,lamdotg,lamdoty,Sig,Sinv,work,y,Ygdot,dlnNbardT,rhs,U,VT,M,Btilde_cp)
+         deallocate(Btildeinv,lamdotg,lamdoty,Sig,Sinv,work,y,Ygdot,dlnNbardpar,rhs,U,VT,M,Btilde_cp)
          contains
             ! Get the inverse of Sigma
             subroutine get_Sinv(n,S,Si,srat_lim,n_s)
@@ -1718,134 +1691,84 @@ module chem_state_class
                   endif
                end do
             end subroutine get_Sinv
-      end subroutine get_dxdT
+      end subroutine get_dxdpar
 
 
-      !> Get the pressure derivative of the solution vector
-      subroutine get_dxdP(this,dgudP,dxdP)
-         use messager,  only: die
-         use mathtools, only: lss
+      !> Get the mole numbers derivative using first order FD
+      subroutine get_dNdpar_FD(this,dpar,dNdpar)
          class(chem_state), intent(inout) :: this
-         real(WP), dimension(this%sys%nsu), intent(in) :: dgudP
-         real(WP), dimension(this%sys%nrc+this%sys%np), intent(out) :: dxdP
-         real(WP), dimension(:),   allocatable :: lamdotg,Sig,Sinv,work,y,Ygdot,dlnNbardP,rhs
-         real(WP), dimension(:,:), allocatable :: Btildeinv,lamdoty,U,VT,M,Btilde_cp
-         real(WP) :: srlim=1e-9
-         integer :: info,lwork,i,n_small
-         allocate(Btildeinv(this%sys%nrc,this%sys%nsu))
-         allocate(lamdotg  (this%sys%nrc))
-         allocate(Sig      (this%sys%nrc))
-         allocate(Sinv     (this%sys%nrc))
-         allocate(work     (20*(this%sys%nsu+this%sys%nrc)))
-         allocate(y        (this%sys%nsu))
-         allocate(Ygdot    (this%sys%nsu))
-         allocate(dlnNbardP(this%sys%np))
-         allocate(rhs      (this%sys%np))
-         allocate(lamdoty  (this%sys%nrc,this%sys%np))
-         allocate(U        (this%sys%nsu,this%sys%nrc))
-         allocate(VT       (this%sys%nrc,this%sys%nrc))
-         allocate(M        (this%sys%np,this%sys%np))
-         allocate(Btilde_cp(this%sys%nsu,this%sys%nrc))
-         lwork=size(work)
-         y=this%get_y()
-         call this%get_BP(y)
-         Btilde_cp=this%Btilde(1:this%sys%nsu,1:this%sys%nrc)
-         call dgesvd('S','A',this%sys%nsu,this%sys%nrc,Btilde_cp,this%sys%nsu,Sig(1:this%sys%nrc), &
-         &           U(1:this%sys%nsu,1:this%sys%nrc),this%sys%nsu,VT(1:this%sys%nrc,1:this%sys%nrc),this%sys%nrc,work(1:lwork),    &
-         &           lwork,info)
-         if (info.ne.0) call die('[chem_state get_dxdP] SVD of B tilde failed')
-         call get_Sinv(this%sys%nrc,Sig,Sinv,srlim,n_small)
-         do i=1,this%sys%nrc
-            VT(i,:)=Sinv(i)*VT(i,:)
-         end do
-         Btildeinv=transpose(matmul(U,VT))
-         Ygdot=y*dgudP
-         lamdotg=matmul(Btildeinv,Ygdot)
-         lamdoty=matmul(Btildeinv,this%Ptilde)
-         M=matmul(this%PtildeT,matmul(this%Btilde,lamdoty))
-         rhs=matmul(this%PtildeT,matmul(this%Btilde,lamdotg)-Ygdot)
-         call lss(this%sys%np,this%sys%np,M,rhs,dlnNbardP,info)
-         if (info.ne.0) call die('[chem_state get_dxdP] Least squares solver failed')
-         dxdP(1:this%sys%nrc)=lamdotg-matmul(lamdoty,dlnNbardP)
-         dxdP(this%sys%nrc+1:this%sys%nrc+this%sys%np)=dlnNbardP
-         deallocate(Btildeinv,lamdotg,lamdoty,Sig,Sinv,work,y,Ygdot,dlnNbardP,rhs,U,VT,M,Btilde_cp)
-         contains
-            subroutine get_Sinv(n,S,Si,srat_lim,n_s)
-               integer,  intent(in)  :: n
-               real(WP), intent(in)  :: S(n),srat_lim
-               integer,  intent(out) :: n_s
-               real(WP), intent(out) :: Si(n)
-               integer  :: j
-               real(WP) :: slim
-               slim=srat_lim*S(1)
-               do j=1,n
-                  if (S(j).gt.slim) then
-                     Si(j)=1.0_WP/S(j)
-                     n_s=n-j
-                  else
-                     Si(j)=0.0_WP
-                  endif
-               end do
-            end subroutine get_Sinv
-      end subroutine get_dxdP
-
-
-      !> 
-      subroutine get_dNdT_FD(this,dNdT)
-         class(chem_state), intent(inout) :: this
-         real(WP), dimension(this%sys%ns), intent(out) :: dNdT
-         real(WP), dimension(:), allocatable :: dNddT,dNudT
+         real(WP), intent(in) :: dpar
+         real(WP), dimension(this%sys%ns), intent(out) :: dNdpar
+         real(WP), dimension(:), allocatable :: dNddpar,dNudpar
          ! Allocate arrays
-         allocate(dNddT(this%sys%nsd))
-         allocate(dNudT(this%sys%nsu))
-         dNddT=0.0_WP
-         dNudT=0.0_WP
-         if (this%iter_T.gt.1) dNudT=(this%Nu-this%Nuold)/this%dT
-         dNdT=[dNddT,dNudT]
+         allocate(dNddpar(this%sys%nsd))
+         allocate(dNudpar(this%sys%nsu))
+         dNddpar=0.0_WP
+         dNudpar=0.0_WP
+         if (this%iter_T.gt.1) dNudpar=(this%Nu-this%Nuold)/dpar
+         dNdpar=[dNddpar,dNudpar]
          ! Deallocate arrays
-         deallocate(dNddT,dNudT)
-      end subroutine get_dNdT_FD
+         deallocate(dNddpar,dNudpar)
+      end subroutine get_dNdpar_FD
 
 
-      !> 
-      subroutine get_dNdT_LS(this,dNdT)
+      !> Get the mole numbers derivative with respect to a generic paramenter (par) using the least squares approach
+      subroutine get_dNdpar_LS(this,dgudpar,dNdpar)
          class(chem_state), intent(inout) :: this
-         real(WP), dimension(this%sys%ns), intent(out) :: dNdT
-         real(WP), dimension(:), allocatable :: dgudT,dxdT,dNddT,dNudT
+         real(WP), dimension(this%sys%nsu), intent(in) :: dgudpar
+         real(WP), dimension(this%sys%ns), intent(out) :: dNdpar
+         real(WP), dimension(:), allocatable :: dxdpar,dNddpar,dNudpar
          ! Allocate arrays
-         allocate(dgudT(this%sys%nsu))
-         allocate(dxdT(this%sys%nrc+this%sys%np))
-         allocate(dNddT(this%sys%nsd))
-         allocate(dNudT(this%sys%nsu))
-         ! Get d(gu/(RT))/dT
-         call this%get_dgdT(this%sys%nsu,this%T,this%sys%thermo(this%sys%nsd+1:this%sys%ns,:),dgudT)
-         ! Get d(lambda)/dT and d(ln(Nbar))/dT
-         call this%get_dxdT(dgudT,dxdT)
-         ! Get dN/dT
-         dNddT=0.0_WP
-         dNudT=this%Nu*(-dgudT+matmul(this%sys%BR,dxdT(1:this%sys%nrc))+dxdT(this%sys%nrc+1:this%sys%nrc+this%sys%np))
-         dNdT=[dNddT,dNudT]
+         allocate(dxdpar (this%sys%nrc+this%sys%np))
+         allocate(dNddpar(this%sys%nsd))
+         allocate(dNudpar(this%sys%nsu))
+         ! Get dlambda/dpar and dln(Nbar)/dpar
+         call this%get_dxdpar(dgudpar,dxdpar)
+         ! Get dN/dpar
+         dNddpar=0.0_WP
+         dNudpar=this%Nu*(-dgudpar+matmul(this%sys%BR,dxdpar(1:this%sys%nrc))+dxdpar(this%sys%nrc+1:this%sys%nrc+this%sys%np))
+         dNdpar=[dNddpar,dNudpar]
          ! Deallocate arrays
-         deallocate(dgudT,dxdT,dNddT,dNudT)
-      end subroutine get_dNdT_LS
+         deallocate(dxdpar,dNddpar,dNudpar)
+      end subroutine get_dNdpar_LS
 
-
-      !> 
-      subroutine get_dNdp_LS(this,dNdp)
+      
+      !> Get the mole numbers derivative
+      subroutine get_dNdpar(this,par,dNdpar_method,dNdpar)
+         use messager, only: die
          class(chem_state), intent(inout) :: this
-         real(WP), dimension(this%sys%ns), intent(out) :: dNdp
-         real(WP), dimension(:), allocatable :: dgudP,dxdP,dNddp,dNudp
-         allocate(dgudP(this%sys%nsu))
-         allocate(dxdP(this%sys%nrc+this%sys%np))
-         allocate(dNddp(this%sys%nsd))
-         allocate(dNudp(this%sys%nsu))
-         call this%get_dgdP(this%sys%nsu,this%T,this%p,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%vliq(this%sys%nsd+1:this%sys%ns),dgudP)
-         call this%get_dxdP(dgudP,dxdP)
-         dNddp=0.0_WP
-         dNudp=this%Nu*(-dgudP+matmul(this%sys%BR,dxdP(1:this%sys%nrc))+dxdP(this%sys%nrc+1:this%sys%nrc+this%sys%np))
-         dNdp=[dNddp,dNudp]
-         deallocate(dgudP,dxdP,dNddp,dNudp)
-      end subroutine get_dNdp_LS
+         character(len=1), intent(in) :: par
+         integer, intent(in) :: dNdpar_method
+         real(WP), dimension(this%sys%ns), intent(out) :: dNdpar
+         real(WP), dimension(:), allocatable :: dgudpar
+         real(WP) :: dpar
+         select case (dNdpar_method)
+         case (FD)
+            select case (par)
+            case ('T')
+               dpar=this%dT
+            case ('p')
+               dpar=this%dp
+            case default
+               call die('')
+            end select
+            call this%get_dNdpar_FD(dpar,dNdpar)
+         case (LS)
+            allocate(dgudpar(this%sys%nsu))
+            select case (par)
+            case ('T')
+               call this%get_dgdT(this%sys%nsu,this%T,this%sys%thermo(this%sys%nsd+1:this%sys%ns,:),dgudpar)
+            case ('p')
+               call this%get_dgdp(this%sys%nsu,this%T,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%p,this%v,dgudpar)
+            case default
+               call die('')
+            end select
+            call this%get_dNdpar_LS(dgudpar,dNdpar)
+            deallocate(dgudpar)
+         case default
+            call die('')
+         end select
+      end subroutine get_dNdpar
 
 
       !> Get Btilde and Ptilde
