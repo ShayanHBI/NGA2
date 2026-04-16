@@ -17,7 +17,6 @@ module mathtools
    public :: spherical_harmonic
    public :: reorder_rows
    public :: ind_col
-   public :: lss
    
    ! Trigonometric parameters
    real(WP), parameter :: Pi   =3.1415926535897932385_WP
@@ -498,33 +497,6 @@ contains
       end do
    end subroutine ind_col
    
-
-   !> Determine the least-squares/minimum-norm solution x to the linear equation Ax = b.
-   subroutine lss(nb,nx,A,b,x,info)
-      !	S.B. Pope 10/2/02
-      implicit none
-      integer,  intent(in)  :: nb,nx
-      real(WP), intent(in)  :: A(nb,nx),b(nb)
-      real(WP), intent(out) :: x(nx)
-      integer,  intent(out) :: info
-      !  Input:
-      !	nb	- number of rows in b
-      !	nx	- number of rows in A and x
-      !	A	- the nb x nx matrix A
-      !	b	- the nb-vector b
-      !  Output:
-      !	x	- the solution nx-vector
-      !	info=0 for successful solution
-      integer :: lwork,rank
-      real(WP) :: tol=1.d-9,aa(nb,nx),bb(nb+nx),sv(nb+nx),work(4*(nb+nx+1)*(nb+nx+1))
-      lwork= size(work)
-      aa=A
-      bb=0.d0
-      bb(1:nb)=b
-      call dgelss(nb,nx,1,aa(1:nb,1:nx),nb,bb(1:nb+nx),nb+nx,sv(1:nb+nx),tol,rank,work(1:lwork),lwork,info)
-      x=bb(1:nx)
-   end subroutine lss
-
 
    !> Compute a nth order Clenshaw-Curtis quadrature rule on [0,1]
    !> int(f(x)) in [0,1] is approximated by sum(w_i*f(x_i)) for i=1..N

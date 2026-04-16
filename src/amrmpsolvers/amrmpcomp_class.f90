@@ -186,13 +186,22 @@ module amrmpcomp_class
    !    end subroutine relax_iface
    ! end interface
 
+   ! !> Abstract interface for pressure relaxation callback
+   ! abstract interface
+   !    subroutine relax_iface(VF,Q,success)
+   !       import :: WP
+   !       real(WP), intent(inout) :: VF
+   !       real(WP), dimension(:), intent(inout) :: Q
+   !       logical, intent(out), optional :: success
+   !    end subroutine relax_iface
+   ! end interface
+
    !> Abstract interface for pressure relaxation callback
    abstract interface
-      subroutine relax_iface(VF,Q,success)
+      subroutine relax_iface(VF,Q)
          import :: WP
          real(WP), intent(inout) :: VF
          real(WP), dimension(:), intent(inout) :: Q
-         logical, intent(out), optional :: success
       end subroutine relax_iface
    end interface
 

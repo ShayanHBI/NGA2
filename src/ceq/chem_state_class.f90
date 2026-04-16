@@ -275,7 +275,7 @@ module chem_state_class
          allocate(this%PtildeT(np,nsu));    this%PtildeT=0.0_WP
 
          ! Store and reorder the molar volumes
-         call reorder_rows(vmolar,this%sys%sp_order,this%vmolar)
+         if (present(vmolar)) call reorder_rows(vmolar,this%sys%sp_order,this%vmolar)
 
       end subroutine initialize
 
@@ -398,7 +398,7 @@ module chem_state_class
          nsu=this%sys%nsu
 
          ! Initialize the Gibbs function
-         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%vmolar(nsd+1:ns),gu)
+         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),gu)
 
          ! Form the basic constraint vector
          if (present(c)) then
@@ -498,7 +498,7 @@ module chem_state_class
                N1(nsd+1:ns)=Nu0
                call this%hor2T(ns,N1,this%HoR,this%sys%thermo,this%T)
                ! Set gu based on T0
-               call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%vmolar(nsd+1:ns),gu)
+               call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),gu)
             endif
 
             ! Set the Gibbs functin and the undetermined species moles
@@ -543,7 +543,7 @@ module chem_state_class
          nsu=this%sys%nsu
          nrc=this%sys%nrc
          ! Get the gibbs of undetermined species
-         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%vmolar(nsd+1:ns),this%gu)
+         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%gu)
          ! Determine min_g composition
          call this%get_Nming(nsu,nrc,this%sys%BR,this%cr,this%gu,Ng,iret)
          this%success=.true.
@@ -561,7 +561,7 @@ module chem_state_class
             this%N(this%sys%sp_order(i))=this%Ndu(i)
          end do
          ! Update the gibbs of undetermined species
-         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%vmolar(nsd+1:ns),this%gu)
+         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%gu)
       end subroutine N_re_init
 
 
@@ -801,13 +801,12 @@ module chem_state_class
 
 
       !> Return d/dp of the normalized Gibbs functions (Neglecting pressure dependence for liquid)
-      subroutine get_dgdp(this,ns,T,pid,p,isGas,vmolar,dgdp)
+      subroutine get_dgdp(this,ns,T,p,isGas,vmolar,dgdp)
          implicit none
          class(chem_state), intent(in) :: this
          integer,  intent(in)  :: ns
-         real(WP), intent(in)  :: T,pid(ns),p,vmolar(ns)
+         real(WP), intent(in)  :: T,p,isGas(ns),vmolar(ns)
          real(WP), intent(out) :: dgdp(ns)
-         real(WP) :: isGas(ns)
          ! input:
          !   T      - temperature (K)
          !   p      - pressure (Pa)
@@ -1202,7 +1201,6 @@ module chem_state_class
 
       !> Initialize the solution unknowns
       subroutine sol_init(this)
-         use mathtools, only: lss
          use messager,  only: die
          use, intrinsic :: iso_fortran_env, only: output_unit
          implicit none
@@ -1329,13 +1327,11 @@ module chem_state_class
             ! if (rank.ne.this%sys%nrc+this%sys%np) call die('[chem_state get_ceq_PT]: Jacobian is not full rank')
             if (rank.ne.this%sys%nrc+this%sys%np) then
                this%success=.false.
-               ! write(output_unit,'(" >   [chem_state get_ceq_PT]: Jacobian is not full rank")')
                return
             end if
             ! if (info.ne.0) call die('[chem_state get_ceq_PT]: Least-squares solver failed')
             if (info.ne.0) then
                this%success=.false.
-               ! write(output_unit,'(" >   [chem_state get_ceq_PT]: Least-squares solver failed")')
                return
             end if
             ! Update the solution
@@ -1387,7 +1383,6 @@ module chem_state_class
             if (this%iter_T.gt.this%iter_T_max) then
                this%iter_T=this%iter_T-1
                this%success=.false.
-               ! write(output_unit,'(" >   [chem_state get_ceq_PH]: Reached max number of temperature iterations")')
                return
             end if
             ! Store the old mole numbers
@@ -1506,7 +1501,7 @@ module chem_state_class
          real(WP), dimension(:,:), allocatable :: Jac
          real(WP), dimension(:),   allocatable :: rhs
          real(WP) :: alpha,pn,Tn
-         integer  :: info,i
+         integer  :: info,i,ipiv
          ! Allocate the intermediate arrays
          allocate(Jac(1:2,1:2))
          allocate(rhs(1:2))
@@ -1528,7 +1523,7 @@ module chem_state_class
             ! Store the old mole numbers
             this%Nuold=this%Nu
             ! Get the residuals and Jacobian
-            call this%get_RUV(T=this%T,p=this%p,RU=this%RU,RV=this%RV,Jac)
+            call this%get_RUV(T=this%T,p=this%p,RU=this%RU,RV=this%RV,Jac=Jac)
             if (.not.this%success) then
                return
             end if
@@ -1602,6 +1597,7 @@ module chem_state_class
          real(WP), intent(out) :: RU,RV
          real(WP), dimension(:,:), optional :: Jac
          real(WP), dimension(:), allocatable :: isGas,isLiq,hort,cpor,dNdT,dNdp,uor,vmolar
+         real(WP) :: Cp_eff
          ! Allocate arrays
          allocate(isGas (this%sys%ns))
          allocate(isLiq (this%sys%ns))
@@ -1649,9 +1645,9 @@ module chem_state_class
             ! Get the constrained effective specific heat at constant pressure
             Cp_eff=sum(cpor*this%Ndu)+this%T*sum(hort*dNdT)
             ! Form the Jacobian
-            Jac(1,1)=sum(uor*dNdT)+sum(this%Ndu*(cpor-isGas)))
+            Jac(1,1)=sum(uor*dNdT)+sum(this%Ndu*(cpor-isGas))
             Jac(1,2)=sum(uor*dNdp)
-            Jac(2,1)=gas_cnst*(Cp_eff-J11)/this%p
+            Jac(2,1)=gas_cnst*(Cp_eff-Jac(1,1))/this%p
             Jac(2,2)=sum(vmolar*dNdp)+sum(this%Ndu*isGas*(-gas_cnst*this%T/this%p**2))
          end if
          deallocate(isGas,isLiq,hort,cpor,dNdT,dNdp,vmolar)
@@ -1682,7 +1678,6 @@ module chem_state_class
       !> Get the derivative of the solution vector with respect to generic parameter (par)
       subroutine get_dsoldpar(this,dgudpar,dxdpar)
          use messager,  only: die
-         use mathtools, only: lss
          class(chem_state), intent(inout) :: this
          real(WP), dimension(this%sys%nsu), intent(in) :: dgudpar
          real(WP), dimension(this%sys%nrc+this%sys%np), intent(out) :: dxdpar
@@ -1799,7 +1794,7 @@ module chem_state_class
          ! Allocate intermediate arrays
          allocate(dgudp(this%sys%nsu))
          ! Get d/dp of the normalized Gibbs functions of the undetermined species
-         call this%get_dgdp(this%sys%nsu,this%T,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%p,this%vmolar,dgudp)
+         call this%get_dgdp(this%sys%nsu,this%T,this%p,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%vmolar,dgudp)
          ! Get dN/dp
          call this%get_dNdpar_LS(dgudp,dNdp)
          ! Deallocate intermediate arrays
@@ -1860,6 +1855,33 @@ module chem_state_class
          this%BtildeT=transpose(this%Btilde)
          this%PtildeT=transpose(this%Ptilde)
       end subroutine get_BP
+
+
+      !> Determine the least-squares/minimum-norm solution x to the linear equation Ax = b.
+      subroutine lss(nb,nx,A,b,x,info)
+         !	S.B. Pope 10/2/02
+         implicit none
+         integer,  intent(in)  :: nb,nx
+         real(WP), intent(in)  :: A(nb,nx),b(nb)
+         real(WP), intent(out) :: x(nx)
+         integer,  intent(out) :: info
+         !  Input:
+         !	nb	- number of rows in b
+         !	nx	- number of rows in A and x
+         !	A	- the nb x nx matrix A
+         !	b	- the nb-vector b
+         !  Output:
+         !	x	- the solution nx-vector
+         !	info=0 for successful solution
+         integer :: lwork,rank
+         real(WP) :: tol=1.d-9,aa(nb,nx),bb(nb+nx),sv(nb+nx),work(4*(nb+nx+1)*(nb+nx+1))
+         lwork= size(work)
+         aa=A
+         bb=0.d0
+         bb(1:nb)=b
+         call dgelss(nb,nx,1,aa(1:nb,1:nx),nb,bb(1:nb+nx),nb+nx,sv(1:nb+nx),tol,rank,work(1:lwork),lwork,info)
+         x=bb(1:nx)
+      end subroutine lss
 
 
 end module chem_state_class

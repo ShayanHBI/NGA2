@@ -343,7 +343,7 @@ contains
          end if
       else
          print*,'Number of Newton iterations = ',state%iter_N
-         print*,'Residal error = ', norm2(state%R)
+         print*,'Residal error = ', norm2(state%RC)
       end if
       print*,'Equilibrium temperature = ',state%T,' (K)'
       print*,'Equilibrium moles:'

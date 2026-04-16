@@ -16,7 +16,7 @@ Scale mole numbers  : .false.
 
 # Constant enthaply inputs
 Temperature for enthalpy calculation : 300
-Composition for enthalpy calculation : 0.82739781605356810 0.17260218534808758  1 3.71
+Composition for enthalpy calculation : 0.35608832332088985 2.2762567622166788E-002  0.13187879178302964 0.48927031727904502
 Temperature initial guess            : 360
 
 # Newton iterations
