@@ -1,0 +1,29 @@
+# Parallelization
+Partition : 4 1 1
+
+# Mesh
+dx :     0.005
+nx :     1024
+ny :     10
+nz :     1
+X0 :    -3.0
+
+# Fluids parameters
+Gas gamma :         1.4
+Liquid gamma :      6.12
+Density ratio :     815
+Sound speed ratio : 4.3
+
+# Problem definition
+Shock Mach number : 1.5
+Shock location :   -0.2
+Slab left :   0.002
+Slab right :  1.0
+
+# Time integration
+Max dt :  1e-3
+Max CFL : 0.25
+Max time : 10
+
+# Postprocessing output
+Ensight output period : 0.1

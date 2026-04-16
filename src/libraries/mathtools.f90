@@ -7,14 +7,16 @@ module mathtools
    public :: Pi,twoPi
    public :: fv_itp_build,fd_itp_build
    public :: inverse_matrix
+   public :: symsolve
    public :: cross_product
    public :: normalize
    public :: qrotate
    public :: arctan
    public :: eigensolve3
+   public :: quadrature_rule
+   public :: spherical_harmonic
    public :: reorder_rows
    public :: ind_col
-   public :: lss
    
    ! Trigonometric parameters
    real(WP), parameter :: Pi   =3.1415926535897932385_WP
@@ -64,7 +66,7 @@ contains
       real(WP), dimension(:,:), allocatable :: A,B
       integer :: i,j
       ! Allocate the work arrays
-      allocate(A(n,n),B(n,n))
+      allocate(A(n,n))
       ! Form the matrix
       do j=1,n
          do i=1,n
@@ -72,7 +74,7 @@ contains
          end do
       end do
       ! Invert it
-      call inverse_matrix(A,B,n)
+      B=inverse_matrix(A)
       ! Compute metrics
       coeff=0.0_WP
       do j=1,n
@@ -95,7 +97,7 @@ contains
       real(WP), dimension(:,:), allocatable :: A,B
       integer :: i,j
       ! Allocate the work arrays
-      allocate(A(n,n),B(n,n))
+      allocate(A(n,n))
       ! Form the matrix
       do j=1,n
          do i=1,n
@@ -103,7 +105,7 @@ contains
          end do
       end do
       ! Invert it
-      call inverse_matrix(A,B,n)
+      B=inverse_matrix(A)
       ! Compute metrics
       coeff=B(1,:)
       ! Deallocate the work arrays
@@ -111,32 +113,129 @@ contains
    end subroutine fd_itp_build
    
    
-   !> Inverse matrix using Gauss elimination
-   subroutine inverse_matrix(A,B,n)
+   ! function inverse_matrix(A) result(Ainv)
+   !    use messager, only: die
+   !    implicit none
+   !    real(WP), dimension(:,:), intent(in) :: A
+   !    real(WP), dimension(size(A,1),size(A,2)) :: Ainv
+   !    real(WP), dimension(size(A,1)) :: work
+   !    integer , dimension(size(A,1)) :: ipiv
+   !    integer :: n,info
+   !    external DGETRF
+   !    external DGETRI
+   !    ! Copy A over to Ainv to prevent it from being overwritten by LAPACK
+   !    Ainv=A
+   !    ! Store size
+   !    n=size(A,1)
+   !    ! Compute LU factorization of matrix A using partial pivoting with row interchanges
+   !    call DGETRF(n,n,Ainv,n,ipiv,info)
+   !    ! Error handling
+   !    if (info.ne.0) call die('[inverse_matrix] Matrix is numerically singular')
+   !    ! Compute inverse of matrix using LU factorization computed above
+   !    call DGETRI(n,Ainv,n,ipiv,work,n,info)
+   !    if (info.ne.0) call die('[inverse_matrix] Matrix inversion failed')
+   !  end function inverse_matrix
+   
+   
+   !> Computes the inverse of a square matrix A
+   function inverse_matrix(A) result(Ainv)
+     use messager,only:die
+     implicit none
+     real(WP),dimension(:,:),intent(in)::A
+     real(WP),dimension(size(A,1),size(A,2))::Ainv
+     real(WP),dimension(size(A,1),size(A,2))::A_
+     real(WP),dimension(size(A,2))::row_temp
+     integer::i,j,n,pivot
+     real(WP)::maxA,factor
+     n=size(A,1)
+     if (size(A,2).ne.n) call die('[inverse_matrix] Matrix is not square')
+     A_=A
+     Ainv=0.0_WP
+     do i=1,n
+        Ainv(i,i)=1.0_WP
+     end do
+     do i=1,n
+        pivot=i
+        maxA=abs(A_(i,i))
+        do j=i+1,n
+           if(abs(A_(j,i)).gt.maxA)then
+              maxA=abs(A_(j,i))
+              pivot=j
+           end if
+        end do
+        if (pivot.ne.i) then
+           row_temp=A_(i,:)
+           A_(i,:)=A_(pivot,:)
+           A_(pivot,:)=row_temp
+           row_temp=Ainv(i,:)
+           Ainv(i,:)=Ainv(pivot,:)
+           Ainv(pivot,:)=row_temp
+        end if
+        if (abs(A_(i,i)).lt.1.0e-12_WP) call die('[inverse_matrix] Matrix is numerically singular')
+        factor=A_(i,i)
+        A_(i,:)=A_(i,:)/factor
+        Ainv(i,:)=Ainv(i,:)/factor
+        do j=1,n
+           if (j.ne.i) then
+              factor=A_(j,i)
+              A_(j,:)=A_(j,:)-factor*A_(i,:)
+              Ainv(j,:)=Ainv(j,:)-factor*Ainv(i,:)
+           end if
+        end do
+     end do
+   end function inverse_matrix
+
+
+   !> Solves the linear system A*x=b using Gauss-Jordan elimination with partial pivoting
+   !> A must be square; cost is O(n^3) — comparable to LAPACK for small n
+   function symsolve(A,b,info) result(x)
+      use messager, only: die
       implicit none
-      integer,  intent(in) :: n                    !< Matrix size
-      real(WP), intent(inout), dimension(n,n) :: A   !< Matrix to inverse - it is destroyed
-      real(WP), intent(out),   dimension(n,n) :: B   !< Matrix inverse
-      integer :: i,l
-      ! Zero out inverse
-      B=0.0_WP
-      ! Forward elimination
+      real(WP), dimension(:,:), intent(in) :: A
+      real(WP), dimension(:),   intent(in) :: b
+      integer, intent(out), optional :: info
+      real(WP), dimension(size(b))         :: x
+      real(WP), dimension(size(A,1),size(A,2)) :: A_
+      real(WP), dimension(size(b))         :: x_
+      real(WP), dimension(size(A,2))       :: row_temp
+      real(WP) :: x_temp
+      integer :: i,j,n,pivot
+      real(WP) :: maxA,factor
+      n=size(b)
+      if (size(A,1).ne.n.or.size(A,2).ne.n) call die('[symsolve] Incompatible dimensions')
+      A_=A; x_=b
       do i=1,n
-         B(i,i)=1.0_WP
-         B(i,:)=B(i,:)/A(i,i)
-         A(i,:)=A(i,:)/A(i,i)
-         do l=i+1,n
-            B(l,:)=B(l,:)-A(l,i)*B(i,:)
-            A(l,:)=A(l,:)-A(l,i)*A(i,:)
+         ! Find pivot
+         pivot=i; maxA=abs(A_(i,i))
+         do j=i+1,n
+            if (abs(A_(j,i)).gt.maxA) then; maxA=abs(A_(j,i)); pivot=j; end if
+         end do
+         ! Swap rows
+         if (pivot.ne.i) then
+            row_temp=A_(i,:); A_(i,:)=A_(pivot,:); A_(pivot,:)=row_temp
+            x_temp=x_(i);     x_(i)=x_(pivot);     x_(pivot)=x_temp
+         end if
+         ! Singularity check
+         if (abs(A_(i,i)).lt.1.0e-12_WP) then
+            if (present(info)) then; info=-1; x=0.0_WP; return; end if
+            call die('[symsolve] Matrix is numerically singular')
+         end if
+         ! Normalize pivot row
+         factor=A_(i,i)
+         A_(i,:)=A_(i,:)/factor; x_(i)=x_(i)/factor
+         ! Eliminate column i from all other rows
+         do j=1,n
+            if (j.ne.i) then
+               factor=A_(j,i)
+               A_(j,:)=A_(j,:)-factor*A_(i,:)
+               x_(j)=x_(j)-factor*x_(i)
+            end if
          end do
       end do
-      ! Backward substitution
-      do i=n,1,-1
-         do l=i+1,n
-            B(i,:)=B(i,:)-A(i,l)*B(l,:)
-         end do
-      end do
-   end subroutine inverse_matrix
+      ! Successful exit
+      if (present(info)) info=0
+      x=x_
+   end function symsolve
    
    
    ! Returns normalized vector: w=v/|v|
@@ -317,7 +416,7 @@ contains
    
    end subroutine eigensolve3
 
-
+   
    !> Re-order rows of a rank 1 array
    subroutine reorder_rows_rank1(x,order,y)
       use messager, only: die
@@ -339,8 +438,8 @@ contains
    subroutine reorder_rows_rank2(x,order,y)
       use messager, only: die
       implicit none
-      integer,  intent(in)  :: order(:)
-      real(WP), intent(in)  :: x(:,:)
+      integer,  intent(in)    :: order(:)
+      real(WP), intent(in)    :: x(:,:)
       real(WP), intent(inout) :: y(:,:)
       integer :: lb1,lb2,ub1,ub2
       integer :: i
@@ -399,31 +498,117 @@ contains
    end subroutine ind_col
    
 
-   !> Determine the least-squares/minimum-norm solution x to the linear equation Ax = b.
-   subroutine lss(nb,nx,A,b,x,info)
-      !	S.B. Pope 10/2/02
+   !> Compute a nth order Clenshaw-Curtis quadrature rule on [0,1]
+   !> int(f(x)) in [0,1] is approximated by sum(w_i*f(x_i)) for i=1..N
+   subroutine quadrature_rule(n,x,w)
+      use messager, only: die
       implicit none
-      integer,  intent(in)  :: nb,nx
-      real(WP), intent(in)  :: A(nb,nx),b(nb)
-      real(WP), intent(out) :: x(nx)
-      integer,  intent(out) :: info
-      !  Input:
-      !	nb	- number of rows in b
-      !	nx	- number of rows in A and x
-      !	A	- the nb x nx matrix A
-      !	b	- the nb-vector b
-      !  Output:
-      !	x	- the solution nx-vector
-      !	info=0 for successful solution
-      integer :: lwork,rank
-      real(WP) :: tol=1.d-9,aa(nb,nx),bb(nb+nx),sv(nb+nx),work(4*(nb+nx+1)*(nb+nx+1))
-      lwork= size(work)
-      aa=A
-      bb=0.d0
-      bb(1:nb)=b
-      call dgelss(nb,nx,1,aa(1:nb,1:nx),nb,bb(1:nb+nx),nb+nx,sv(1:nb+nx),tol,rank,work(1:lwork),lwork,info)
-      x=bb(1:nx)
-   end subroutine lss
-
-
+      integer, intent(in) :: n
+      real(WP), dimension(n) :: x,w
+      real(WP) :: b,theta
+      integer :: i,j
+      ! Ensure input is usable
+      if (n.lt.1) call die('[quadrature_rule] n must be at least 1')
+      ! Handle n=1 case
+      if (n.eq.1) then
+         x(1)=0.5_WP
+         w(1)=1.0_WP
+         return
+      end if
+      ! Calculate quadrature point in general case
+      do i=1,n
+         x(i)=cos(real(n-i,WP)*Pi/real(n-1,WP))
+      end do
+      x(1)=-1.0_WP; x(n)=+1.0_WP; if (mod(n,2).eq.1) x((n+1)/2)=0.0_WP
+      ! Calculate quadrature weight in general case
+      do i=1,n
+         theta=real(i-1,WP)*Pi/real(n-1,WP)
+         w(i)=1.0_WP
+         do j=1,(n-1)/2
+            if (2*j.eq.n-1) then
+               b=1.0_WP
+            else
+               b=2.0_WP
+            end if            
+            w(i)=w(i)-b*cos(2.0_WP*real(j,WP)*theta)/real(4*j*j-1,WP)
+         end do
+      end do
+      w=w/real(n-1,WP); w(2:n-1)=2.0_WP*w(2:n-1)
+      ! Rescale to be in [0,1]
+      x=0.5_WP*(1.0_WP+x); w=0.5_WP*w
+   end subroutine quadrature_rule
+   
+   
+   !> Computes spherical harmonics Y_l^m(theta,phi) for a given l and m at angles theta and phi
+   function spherical_harmonic(l,m,theta,phi) result(Ylm)
+      implicit none
+      integer , intent(in) :: l,m
+      real(WP), intent(in) :: theta,phi
+      real(WP) :: Ylm
+      real(WP) :: norm,plm
+      integer  :: mm,abs_m
+      ! Associated Legendre polynomial
+      abs_m=abs(m); plm=legendre_p(l,abs_m,cos(theta))
+      ! Normalization factor
+      norm=sqrt((2.0_WP*l+1.0_WP)/(4.0_WP*Pi)*real(factorial(l-abs_m),WP)/real(factorial(l+abs_m),WP))
+      ! Real-valued spherical harmonics
+      if (m.gt.0) then
+         Ylm=sqrt(2.0_WP)*norm*plm*cos(m*phi)
+      else if (m.lt.0) then
+         Ylm=sqrt(2.0_WP)*norm*plm*sin(abs(m)*phi)
+      else
+         Ylm=norm*plm
+      end if
+   contains
+      !> Computes factorial of n
+      function factorial(n) result(fact)
+         integer, intent(in) :: n
+         integer :: fact,j
+         fact=1
+         if (n.gt.0) then
+            do j=2,n
+               fact=fact*j
+            end do
+         end if
+      end function factorial
+      !> Computes the associated Legendre polynomial P_l0^m0(x)
+      function legendre_p(l0,m0,x) result(p)
+         implicit none
+         integer , intent(in) :: l0,m0
+         real(WP), intent(in) :: x
+         real(WP) :: p
+         integer  :: i
+         real(WP) :: pmm,pmmp1,pll,somx2
+         if (m0.lt.0.or.m0.gt.l0.or.abs(x).gt.1.0_WP) then
+            p=0.0_WP
+            return
+         end if
+         pmm=1.0_WP
+         if (m0.gt.0) then
+            somx2=sqrt((1.0_WP-x)*(1.0_WP+x))
+            do i=1,m0
+               pmm=-pmm*(2*i-1)*somx2
+            end do
+         end if
+         if (l0.eq.m0) then
+            p=pmm
+            return
+         else
+            pmmp1=x*(2*m0+1)*pmm
+            if (l0.eq.m0+1) then
+               p=pmmp1
+               return
+            else
+               do i=m0+2,l0
+                  pll=((2*i-1)*x*pmmp1-(i+m0-1)*pmm)/(i-m0)
+                  pmm=pmmp1
+                  pmmp1=pll
+               end do
+               p=pmmp1
+            end if
+         end if
+      end function legendre_p
+   end function spherical_harmonic
+   
+   
 end module mathtools
