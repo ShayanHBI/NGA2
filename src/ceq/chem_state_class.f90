@@ -1,7 +1,7 @@
 !> Chemical state class
 module chem_state_class
    use precision,      only: WP
-   use chem_sys_class, only: chem_sys,Gphase,ncof
+   use chem_sys_class, only: chem_sys,Lphase,Gphase,ncof
    implicit none
    private
    
@@ -354,7 +354,7 @@ module chem_state_class
                   this%HoR=HoR
                elseif(present(N_h).and.present(T_h)) then
                   call reorder_rows(N_h,this%sys%sp_order,N0)
-                  call this%get_hort(this%sys%ns,T_h,this%sys%thermo,h)
+                  call this%get_hort(this%sys%ns,T_h,this%p,this%sys%thermo,this%vmolar,this%sys%P(:,Lphase),h)
                   this%HoR=sum(N0*h)*T_h
                else
                   call die('[chem_state N_init] Both N_h and T_h are required for the fixed enthalpy and pressure condition')
@@ -398,7 +398,7 @@ module chem_state_class
          nsu=this%sys%nsu
 
          ! Initialize the Gibbs function
-         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),gu)
+         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%vmolar(nsd+1:ns),this%sys%P(nsd+1:ns,Gphase),gu)
 
          ! Form the basic constraint vector
          if (present(c)) then
@@ -416,7 +416,7 @@ module chem_state_class
          ! Treat the special case of no undetermined species
          if (nsu.eq.0) then
             this%Ndu=Nd
-            if (this%cond.eq.fixed_PH) call this%hor2T(ns,this%Ndu,this%HoR,this%sys%thermo,this%T)
+            if (this%cond.eq.fixed_PH) call this%hor2T(ns,this%Ndu,this%HoR,this%sys%thermo,this%p,this%vmolar,this%sys%P(:,Lphase),this%T)
          else
 
             ! Reduced constraint vector
@@ -429,7 +429,7 @@ module chem_state_class
                   !  only determined species
                   this%Ndu=0.0_WP
                   this%Ndu(1:nsd)=Nd(1:nsd)
-                  if (this%cond.eq.fixed_PH) call this%hor2T(ns,this%Ndu,this%HoR,this%sys%thermo,this%T)
+                  if (this%cond.eq.fixed_PH) call this%hor2T(ns,this%Ndu,this%HoR,this%sys%thermo,this%p,this%vmolar,this%sys%P(:,Lphase),this%T)
                endif
                ! SBP end of added
                this%success=.false.
@@ -496,9 +496,9 @@ module chem_state_class
             if ((this%cond.eq.fixed_PH).and.(.not.present(T_g))) then
                N1(1:nsd)   =this%Nd
                N1(nsd+1:ns)=Nu0
-               call this%hor2T(ns,N1,this%HoR,this%sys%thermo,this%T)
+               call this%hor2T(ns,N1,this%HoR,this%sys%thermo,this%p,this%vmolar,this%sys%P(:,Lphase),this%T)
                ! Set gu based on T0
-               call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),gu)
+               call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%vmolar(nsd+1:ns),this%sys%P(nsd+1:ns,Gphase),gu)
             endif
 
             ! Set the Gibbs functin and the undetermined species moles
@@ -512,7 +512,7 @@ module chem_state_class
 
          ! Update thermodynamic quantities
          if (this%cond.eq.fixed_PT) then
-            call this%get_hort(ns,this%T,this%sys%thermo,h)
+            call this%get_hort(ns,this%T,this%p,this%sys%thermo,this%vmolar,this%sys%P(:,Lphase),h)
             this%HoR=sum(this%Ndu*h)*this%T
          elseif (this%cond.eq.fixed_UV) then
             this%UoR0=this%UoR
@@ -543,7 +543,7 @@ module chem_state_class
          nsu=this%sys%nsu
          nrc=this%sys%nrc
          ! Get the gibbs of undetermined species
-         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%gu)
+         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%vmolar(nsd+1:ns),this%sys%P(nsd+1:ns,Gphase),this%gu)
          ! Determine min_g composition
          call this%get_Nming(nsu,nrc,this%sys%BR,this%cr,this%gu,Ng,iret)
          this%success=.true.
@@ -561,30 +561,33 @@ module chem_state_class
             this%N(this%sys%sp_order(i))=this%Ndu(i)
          end do
          ! Update the gibbs of undetermined species
-         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%sys%P(nsd+1:ns,Gphase),this%gu)
+         call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%vmolar(nsd+1:ns),this%sys%P(nsd+1:ns,Gphase),this%gu)
       end subroutine N_re_init
 
 
-      !> Get normalized enthalpies (Neglecting pressure dependence for liquid)
-      subroutine get_hort(this,ns,T,thermo,hort)
+      !> Get normalized enthalpies
+      subroutine get_hort(this,ns,T,p,thermo,vmolar,isLiq,hort)
          ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
          ! Ideal Gas Mixtures using Gibbs Function Continuation.
          implicit none
          class(chem_state), intent(in) :: this
          integer, intent(in)   :: ns
-         real(WP), intent(in)  :: T,thermo(ns,2*ncof+1)
+         real(WP), intent(in)  :: T,p,thermo(ns,2*ncof+1),vmolar(ns),isLiq(ns)
          real(WP), intent(out) :: hort(ns)
          ! input:
          !	ns	     -number of species
          !  T       -temperature (K)
+         !  p       -pressure (Pa)
          !  thermo  -thermo data for all species
+         !  vmolar  -Molar volume (m^3/mol)
+         !  isLiq   -1 if liquid, 0 if gas
          ! output:
          !  hort    -h_j/(RT) -normalized enthalpies
          ! S. B. Pope 9/26/02
          real(WP) :: th(6),Tpnm1
          integer :: k,n
          th(1)=1.0_WP  ! coefficient multipliers for enthalpy
-         th(6)=1./T
+         th(6)=1.0_WP/T
          Tpnm1=1.0_WP
          do n=2,5
             Tpnm1=Tpnm1*T            ! =T.^(n-1)
@@ -596,17 +599,18 @@ module chem_state_class
             else
                hort(k)=dot_product(thermo(k,9:14),th) ! coefficients in upper temperature range
             endif
+            hort(k)=hort(k)+isLiq(k)*vmolar(k)*(p-p0)/(gas_cnst*T)
          end do
       end subroutine get_hort
 
 
-      !> Get the phasic enthalpy (H/R) (Neglecting pressure dependence for liquid)
-      subroutine get_phasic_HoR(this,phase,N,T,HoR)
+      !> Get the phasic enthalpy (H/R)
+      subroutine get_phasic_HoR(this,phase,N,T,p,HoR)
          use mathtools, only: reorder_rows
          implicit none
          class(chem_state), intent(in) :: this
          integer, intent(in)  :: phase ! Follows IRL convention; 0 if liquid, 1 if gas
-         real(WP), intent(in) :: T,N(this%sys%ns)
+         real(WP), intent(in) :: N(this%sys%ns),T,p
          real(WP), intent(out) :: HoR
          real(WP) :: th(6),Tpnm1,Nro(this%sys%ns)
          integer :: k,m
@@ -629,26 +633,28 @@ module chem_state_class
                else
                   HoR=HoR+Nro(k)*dot_product(this%sys%thermo(k,9:14),th) ! coefficients in upper temperature range
                endif
+               HoR=HoR+Nro(k)*this%sys%P(k,Lphase)*this%vmolar(k)*(p-p0)/gas_cnst
             end if
          end do
          HoR=T*HoR
       end subroutine get_phasic_HoR
 
 
-      !> Get normalized Gibbs functions (Neglecting pressure dependence for liquid enthalpy)
-      subroutine get_gort(this,ns,T,p,thermo,isGas,gort)
+      !> Get normalized Gibbs functions
+      subroutine get_gort(this,ns,T,p,thermo,vmolar,isGas,gort)
          ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
          ! Ideal Gas Mixtures using Gibbs Function Continuation.
          implicit none
          class(chem_state), intent(in) :: this
          integer, intent(in) :: ns
-         real(WP), intent(in) :: T,p,thermo(ns,2*ncof+1),isGas(ns)
+         real(WP), intent(in) :: T,p,thermo(ns,2*ncof+1),vmolar(ns),isGas(ns)
          real(WP), intent(out) :: gort(ns)
          ! input:
          !   ns     -number of species
          !   T      -temperature (K)
          !   p      -pressure (Pa)
          !   thermo -thermo data for all species
+         !   vmolar -Molar volume (m^3/mol)
          !   isGas  -1 if gas,0 if liquid
          ! output:
          !   gort  -g_j/(RT) -normalized Gibbs functions
@@ -676,20 +682,20 @@ module chem_state_class
             else
                gort(k)=dot_product(thermo(k,9:15),tg) ! coefficients in upper temperature range
             endif
+            gort(k)=gort(k)+isGas(k)*log(p/p0)+(1.0_WP-isGas(k))*vmolar(k)*(p-p0)/(gas_cnst*T)
          end do
-         gort=gort+isGas*log(p/p0)
       end subroutine get_gort
 
 
       !> Determine temperature given enthalpy
-      subroutine hor2T(this,ns,z,hin,thermo,T)
+      subroutine hor2T(this,ns,z,hin,thermo,p,vmolar,isLiq,T)
          ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
          ! Ideal Gas Mixtures using Gibbs Function Continuation.
          use messager, only: die
          implicit none
          class(chem_state),  intent(in)  :: this
          integer,            intent(in)  :: ns
-         real(WP), intent(in)  :: z(ns),hin,thermo(ns,2*ncof+1)
+         real(WP), intent(in)  :: z(ns),hin,thermo(ns,2*ncof+1),p,vmolar(ns),isLiq(ns)
          real(WP), intent(out) :: T
          ! input:
          !	ns		  - number of species
@@ -706,21 +712,20 @@ module chem_state_class
          ! S. B. Pope 9/26/02
 
          integer :: itmax,it
-         real(WP) :: T_tol,T0,hort(ns),hor,h_a,T_a,h_b,T_b,dT,&
-            cpor(ns),hh,cpp
+         real(WP) :: T_tol,T0,hort(ns),hor,h_a,T_a,h_b,T_b,dT,cpor(ns),hh,cpp
 
          itmax=100     ! maximum number of Newton iterations (usually only 3 required)
          T_tol=1e-6    ! error tolerance
          T0=1500.0_WP  ! initial guess
 
          !  determine if T>T0 and bracket T in [T_a T_b]
-         call this%get_hort(ns,T0,thermo,hort)
+         call this%get_hort(ns,T0,p,thermo,vmolar,isLiq,hort)
          hor=dot_product(z,hort)*T0
 
          if (hin>hor) then	! T > T0=T_a
             h_a=hor
             T_a=T0
-            call this%get_hort(ns,T_high,thermo,hort)
+            call this%get_hort(ns,T_high,p,thermo,vmolar,isLiq,hort)
             h_b=dot_product(z,hort)*T_high
             if (hin.ge.h_b) then
                T=T_high   ! T > T_high (return T=T_high)
@@ -730,7 +735,7 @@ module chem_state_class
          else
             h_b=hor	! T < T0=T_b
             T_b=T0
-            call this%get_hort(ns,T_low,thermo,hort)
+            call this%get_hort(ns,T_low,p,thermo,vmolar,isLiq,hort)
             h_a=dot_product(z,hort)*T_low
             if (hin.le.h_a) then
                T=T_low    ! T < T_low (return T=T_low)
@@ -745,7 +750,7 @@ module chem_state_class
          !  Newton iterations
          do it=1,itmax
             call this%get_cpor(ns,T,thermo,cpor)
-            call this%get_hort(ns,T,thermo,hort)
+            call this%get_hort(ns,T,p,thermo,vmolar,isLiq,hort)
             hh=dot_product(z,hort)*T
             cpp=dot_product(z,cpor)
             dT=(hin-hh)/cpp
@@ -760,17 +765,19 @@ module chem_state_class
 
 
       !> Return d/dT of the normalized Gibbs functions
-      subroutine get_dgdT(this,ns,T,thermo,dgdT)
+      subroutine get_dgdT(this,ns,T,p,thermo,vmolar,isLiq,dgdT)
          ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
          ! Ideal Gas Mixtures using Gibbs Function Continuation.
          implicit none
          class(chem_state), intent(in) :: this
          integer,  intent(in)  :: ns
-         real(WP), intent(in)  :: T,thermo(ns,2*ncof+1)
+         real(WP), intent(in)  :: T,p,thermo(ns,2*ncof+1),vmolar(ns),isLiq(ns)
          real(WP), intent(out) :: dgdT(ns)
          ! input:
          !   T      - temperature (K)
          !   thermo - thermo data for all species
+         !   vmolar - Molar volume (m^3/mol)
+         !   isLiq  - 1 if liquid, 0 if gas
          ! output:
          !   dgdT   - d/dT (g_j/(RT))
          ! S. B. Pope 7/1/03
@@ -796,12 +803,13 @@ module chem_state_class
             else
                dgdT(k)=dot_product(thermo(k,9:15),tg) ! coefficients in upper temperature range
             endif
+            dgdT(k)=dgdT(k)-isLiq(k)*vmolar(k)*(p-p0)/(gas_cnst*T**2)
          end do
       end subroutine get_dgdT
 
 
       !> Return d/dp of the normalized Gibbs functions (Neglecting pressure dependence for liquid)
-      subroutine get_dgdp(this,ns,T,p,isGas,vmolar,dgdp)
+      subroutine get_dgdp(this,ns,T,p,vmolar,isGas,dgdp)
          implicit none
          class(chem_state), intent(in) :: this
          integer,  intent(in)  :: ns
@@ -810,12 +818,11 @@ module chem_state_class
          ! input:
          !   T      - temperature (K)
          !   p      - pressure (Pa)
-         !   isGas  -1 if gas,0 if liquid
          !   vmolar - molar volume (m^3/mol)
+         !   isGas  -1 if gas,0 if liquid
          ! output:
          !   dgdp   - d/dp (g_j/(RT))
-         dgdp=isGas/p
-         ! dgdp=isGas/p+(1.0_WP-isGas)*vmolar/(gas_cnst*T)
+         dgdp=isGas/p+(1.0_WP-isGas)*vmolar/(gas_cnst*T)
       end subroutine get_dgdp
 
 
@@ -1212,7 +1219,7 @@ module chem_state_class
          allocate(rhs(this%sys%nrc))
          allocate(lam(this%sys%nrc))
          ! Calculate the Lagrange multipliers
-         call this%get_gort(this%sys%nsu,this%T,this%p,this%sys%thermo(this%sys%nsd+1:this%sys%ns,:),this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%gu)
+         call this%get_gort(this%sys%nsu,this%T,this%p,this%sys%thermo(this%sys%nsd+1:this%sys%ns,:),this%vmolar(this%sys%nsd+1:this%sys%ns),this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%gu)
          rhs=log(this%Nu)-matmul(this%sys%P(this%sys%nsd+1:this%sys%ns,:),log(this%Nbar))+this%gu
          call lss(this%sys%nsu,this%sys%nrc,this%sys%BR,rhs,lam,info)
          if (info.ne.0) then
@@ -1583,7 +1590,7 @@ module chem_state_class
             return
          end if
          ! Obtain species molar h/(RT)
-         call this%get_hort(this%sys%ns,this%T,this%sys%thermo,hort)
+         call this%get_hort(this%sys%ns,this%T,this%p,this%sys%thermo,this%vmolar,this%sys%P(:,Lphase),hort)
          ! Mixture H/R
          this%HoR=this%T*sum(this%Ndu*hort)
          RH=this%HoR-this%HoR0
@@ -1624,7 +1631,7 @@ module chem_state_class
             return
          end if
          ! Obtain species molar h/(RT)
-         call this%get_hort(this%sys%ns,this%T,this%sys%thermo,hort)
+         call this%get_hort(this%sys%ns,this%T,this%p,this%sys%thermo,this%vmolar,isLiq,hort)
          ! Get the internal energy: u/R = (h - pv) / R = T * (h/(R*T) - pv/(RT)); pv/(RT) = 1 for ideal gas
          uor=this%T*(hort-isGas)-isLiq*this%p*this%vmolar/gas_cnst
          ! Get the molar volumes
@@ -1666,7 +1673,7 @@ module chem_state_class
          allocate(dNdT(this%sys%ns))
          ! Get the specific heat and enthalpy
          call this%get_cpor(this%sys%ns,this%T,this%sys%thermo,cpor)
-         call this%get_hort(this%sys%ns,this%T,this%sys%thermo,hort)
+         call this%get_hort(this%sys%ns,this%T,this%p,this%sys%thermo,this%vmolar,this%sys%P(:,Lphase),hort)
          ! Rates of change of moles
          call this%get_dNdT(dNdT)
          Cp_eff=sum(cpor*this%Ndu)+this%T*sum(hort*dNdT)
@@ -1778,7 +1785,7 @@ module chem_state_class
          ! Allocate intermediate arrays
          allocate(dgudT(this%sys%nsu))
          ! Get d/dT of the normalized Gibbs functions of the undetermined species
-         call this%get_dgdT(this%sys%nsu,this%T,this%sys%thermo(this%sys%nsd+1:this%sys%ns,:),dgudT)
+         call this%get_dgdT(this%sys%nsu,this%T,this%p,this%sys%thermo(this%sys%nsd+1:this%sys%ns,:),this%vmolar(this%sys%nsd+1:this%sys%ns),this%sys%P(this%sys%nsd+1:this%sys%ns,Lphase),dgudT)
          ! Get dN/dT
          call this%get_dNdpar_LS(dgudT,dNdT)
          ! Deallocate intermediate arrays
@@ -1794,7 +1801,7 @@ module chem_state_class
          ! Allocate intermediate arrays
          allocate(dgudp(this%sys%nsu))
          ! Get d/dp of the normalized Gibbs functions of the undetermined species
-         call this%get_dgdp(this%sys%nsu,this%T,this%p,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%vmolar,dgudp)
+         call this%get_dgdp(this%sys%nsu,this%T,this%p,this%vmolar(this%sys%nsd+1:this%sys%ns),this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),dgudp)
          ! Get dN/dp
          call this%get_dNdpar_LS(dgudp,dNdp)
          ! Deallocate intermediate arrays
