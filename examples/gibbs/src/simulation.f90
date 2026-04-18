@@ -4,7 +4,7 @@ module simulation
    use string,           only: str_short,str_medium
    use YAMLRead,         only: YAMLElement
    use chem_sys_class,   only: chem_sys,Lphase,Gphase
-   use chem_state_class, only: chem_state,fixed_PT,fixed_PH
+   use chem_state_class, only: chem_state,fixed_PT,fixed_PH,fixed_UV
    implicit none
    private
    
@@ -213,11 +213,11 @@ contains
          use mathtools,        only: reorder_rows
          use messager,         only: die
          use chem_state_class, only: BS,NR,FD,LS
-         integer :: ng=1,PH_method,dNdT_method
+         integer :: ng=1,PH_method,dNdT_method,dNdp_method
          real(WP), dimension(:,:), allocatable :: Bg
-         real(WP), dimension(:),   allocatable :: N_h,N_h_c
-         real(WP) :: T_h,T_g
-         character(len=2) :: eq_cond,PH_alg,dNdT_alg
+         real(WP), dimension(:),   allocatable :: N_h,N_h_c,N_uv,N_uv_c,vmolar,vmolar_c
+         real(WP) :: T_h,T_g,T_uv,p_uv,p_g
+         character(len=2) :: eq_cond,PH_alg,dNdT_alg,dNdp_alg
          integer :: isc
          ! Read inputs
          call param_read('Temperature',T)
@@ -228,6 +228,10 @@ contains
          allocate(Bg(ns,ng));  Bg=0.0_WP
          allocate(N_h(ns))
          allocate(N_h_c(ns))
+         allocate(N_uv(ns))
+         allocate(N_uv_c(ns))
+         allocate(vmolar(ns))
+         allocate(vmolar_c(ns))
          ! Create the general constraints
          do isc=1,ns
             if (sp_names(isc).eq.'H2O')    Bg(isc,1)=1.0_WP
@@ -240,16 +244,19 @@ contains
          end do
          ! Inizialize the chemical system
          call sys%initialize(np=np,ns=ns,ne=ne,ncs=ncs,ng=ng,P=phse_mat,Ein=elem_mat,CS=CS,Bg=Bg,thermo_in=nasa_coef,diag=5)
+         ! Read molar volumes
+         call param_read('Molar volumes',vmolar)
+         vmolar_c=vmolar
+         call reorder_rows(vmolar_c,inpt2mch_sp_order,vmolar)
          ! Initialize the chemical state
          Nsum=1.0_WP
          if (scale) then
-            ! Nsum=sum(N_init)
-            Nsum=1e8
+            Nsum=sum(N_init)
             N_init=N_init/Nsum
          end if
          select case (eq_cond)
             case ('PT')
-               call state%initialize(sys=sys,cond=fixed_PT,p=p)
+               call state%initialize(sys=sys,cond=fixed_PT,p=p,vmolar=vmolar)
                call state%N_init(T=T,N=N_init)
             case ('PH')
                call param_read('PH algorithm',PH_alg)
@@ -268,7 +275,7 @@ contains
                else
                   call die('Wrong PH method')
                end if
-               call state%initialize(sys=sys,cond=fixed_PH,PH_method=PH_method,dNdT_method=dNdT_method,p=p)
+               call state%initialize(sys=sys,cond=fixed_PH,PH_method=PH_method,dNdT_method=dNdT_method,p=p,vmolar=vmolar)
                call param_read('Temperature for enthalpy calculation',T_h)
                call param_read('Composition for enthalpy calculation',N_h)
                N_h_c=N_h
@@ -282,8 +289,48 @@ contains
                else
                   call state%N_init(N=N_init,N_h=N_h,T_h=T_h)
                end if
+            case ('UV')
+               call param_read('dNdT algorithm',dNdT_alg)
+               if (dNdT_alg.eq.'FD') then
+                  dNdT_method=FD
+               else if (dNdT_alg.eq.'LS') then
+                  dNdT_method=LS
+               else
+                  call die('Wrong dNdT method')
+               end if
+               call param_read('dNdp algorithm',dNdp_alg)
+               if (dNdT_alg.eq.'FD') then
+                  dNdp_method=FD
+               else if (dNdT_alg.eq.'LS') then
+                  dNdp_method=LS
+               else
+                  call die('Wrong dNdp method')
+               end if
+               call state%initialize(sys=sys,cond=fixed_UV,dNdT_method=dNdT_method,dNdp_method=dNdp_method,vmolar=vmolar)
+               call param_read('Temperature for U and V calculation',T_uv)
+               call param_read('Pressure for U and V calculation',p_uv)
+               call param_read('Composition for U and V calculation',N_uv)
+               N_uv_c=N_uv
+               call reorder_rows(N_uv_c,inpt2mch_sp_order,N_uv)
+               if (scale) N_uv=N_uv/Nsum
+               if (param_exists('Temperature initial guess')) then
+                  call param_read('Temperature initial guess',T_g)
+                  if (param_exists('Pressure initial guess')) then
+                     call param_read('Pressure initial guess',p_g)
+                     call state%N_init(N=N_init,N_uv=N_uv,T_uv=T_uv,p_uv=p_uv,T_g=T_g,p_g=p_g)
+                  else
+                     call state%N_init(N=N_init,N_uv=N_uv,T_uv=T_uv,p_uv=p_uv,T_g=T_g)
+                  end if
+               else
+                  if (param_exists('Pressure initial guess')) then
+                     call param_read('Pressure initial guess',p_g)
+                     call state%N_init(N=N_init,N_uv=N_uv,T_uv=T_uv,p_uv=p_uv,p_g=p_g)
+                  else
+                     call state%N_init(N=N_init,N_uv=N_uv,T_uv=T_uv,p_uv=p_uv)
+                  end if
+               end if
             case default
-               call die('Equilibrium condition must be either PT or PH')
+               call die('Equilibrium condition must be either PT, PH, or UV.')
          end select
          if (.not.state%success) call die('chem state N_init failed')
          print*,'Equilibrium condition: Constant ',eq_cond
@@ -298,6 +345,7 @@ contains
             end if
             call param_read('T max iterations',state%iter_T_max)
          end if
+         if (state%cond.eq.fixed_UV) call param_read('T max iterations',state%iter_T_max)
          ! Re-initialization of moles
          if (scale) then 
             print*,'Re-initialization of moles (Scaled):'
@@ -307,6 +355,8 @@ contains
          do isc=1,sys%ns
             print*,trim(sp_names(isc)),': ',state%N(isc)
          end do
+         print*,'UoR0 = ',state%UoR
+         print*,'V0 = ',state%V
          ! Deallocate arrays
          deallocate(Bg,N_h,N_h_c)
       end block ceq_init
@@ -346,6 +396,7 @@ contains
          print*,'Residal error = ', norm2(state%RC)
       end if
       print*,'Equilibrium temperature = ',state%T,' (K)'
+      print*,'Equilibrium pressure = ',state%p,' (Pa)'
       print*,'Equilibrium moles:'
       if (scale) state%N=Nsum*state%N
       do isc=1,sys%ns

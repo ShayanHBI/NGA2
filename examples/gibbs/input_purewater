@@ -1,30 +1,41 @@
 # Mechanism
 Mechanism file : gri30.yaml
 
-# Equilibrium condition (choose either PH or PT)
-Equilibrium condition : PH
+# Equilibrium condition (choose either PH, PT, or UV)
+Equilibrium condition : PT
 
 # Temperature and pressure
-Temperature : 373.15 # Only used for PT case
-Pressure    : 100000
+Temperature : 372.5 # Only used for PT case
+Pressure    : 100000 # Only used for PT or PH case
 
 # Species
 Species             : H2O(L) H2O
-Initial moles       : 0.9 0.1
+Initial moles       : 0.2 0.8
 Scale mole numbers  : .false.
+Molar volumes       : 1.8e-5 0 ! For liquid I used density of 1000 and for gas it's taken from EOS within the code
 
 # Constant enthaply inputs
 Temperature for enthalpy calculation : 373.15
 Composition for enthalpy calculation : 0 1
-Temperature initial guess            : 378
+
+# Constant internal energy and volume inputs
+Temperature for U and V calculation : 373.15
+Pressure for U and V calculation    : 100000
+Composition for U and V calculation : 0 1
+
+# Initial guesses
+Temperature initial guess           : 373.15
+Pressure initial guess              : 100000
 
 # Newton iterations
 Newton tolerance      : 1e-7
 Newton max iterations : 30
 
-# Temperature iterations
+# Temperature and pressure iterations
 PH algorithm       : NR
 dNdT algorithm     : LS
+dNdp algorithm     : LS
 T tolerance        : 1e-7
+p tolerance        : 1e-7
 H tolerance        : 1e-7
 T max iterations   : 50

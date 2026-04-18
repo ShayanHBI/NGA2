@@ -104,6 +104,7 @@ module chem_state_class
       procedure :: hor2T                                           !< Convert enthalpy to temperature
       procedure :: get_dgdT                                        !< Get the temperature derivative of the gibbs function
       procedure :: get_dgdp                                        !< Get the pressure derivative of the gibbs function
+      procedure :: get_vmolar                                      !< Get the molar volumes based on the equation of state (ideal gas and ideal liquid for now)
 
       procedure :: perturb                                         !< Perturb the chemical equilibrium problem
       procedure :: get_Nming                                       !< Get the composition that minimized G and satisfies the constraints
@@ -163,8 +164,7 @@ module chem_state_class
          class(chem_sys), target, intent(in) :: sys
          integer,  intent(in) :: cond
          integer,  intent(in), optional :: PH_method,dNdT_method,dNdp_method
-         real(WP), intent(in) :: p
-         real(WP), intent(in), optional :: vmolar(sys%ns)
+         real(WP), intent(in), optional :: p,vmolar(sys%ns)
          integer  :: np,nb,nc,ns,nsd,nsu,nrc
 
          ! Point to chemical system
@@ -242,8 +242,17 @@ module chem_state_class
          this%cond=cond
 
          ! Determine pressure
-         if (p.le.0.0_WP) call die('[chem_state initialize] Pressure must be strictly positive')
-         this%p=p
+         select case (this%cond)
+            case (fixed_PT,fixed_PH)
+               if (present(p)) then
+                  if (p.le.0.0_WP) call die('[chem_state initialize] Pressure must be strictly positive.')
+                  this%p=p
+               else
+                  call die('[chem_state initialize] Pressure must be provided as input.')
+               end if
+            case (fixed_UV)
+               if (present(p)) call die('[chem_state initialize] Fixed U and V algorithm does not take input pressure here. Guessed pressure can be passed to N_init.')
+         end select
 
          ! Obtain indexes
          np =sys%np
@@ -281,7 +290,7 @@ module chem_state_class
 
 
       !> Initialize the mole numbers
-      subroutine N_init(this,T,c,N,HoR,UoR,V,N_h,T_h,N_g,T_g,p_g)
+      subroutine N_init(this,T,c,N,HoR,UoR,V,N_h,N_uv,T_h,T_uv,p_uv,N_g,T_g,p_g)
 
          ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
          ! Ideal Gas Mixtures using Gibbs Function Continuation. 
@@ -304,8 +313,6 @@ module chem_state_class
          !  c   -values of the nc basic constraints (real(nc))
          !  N   -moles of species used to calculate c as : c=B'*N (real(ns))
 
-         !  p   -pressure
-
          ! (For a fixed (p,T) equilibrium calculation, specify T: do not specify HoR, N_h or T_h.)
          ! T-temperature (K) for fixed-temperature problem
 
@@ -316,7 +323,10 @@ module chem_state_class
          ! T_h temperature used to calculate H as:  H/R=sum(N_h h(T_h)/R), where
          !     h(T_h)/R [which has dimensions K] is the molar specific species enthalpy.
 
-         ! (For a fixed (p,H) equilibrium calculation, specify UoR and V)
+         ! (For a fixed (U,V) equilibrium calculation, specify either UoR and V or N_uv with T_uv and p_uv)
+         ! N_uv species moles used to calculate U and V
+         ! T_uv temperature used to calculate U and V
+         ! p_uv temperature used to calculate U and V
 
          ! (Initial guesses are not needed, and should not be specified unless they
          !  are good guesses.)
@@ -332,10 +342,10 @@ module chem_state_class
          use mathtools, only: reorder_rows
          implicit none
          class(chem_state), intent(inout) :: this
-         real(WP), intent(in), optional :: c(this%sys%nc),N(this%sys%ns),T,HoR,UoR,V,N_h(this%sys%ns),T_h,N_g(this%sys%ns),T_g,p_g
+         real(WP), intent(in), optional :: c(this%sys%nc),N(this%sys%ns),T,HoR,UoR,V,N_h(this%sys%ns),N_uv(this%sys%ns),T_h,T_uv,p_uv,N_g(this%sys%ns),T_g,p_g
          integer  :: np,nb,nc,ns,nsd,nsu,nrc,npert,iret,i
          real(WP) :: max_pert,Numin,cb(this%sys%nc),cmod(this%sys%nb),Nd(this%sys%nsd),cr_norm,cb_norm,res,N_low,res_tol=1e-9
-         real(WP), dimension(this%sys%ns)  :: N0,N1,h
+         real(WP), dimension(this%sys%ns)  :: N0,N1,h,vmolar
          real(WP), dimension(this%sys%nsu) :: Nu,Nu0,Nm,Nupper,Ng,gu
          real(WP), dimension(this%sys%nrc) :: cr
          logical :: fail,diag,use_mmg=.true.
@@ -352,9 +362,10 @@ module chem_state_class
             case (fixed_PH)
                if (present(HoR)) then
                   this%HoR=HoR
-               elseif(present(N_h).and.present(T_h)) then
+               elseif (present(N_h).and.present(T_h)) then
                   call reorder_rows(N_h,this%sys%sp_order,N0)
-                  call this%get_hort(this%sys%ns,T_h,this%p,this%sys%thermo,this%vmolar,this%sys%P(:,Lphase),h)
+                  vmolar=this%sys%P(:,Lphase)*this%vmolar
+                  call this%get_hort(this%sys%ns,T_h,this%p,this%sys%thermo,vmolar,this%sys%P(:,Lphase),h)
                   this%HoR=sum(N0*h)*T_h
                else
                   call die('[chem_state N_init] Both N_h and T_h are required for the fixed enthalpy and pressure condition')
@@ -370,8 +381,15 @@ module chem_state_class
                if (present(UoR).and.present(V)) then
                   this%UoR=UoR
                   this%V=V
+               elseif (present(N_uv).and.present(T_uv).and.present(p_uv)) then
+                  call reorder_rows(N_uv,this%sys%sp_order,N0)
+                  call this%get_vmolar(this%sys%ns,T_uv,p_uv,this%sys%P(:,Gphase),vmolar)
+                  vmolar=this%sys%P(:,Lphase)*this%vmolar
+                  call this%get_hort(this%sys%ns,T_uv,p_uv,this%sys%thermo,vmolar,this%sys%P(:,Lphase),h)
+                  this%UoR=sum(N0*(h-(p_uv*this%vmolar)/(gas_cnst*T_uv)))*T_uv
+                  this%V=sum(N0*this%vmolar)
                else
-                  call die('[chem_state N_init] Both UoR and V are required for the fixed internal energy and volume condition')
+                  call die('[chem_state N_init] Both UoR and V are required or N_uv along with T_uv and p_uv are required for the fixed internal energy and volume condition')
                end if
                if (present(T_g)) then
                   if (T_g.lt.T_low.or.T_g.gt.T_high) call die('[chem_state N_init] Guessed temperature out of range')
@@ -396,6 +414,9 @@ module chem_state_class
          ns =this%sys%ns
          nsd=this%sys%nsd
          nsu=this%sys%nsu
+
+         ! Initialize molar volumes
+         call this%get_vmolar(ns,this%T,this%p,this%sys%P(:,Gphase),this%vmolar)
 
          ! Initialize the Gibbs function
          call this%get_gort(nsu,this%T,this%p,this%sys%thermo(nsd+1:ns,:),this%vmolar(nsd+1:ns),this%sys%P(nsd+1:ns,Gphase),gu)
@@ -687,7 +708,7 @@ module chem_state_class
       end subroutine get_gort
 
 
-      !> Determine temperature given enthalpy
+      !> Determine temperature given enthalpy (Note: Needs to be modified to account for pressure dependence of liquid species)
       subroutine hor2T(this,ns,z,hin,thermo,p,vmolar,isLiq,T)
          ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
          ! Ideal Gas Mixtures using Gibbs Function Continuation.
@@ -702,6 +723,9 @@ module chem_state_class
          !   z      -moles of species
          !   hin    -enthalpy/R (K)=z'*h
          !   thermo -thermo data
+         !   p      -pressure (Pa)
+         !   vmolar -Molar volume (m^3/mol)
+         !   isLiq  -1 if liquid, 0 if gas
          ! output:
          !   T      -temperature (K)
 
@@ -808,7 +832,7 @@ module chem_state_class
       end subroutine get_dgdT
 
 
-      !> Return d/dp of the normalized Gibbs functions (Neglecting pressure dependence for liquid)
+      !> Return d/dp of the normalized Gibbs functions
       subroutine get_dgdp(this,ns,T,p,vmolar,isGas,dgdp)
          implicit none
          class(chem_state), intent(in) :: this
@@ -824,6 +848,24 @@ module chem_state_class
          !   dgdp   - d/dp (g_j/(RT))
          dgdp=isGas/p+(1.0_WP-isGas)*vmolar/(gas_cnst*T)
       end subroutine get_dgdp
+
+
+      !> Return the molar volume of the given species
+      subroutine get_vmolar(this,ns,T,p,isGas,vmolar)
+         implicit none
+         class(chem_state), intent(in) :: this
+         integer,  intent(in)  :: ns
+         real(WP), intent(in)  :: T,p,isGas(ns)
+         real(WP), intent(out) :: vmolar(ns)
+         ! input:
+         !   ns     - number of species
+         !   T      - temperature (K)
+         !   p      - pressure (Pa)
+         !   isGas  -1 if gas,0 if liquid
+         ! output:
+         !   vmolar - molar volume (m^3/mol)
+         vmolar=isGas*gas_cnst*T/p
+      end subroutine get_vmolar
 
 
       !> Generate (possibly) perturbed CE problem
@@ -1436,6 +1478,8 @@ module chem_state_class
             ! Update temperature
             this%T=Tn
          end do
+         ! Update molar volumes
+         call this%get_vmolar(this%sys%nsu,this%T,this%p,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%vmolar(this%sys%nsd+1:this%sys%ns))
          ! Assemble the composition
          this%Ndu=[this%Nd,this%Nu]
          ! Reorder the composition
@@ -1509,6 +1553,7 @@ module chem_state_class
          real(WP), dimension(:),   allocatable :: rhs
          real(WP) :: alpha,pn,Tn
          integer  :: info,i,ipiv
+         print*,'debug: Starting ceq_UV'
          ! Allocate the intermediate arrays
          allocate(Jac(1:2,1:2))
          allocate(rhs(1:2))
@@ -1527,6 +1572,9 @@ module chem_state_class
                this%success=.false.
                return
             end if
+            print*,'debug: Iteration = ',this%iter_T
+            print*,'debug: T = ',this%T
+            print*,'debug: p = ',this%p
             ! Store the old mole numbers
             this%Nuold=this%Nu
             ! Get the residuals and Jacobian
@@ -1536,9 +1584,12 @@ module chem_state_class
             end if
             ! Solve for the residuals using LU decomposition
             rhs=[-this%RU,-this%RV]
+            print*,'debug: rhs = ',rhs
             call dgesv(2,1,Jac,2,ipiv,rhs,2,info)
             this%dT=rhs(1)
             this%dp=rhs(2)
+            print*,'debug: dT = ',this%dT
+            print*,'debug: dp = ',this%dp
             if (info.ne.0) then
                this%success=.false.
                return
@@ -1560,10 +1611,14 @@ module chem_state_class
             this%T=Tn
             this%p=pn
          end do
+         ! Update molar volumes
+         call this%get_vmolar(this%sys%nsu,this%T,this%p,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%vmolar(this%sys%nsd+1:this%sys%ns))
+         ! Assemble the mole numbers array
          this%Ndu=[this%Nd,this%Nu]
          do i=1,this%sys%ns
             this%N(this%sys%sp_order(i))=this%Ndu(i)
          end do
+         print*,'RU = ',this%RU,'RV = ',this%RV
          ! Deallocate the intermediate arrays
          deallocate(Jac,rhs)
       end subroutine get_ceq_UV
@@ -1579,6 +1634,8 @@ module chem_state_class
          allocate(hort(this%sys%ns))
          ! Assign temperature
          this%T=T
+         ! Update molar volumes
+         call this%get_vmolar(this%sys%nsu,this%T,this%p,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%vmolar(this%sys%nsd+1:this%sys%ns))
          ! Re-initialize mole numbers using current temperature
          call this%N_re_init()
          if (.not.this%success) then
@@ -1620,6 +1677,8 @@ module chem_state_class
          ! Assign temperature and pressure
          this%T=T
          this%p=p
+         ! Update molar volumes
+         call this%get_vmolar(this%sys%nsu,this%T,this%p,this%sys%P(this%sys%nsd+1:this%sys%ns,Gphase),this%vmolar(this%sys%nsd+1:this%sys%ns))
          ! Re-initialize mole numbers using current temperature and pressure
          call this%N_re_init()
          if (.not.this%success) then
