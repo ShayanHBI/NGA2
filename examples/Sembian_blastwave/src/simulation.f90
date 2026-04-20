@@ -41,8 +41,9 @@ module simulation
    type(monitor) :: mfile,consfile,cflfile,gridfile,tfile
 
    !> Stiffened gas EOS parameters (liquid and gas)
-   real(WP) :: GammaL,PinfL,etaL,CvL
-   real(WP) :: GammaG,PinfG,etaG,CvG
+   real(WP) :: GammaL,PinfL,etaL,etapL,CvL,CpL
+   real(WP) :: GammaG,PinfG,etaG,etapG,CvG,CpG
+   real(WP) :: AS,BS,CS,DS
 
    !> Flow parameters
    real(WP) :: Grho0,GP0          !< Pre-shock gas state
@@ -86,7 +87,7 @@ contains
    pure real(WP) function get_PL(RHO,I)
       implicit none
       real(WP), intent(in) :: RHO,I
-      get_PL=RHO*I*(GammaL-1.0_WP)-GammaL*PinfL
+      get_PL=RHO*I*(GammaL-1.0_WP)-GammaL*PinfL-(GammaL-1.0_WP)*etaL*RHO
    end function get_PL
    !> Liquid EOS: T=f(RHO,P)
    pure real(WP) function get_TL(RHO,P)
@@ -104,14 +105,14 @@ contains
    pure real(WP) function get_IL(RHO,P)
       implicit none
       real(WP), intent(in) :: RHO,P
-      get_IL=(P+GammaL*PinfL)/(RHO*(GammaL-1.0_WP))
+      get_IL=(P+GammaL*PinfL)/(RHO*(GammaL-1.0_WP))+etaL
    end function get_IL
 
    !> Gas EOS: P=f(RHO,I) - Ideal gas
    pure real(WP) function get_PG(RHO,I)
       implicit none
       real(WP), intent(in) :: RHO,I
-      get_PG=RHO*I*(GammaG-1.0_WP)-GammaG*PinfG
+      get_PG=RHO*I*(GammaG-1.0_WP)-GammaG*PinfG-(GammaG-1.0_WP)*etaG*RHO
    end function get_PG
    !> Gas EOS: T=f(RHO,P)
    pure real(WP) function get_TG(RHO,P)
@@ -129,7 +130,7 @@ contains
    pure real(WP) function get_IG(RHO,P)
       implicit none
       real(WP), intent(in) :: RHO,P
-      get_IG=(P+GammaG*PinfG)/(RHO*(GammaG-1.0_WP))
+      get_IG=(P+GammaG*PinfG)/(RHO*(GammaG-1.0_WP))+etaG
    end function get_IG
 
    !> Mechanical relaxation model
@@ -288,8 +289,9 @@ contains
       real(WP) :: a,b,d,coeffL,coeffG
       real(WP) :: ap,bp,dp
       real(WP) :: dapdp,dbpdp,ddpdp
-      real(WP) :: VFeq,Peq,Pold,T,Tp
-      integer  :: it,itmax
+      real(WP) :: VFeq,Peq,Pold,T,dTdp,Teq,Tsat,TsatOld
+      real(WP) :: RHOL,RHOG
+      integer  :: it,itmax,P_tol,P_err,T_tol,T_err
       logical  :: converge
       ! ================ First step for mechanical relaxation ================
       ! Get phasic pressures
@@ -347,59 +349,86 @@ contains
       Q(4)=(1.0_WP-VFeq)*(Peq+GammaG*PinfG)/(GammaG-1.0_WP)
       VF=VFeq
       ! ================= Third step for chemical relaxation =================
+      ! Return if there is no interface left after thermal relaxation
+      if (VF.le.0.0_WP.or.VF.ge.1.0_WP) return
+      ! Get the thermo-mechanically relaxed temperature
+      Teq=get_TL(RHO=Q(1)/VF,P=Peq)
+      ! Get saturation temperature at thermal-relaxed pressure
       itmax=20
+      T_tol=1e-7_WP
       converge=.false.
+      Tsat=Teq
       do it=1,itmax
-         ! Get the coefficients
-         call get_coeffs(Peq)
-         ! Get temperature
-         T =Teq (Peq)
-         Tp=dTdp(Peq)
-         ! Newton-Raphson iteration
-         Pold=Peq
-         Peq=Pold-PTsat(T,Pold)/dPTsatdp(Pold,T,Tp)
-         ! Evaluate the error
-         res=PTsat(T,Peq)
-         Perr=(Peq-Pold)/Pold
-         if ((res.lt.res_tol).or.(Perr.lt.P_tol)) then
+         T=Tsat
+         Tsat=T-PTsat(Peq)/dPTsatdT()
+         T_err=abs((Tsat-T)/T)
+         if (T_err.lt.T_tol) then
             converge=.true.
             exit
          end if
       end do
       if (.not.converge) return
+      ! Activate chemical relaxation only for metastable states
+      if (Teq.le.Tsat) return
+      itmax=20
+      P_tol=1e-7
+      converge=.false.
+      do it=1,itmax
+         ! Get the coefficients
+         call get_coeffs(Peq)
+         ! Get temperature
+         call get_T()
+         call get_dTdp()
+         ! Newton-Raphson iteration
+         Pold=Peq
+         Peq=Pold-PTsat(Pold)/dPTsatdp(Pold)
+         ! Evaluate the error
+         P_err=(Peq-Pold)/Pold
+         if (P_err.lt.P_tol) then
+            converge=.true.
+            exit
+         end if
+      end do
+      if (.not.converge) return
+      ! Update coefficients
+      call get_coeffs(Peq)
       ! Get equilibrium quantities
-      T=Teq(Peq)
+      call get_T()
       RHOL=(Peq+PinfL)/((GammaL-1.0_WP)*CvL*T)
       RHOG=(Peq+PinfG)/((GammaG-1.0_WP)*CvG*T)
       VFeq=(sum(Q(1:2))-RHOG)/(RHOL-RHOG)
       ! Clean up solution
       if (VFeq.lt.0.0_WP) then; VFeq=0.0_WP; Peq=max(Peq,-PinfL); end if
       if (VFeq.gt.1.0_WP) then; VFeq=1.0_WP; Peq=max(Peq,-PinfG); end if
-      ! Adjust conserved quantities ?
+      ! Adjust conserved quantities
+      Q(3)=(       VFeq)*RHOL
+      Q(4)=(1.0_WP-VFeq)*RHOG
+      VF=VFeq
       contains
       ! Equilibrium temperature as a function of equilibrium pressure
-      function Teq(p)
-         real(WP), intent(in) :: p
-         real(WP) :: Teq
-         Teq=(-bp+sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
-      end function Teq
+      subroutine get_T()
+         T=(-bp+sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+      end subroutine get_T
       ! Pressure derivative of the equilibrium temperature as a function of equilibrium pressure
-      function dTdp(p)
-         real(WP), intent(in) :: p
-         real(WP) :: dTdp
+      subroutine get_dTdp()
          dTdp=(ap*(-dbpdp+(bp*dbpdp-2.0_WP*(dapdp*dp+ap*ddpdp))/sqrt(bp**2-4.0_WP*ap*dp))-dapdp*(-bp+sqrt(bp**2-4.0_WP*ap*dp)))/(2.0_WP*ap**2)
-      end function dTdp
+      end subroutine get_dTdp
       ! Function that defines p-T saturation curve
-      function PTsat(p,T)
-         real(WP), intent(in) :: p,T
+      function PTsat(p)
+         real(WP), intent(in) :: p
          real(WP) :: PTsat
          PTsat=AS+BS/T+CS*log(T)+DS*log(p+PinfL)-log(p+PinfG)
       end function PTsat
+      ! Temperature derivative of p-T saturation curve function
+      function dPTsatdT()
+         real(WP) :: dPTsatdT
+         dPTsatdT=-BS/T**2+CS/T
+      end function dPTsatdT
       ! Pressure derivative of p-T saturation curve function
-      function dPTsatdp(p,T,Tp)
-         real(WP), intent(in) :: p,T,Tp
+      function dPTsatdp(p)
+         real(WP), intent(in) :: p
          real(WP) :: dPTsatdp
-         dPTsatdp=-BS/T**2*Tp+CS*Tp/T+DS/(p+PinfL)-1.0_WP/(p+PinfG)
+         dPTsatdp=-BS/T**2*dTdp+CS*dTdp/T+DS/(p+PinfL)-1.0_WP/(p+PinfG)
       end function dPTsatdp
       ! Subroutine that updates the coefficients of the quadradic equilibrium temperature equation as functions of equilibrium pressure
       subroutine get_coeffs(p)
@@ -613,12 +642,17 @@ contains
          use messager, only: log
          use string,   only: str_long
          character(len=str_long) :: message
-         ! Set PinfG to zero (ideal gas)
-         PinfG=0.0_WP
          ! Get fluid parameters
          call param_read('Liquid gamma',GammaL)
          call param_read('Gas gamma',GammaG)
          call param_read('Liquid Pinf',PinfL)
+         call param_read('Gas Pinf',PinfG)
+         call param_read('Liquid eta',etaL)
+         call param_read('Gas eta',etaG)
+         call param_read('Liquid etap',etapL)
+         call param_read('Gas etap',etapG)
+         call param_read('Liquid specific heat',CvL)
+         call param_read('Gas specific heat',CvG)
          call param_read('Liquid density',Lrho0)
          call param_read('Pre-shock density',Grho0)
          call param_read('Pre-shock pressure',GP0)
@@ -637,6 +671,11 @@ contains
          ! Domain dimensions
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
+         ! Saturation curve coefficients
+         AS=(CpL-CpG+etapG-etapL)/(CpG-CvG)
+         BS=(etaL-etaG)/(CpG-CvG)
+         CS=(CpG-CpL)/(CpG-CvG)
+         DS=(CpL-CvL)/(CpG-CvG)
          ! Use shock relations to get post-shock numbers (for informational / tagging purposes)
          GP1 = GP0 * (2.0_WP*GammaG*Ms**2 - (GammaG-1.0_WP)) / (GammaG+1.0_WP)
          Grho1 = Grho0 * (Ms**2 * (GammaG+1.0_WP) / ((GammaG-1.0_WP)*Ms**2 + 2.0_WP))
@@ -646,9 +685,6 @@ contains
          u1 = -M1 * sqrt(GammaG*GP1/Grho1) + Ms*sqrt(GammaG*GP0/Grho0)
          ! Velocity at which shock moves
          relshockvel = -Grho1*u1/(Grho0-Grho1)
-         ! Set specific heats
-         CvL=1077.7_WP
-         CvG=1956.45_WP
          ! Log setup
          write(message,'("[Shock Mach]      Ms=",es12.5)') Ms; call log(message)
          write(message,'("[Pre-shock]  Grho0=",es12.5," GP0=",es12.5)') Grho0,GP0; call log(message)

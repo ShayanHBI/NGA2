@@ -33,9 +33,16 @@ Liquid viscosity : 9e-4
 Gas viscosity    : 1.27e-5
 Liquid thermal conductivity : 0
 Gas thermal conductivity    : 0
+Liquid specific heat : 1077.7
+Gas specific heat    : 1956.45
 Liquid gamma : 6.12
-Liquid Pinf  : 3.43e8
 Gas gamma    : 1.4
+Liquid Pinf  : 3.43e8
+Gas Pinf     : 0
+Liquid eta   : 
+Gas eta      : 0
+Liquid etap  : 
+Gas etap     : 0
 
 # Time integration
 Max dt:   1e-8

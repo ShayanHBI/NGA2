@@ -237,7 +237,7 @@ module chem_sys_class
          ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
          ! Ideal Gas Mixtures using Gibbs Function Continuation.
          use messager,  only: die
-         use mathtools, only: ind_col,reorder_rows
+         use mathtools, only: reorder_rows
          implicit none
          class(chem_sys), intent(inout) :: this
          integer,  intent(in)  :: ifop
@@ -463,6 +463,52 @@ module chem_sys_class
          integer :: get_pind
          get_pind=this%P(findloc(this%sp_order,i,1),Gphase)
       end function get_pind
+
+
+      !>  Determine independent columns of the matrix B, given that columns 1:nci are independent.
+      subroutine ind_col(nr,nc,nci,B,thresh,indcol,info)
+         ! Extracted from Pope, Stephen. (2003). The Computation of Constrained and Unconstrained Equilibrium Compositions of 
+         ! Ideal Gas Mixtures using Gibbs Function Continuation. 
+         use messager, only: die
+         implicit none
+         integer,  intent(in)  :: nr,nc,nci
+         real(WP), intent(in)  :: B(nr,nc),thresh
+         integer,  intent(out) :: indcol(nc),info
+         ! Input:
+         !	nr	- number of rows of B
+         !	nc	- number of columns of B
+         !   nci - index, such that B(:,1:nci) has full column rank
+         !   B   - matrix
+         !   thresh  - threshold for determining rank
+         ! Output:
+         !   indcol(k)=0 if k-th column is dependent of columns 1:k-1
+         !   indcol(k)=1 if k-th column is independent of columns 1:k-1
+         !   info < 0 indicates failure
+         integer :: lwork,k,jpvt(nc)
+         real(WP) :: R(nr,nc),tau(min(nr,nc)),work(3*(nr+nc))
+         indcol=0
+         lwork=size(work)
+         R=B
+         jpvt=0
+         ! Perform QR with column pivoting:  B P=Q R
+         call dgeqp3(nr,nc,R(1:nr,1:nc),nr,jpvt,tau(1:min(nr,nc)),work(1:lwork),lwork,info)
+         if (info.ne.0) call die('[ind_col] QR decomposition failed')
+         ! Loop over possibly dependent columns
+         do k=1,min(nc,nr)
+            if (abs(R(k,k)).ge.thresh) then
+               indcol(jpvt(k))=1	   
+            else
+               exit
+            endif
+         end do
+         ! Check that the first nci columns are dependent
+         do k=1,nci
+            if (indcol(k).ne.1) then
+               info=-2
+               return
+            endif
+         end do
+      end subroutine ind_col
 
 
 end module chem_sys_class
