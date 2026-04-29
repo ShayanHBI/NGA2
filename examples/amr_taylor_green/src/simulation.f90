@@ -70,7 +70,7 @@ contains
       integer :: lvl,i,j,k
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pT,pVisc,pBeta,pDiff
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pT,pVisc,pBeta,pCond
       do lvl=0,amr%clvl()
          call amr%mfiter_build(lvl,mfi)
          do while (mfi%next())
@@ -78,7 +78,7 @@ contains
             pT=>fs%T%mf(lvl)%dataptr(mfi)
             pVisc=>fs%visc%mf(lvl)%dataptr(mfi)
             pBeta=>fs%beta%mf(lvl)%dataptr(mfi)
-            pDiff=>fs%diff%mf(lvl)%dataptr(mfi)
+            pCond=>fs%cond%mf(lvl)%dataptr(mfi)
             ! Get tilebox with overlap
             bx=mfi%growntilebox(fs%nover)
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
@@ -87,7 +87,7 @@ contains
                ! Zero bulk viscosity
                pBeta(i,j,k,1)=0.0_WP
                ! Heat diffusivity: k = Cp*mu/Pr = Cv*Gamma*mu/Pr
-               pDiff(i,j,k,1)=Cv*Gamma*pVisc(i,j,k,1)/Prandtl
+               pCond(i,j,k,1)=Cv*Gamma*pVisc(i,j,k,1)/Prandtl
             end do; end do; end do
          end do
          call amr%mfiter_destroy(mfi)

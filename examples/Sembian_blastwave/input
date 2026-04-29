@@ -1,13 +1,13 @@
 # AMR grid
-Base nx:   80
-Base ny:   24
-Base nz:   1
+Base nx  : 80
+Base ny  : 24
+Base nz  : 1
 Max level: 6
 
 # Regridding parameters
-Regrid nsteps: 10
-Tagging vorticity: 5
-Tagging rho ratio: 1.5
+Regrid nsteps     : 10
+Tagging vorticity : 5
+Tagging rho ratio : 1.5
 
 # Mesh definition
 Lx : 0.250
@@ -24,32 +24,37 @@ Pre-shock pressure   : 1.01e5
 # High pressure region initialization (Sembian Physics of Fluids 2016)
 HP center location  : 0.002
 HP region thickness : 0.001
-HP density  : 580.7
-HP pressure : 5e7
+HP density          : 580.7
+HP pressure         : 5e7
 
 # Fluid properties
-Liquid density   : 1000
-Liquid viscosity : 9e-4
-Gas viscosity    : 1.27e-5
+Liquid density              : 1000
+Liquid viscosity            : 9e-4
+Gas viscosity               : 1.27e-5
 Liquid thermal conductivity : 0
 Gas thermal conductivity    : 0
-Liquid specific heat : 1077.7
-Gas specific heat    : 1956.45
-Liquid gamma : 6.12
-Gas gamma    : 1.4
-Liquid Pinf  : 3.43e8
-Gas Pinf     : 0
-Liquid eta   : 
-Gas eta      : 0
-Liquid etap  : 
-Gas etap     : 0
+Liquid specific heat        : 1816
+Air specific heat           : 718
+Vapor specific heat         : 1040
+Liquid gamma                : 2.35
+Air gamma                   : 1.4
+Vapor gamma                 : 1.43
+Liquid Pinf                 : 1e9
+Air Pinf                    : 0
+Vapor Pinf                  : 0
+Liquid eta                  : -1.167e6
+Air eta                     : 0
+Vapor eta                   : 2.03e6
+Liquid etap                 : 0
+Air etap                    : 0
+Vapor etap                  : -2.34e4
 
 # Time integration
-Max dt:   1e-8
-Max CFL:  0.5
-Max time: 4e-4
+Max dt   : 1e-8
+Max CFL  : 0.5
+Max time : 4e-4
 
 # Output
-Output period:     1.0e-6
-Checkpoint period: 2.5e-5
-Restart from: restart/Sembian_blastwave_2.00001E-04
+Output period     : 1.0e-6
+Checkpoint period : 2.5e-5
+Restart from      : restart/Sembian_blastwave_2.00001E-04

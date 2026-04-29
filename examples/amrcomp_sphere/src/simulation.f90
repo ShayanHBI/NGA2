@@ -102,7 +102,7 @@ contains
       integer :: lvl,i,j,k
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pT,pQ,pVisc,pBeta,pDiff
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pT,pQ,pVisc,pBeta,pCond
       real(WP) :: r_cyl,blend
       do lvl=0,amr%clvl()
          call amr%mfiter_build(lvl,mfi)
@@ -112,7 +112,7 @@ contains
             pQ=>fs%Q%mf(lvl)%dataptr(mfi)
             pVisc=>fs%visc%mf(lvl)%dataptr(mfi)
             pBeta=>fs%beta%mf(lvl)%dataptr(mfi)
-            pDiff=>fs%diff%mf(lvl)%dataptr(mfi)
+            pCond=>fs%cond%mf(lvl)%dataptr(mfi)
             ! Get tilebox with overlap
             bx=mfi%growntilebox(fs%nover)
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
@@ -121,13 +121,13 @@ contains
                ! Zero bulk viscosity
                pBeta(i,j,k,1)=0.0_WP
                ! Heat diffusivity: k = Cp*mu/Pr = Cv*Gamma*mu/Pr
-               pDiff(i,j,k,1)=Gamma*Cv*pVisc(i,j,k,1)/Prandtl
+               pCond(i,j,k,1)=Gamma*Cv*pVisc(i,j,k,1)/Prandtl
                ! Apply sponge layer viscosity
                r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2+(amr%zlo+(real(k,WP)+0.5_WP)*amr%dz(lvl))**2)
                if (r_cyl.gt.R_spg) then
                   blend=min((r_cyl-R_spg)/L_spg,1.0_WP)**2
                   pVisc(i,j,k,1)=max(pVisc(i,j,k,1),blend*nu_spg*pQ(i,j,k,1))
-                  pDiff(i,j,k,1)=max(pDiff(i,j,k,1),blend*nu_spg*pQ(i,j,k,1))
+                  pCond(i,j,k,1)=max(pCond(i,j,k,1),blend*nu_spg*pQ(i,j,k,1))
                end if
             end do; end do; end do
          end do
