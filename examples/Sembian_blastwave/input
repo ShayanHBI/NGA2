@@ -1,8 +1,8 @@
 # AMR grid
-Base nx  : 80
-Base ny  : 24
-Base nz  : 1
-Max level: 6
+Base nx   : 80
+Base ny   : 24
+Base nz   : 1
+Max level : 6
 
 # Regridding parameters
 Regrid nsteps     : 10
@@ -57,4 +57,4 @@ Max time : 4e-4
 # Output
 Output period     : 1.0e-6
 Checkpoint period : 2.5e-5
-Restart from      : restart/Sembian_blastwave_2.00001E-04
+Restart from      : !restart/Sembian_blastwave_2.00001E-04
