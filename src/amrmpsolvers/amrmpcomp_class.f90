@@ -54,8 +54,8 @@ module amrmpcomp_class
       ! Physical properties
       type(amrdata) :: visc              !< Dynamic viscosity
       type(amrdata) :: beta              !< Bulk viscosity
-      type(amrdata) :: cond              !< Thermal conductivity
-      type(amrdata) :: diff              !< Mass diffusivity (rhoG*D)
+      type(amrdata) :: cond              !< Phasic thermal conductivity: comp 1 = liquid, comp 2 = gas
+      type(amrdata) :: diff              !< Vapor mass diffusivity (rho_v*D_v)
 
       ! CFL numbers
       real(WP) :: CFLc_x=0.0_WP,CFLc_y=0.0_WP,CFLc_z=0.0_WP  !< Convective
@@ -359,24 +359,27 @@ contains
       ! Initialize physical properties (Neumann BCs on those)
       call this%visc%initialize(amr,name='visc',ncomp=1,ng=this%nover); this%visc%parent=>this
       call this%beta%initialize(amr,name='beta',ncomp=1,ng=this%nover); this%beta%parent=>this
-      call this%cond%initialize(amr,name='cond',ncomp=1,ng=this%nover); this%cond%parent=>this
+      call this%cond%initialize(amr,name='cond',ncomp=2,ng=this%nover); this%cond%parent=>this
       call this%diff%initialize(amr,name='diff',ncomp=1,ng=this%nover); this%diff%parent=>this
       if (.not.amr%xper) then
          this%visc%lo_bc(1,1)=amrex_bc_foextrap; this%visc%hi_bc(1,1)=amrex_bc_foextrap
          this%beta%lo_bc(1,1)=amrex_bc_foextrap; this%beta%hi_bc(1,1)=amrex_bc_foextrap
          this%cond%lo_bc(1,1)=amrex_bc_foextrap; this%cond%hi_bc(1,1)=amrex_bc_foextrap
+         this%cond%lo_bc(1,2)=amrex_bc_foextrap; this%cond%hi_bc(1,2)=amrex_bc_foextrap
          this%diff%lo_bc(1,1)=amrex_bc_foextrap; this%diff%hi_bc(1,1)=amrex_bc_foextrap
       end if
       if (.not.amr%yper) then
          this%visc%lo_bc(2,1)=amrex_bc_foextrap; this%visc%hi_bc(2,1)=amrex_bc_foextrap
          this%beta%lo_bc(2,1)=amrex_bc_foextrap; this%beta%hi_bc(2,1)=amrex_bc_foextrap
          this%cond%lo_bc(2,1)=amrex_bc_foextrap; this%cond%hi_bc(2,1)=amrex_bc_foextrap
+         this%cond%lo_bc(2,2)=amrex_bc_foextrap; this%cond%hi_bc(2,2)=amrex_bc_foextrap
          this%diff%lo_bc(2,1)=amrex_bc_foextrap; this%diff%hi_bc(2,1)=amrex_bc_foextrap
       end if
       if (.not.amr%zper) then
          this%visc%lo_bc(3,1)=amrex_bc_foextrap; this%visc%hi_bc(3,1)=amrex_bc_foextrap
          this%beta%lo_bc(3,1)=amrex_bc_foextrap; this%beta%hi_bc(3,1)=amrex_bc_foextrap
          this%cond%lo_bc(3,1)=amrex_bc_foextrap; this%cond%hi_bc(3,1)=amrex_bc_foextrap
+         this%cond%lo_bc(3,2)=amrex_bc_foextrap; this%cond%hi_bc(3,2)=amrex_bc_foextrap
          this%diff%lo_bc(3,1)=amrex_bc_foextrap; this%diff%hi_bc(3,1)=amrex_bc_foextrap
       end if
 
@@ -1193,7 +1196,7 @@ contains
                   pFx(i,j,k,7)=pFx(i,j,k,7)+visc_f*(gradU(3,1)+gradU(1,3))
                   ! Phasic heat conduction flux (pure cells only)
                   if (all(pVF(i-1:i,j,k,1).gt.VFhi)) pFx(i,j,k,3)=pFx(i,j,k,3)+0.5_WP*sum(pCond(i-1:i,j,k,1))*dxi*(pTL(i,j,k,1)-pTL(i-1,j,k,1))
-                  if (all(pVF(i-1:i,j,k,1).lt.VFlo)) pFx(i,j,k,4)=pFx(i,j,k,4)+0.5_WP*sum(pCond(i-1:i,j,k,1))*dxi*(pTG(i,j,k,1)-pTG(i-1,j,k,1))
+                  if (all(pVF(i-1:i,j,k,1).lt.VFlo)) pFx(i,j,k,4)=pFx(i,j,k,4)+0.5_WP*sum(pCond(i-1:i,j,k,2))*dxi*(pTG(i,j,k,1)-pTG(i-1,j,k,1))
                   ! Vapor mass diffusion flux
                   GVFm=1.0_WP-pVF(i-1,j,k,1); GVFp=1.0_WP-pVF(i,j,k,1)
                   face_apt_g=0.0_WP
@@ -1272,7 +1275,7 @@ contains
                   pFy(i,j,k,7)=pFy(i,j,k,7)+visc_f*(gradU(3,2)+gradU(2,3))
                   ! Phasic heat conduction flux (pure cells only)
                   if (all(pVF(i,j-1:j,k,1).gt.VFhi)) pFy(i,j,k,3)=pFy(i,j,k,3)+0.5_WP*sum(pCond(i,j-1:j,k,1))*dyi*(pTL(i,j,k,1)-pTL(i,j-1,k,1))
-                  if (all(pVF(i,j-1:j,k,1).lt.VFlo)) pFy(i,j,k,4)=pFy(i,j,k,4)+0.5_WP*sum(pCond(i,j-1:j,k,1))*dyi*(pTG(i,j,k,1)-pTG(i,j-1,k,1))
+                  if (all(pVF(i,j-1:j,k,1).lt.VFlo)) pFy(i,j,k,4)=pFy(i,j,k,4)+0.5_WP*sum(pCond(i,j-1:j,k,2))*dyi*(pTG(i,j,k,1)-pTG(i,j-1,k,1))
                   ! Vapor mass diffusion flux
                   GVFm=1.0_WP-pVF(i,j-1,k,1); GVFp=1.0_WP-pVF(i,j,k,1)
                   face_apt_g=0.0_WP
@@ -1351,7 +1354,7 @@ contains
                   pFz(i,j,k,7)=pFz(i,j,k,7)+visc_f*(gradU(3,3)+gradU(3,3))+(beta_f-2.0_WP/3.0_WP*visc_f)*div
                   ! Phasic heat conduction flux (pure cells only)
                   if (all(pVF(i,j,k-1:k,1).gt.VFhi)) pFz(i,j,k,3)=pFz(i,j,k,3)+0.5_WP*sum(pCond(i,j,k-1:k,1))*dzi*(pTL(i,j,k,1)-pTL(i,j,k-1,1))
-                  if (all(pVF(i,j,k-1:k,1).lt.VFlo)) pFz(i,j,k,4)=pFz(i,j,k,4)+0.5_WP*sum(pCond(i,j,k-1:k,1))*dzi*(pTG(i,j,k,1)-pTG(i,j,k-1,1))
+                  if (all(pVF(i,j,k-1:k,1).lt.VFlo)) pFz(i,j,k,4)=pFz(i,j,k,4)+0.5_WP*sum(pCond(i,j,k-1:k,2))*dzi*(pTG(i,j,k,1)-pTG(i,j,k-1,1))
                   ! Vapor mass diffusion flux
                   GVFm=1.0_WP-pVF(i,j,k-1,1); GVFp=1.0_WP-pVF(i,j,k,1)
                   face_apt_g=0.0_WP
@@ -2124,7 +2127,7 @@ contains
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
       type(amrex_multifab) :: visc_t
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVisc_t,pU,pV,pW,pVisc,pVF,pRHOL,pRHOG
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVisc_t,pU,pV,pW,pVisc,pCond,pDiff,pVF,pRHOL,pRHOG
       real(WP) :: dxi,dyi,dzi,dx,dy,dz,max_visc,Cmodel,Aij,Bij,t0
       real(WP), dimension(1:3,1:3) :: gradU,betaij
       integer :: lvl,i,j,k,si,sj
@@ -2199,12 +2202,17 @@ contains
          do while(mfi%next())
             pVisc_t=>visc_t%dataptr(mfi)
             pVisc=>this%visc%mf(lvl)%dataptr(mfi)
+            pCond=>this%cond%mf(lvl)%dataptr(mfi)
+            pDiff=>this%diff%mf(lvl)%dataptr(mfi)
             pRHOL=>this%RHOL%mf(lvl)%dataptr(mfi)
             pRHOG=>this%RHOG%mf(lvl)%dataptr(mfi)
             pVF  =>this%VF%mf(lvl)%dataptr(mfi)
             bx=mfi%growntilebox(this%nover)
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
                pVisc(i,j,k,1)=pVisc(i,j,k,1)+pVisc_t(i,j,k,1)/(pVF(i,j,k,1)/max(pRHOL(i,j,k,1),this%rho_floor)+(1.0_WP-pVF(i,j,k,1))/max(pRHOG(i,j,k,1),this%rho_floor))
+               ! pCond(i,j,k,1)=pCond(i,j,k,1)+pRHOL(i,j,k,1)*cp_l*pVisc_t(i,j,k,1)/PrL
+               ! pCond(i,j,k,2)=pCond(i,j,k,2)+pRHOG(i,j,k,1)*cp_g*pVisc_t(i,j,k,1)/PrG
+               ! pDiff(i,j,k,1)=pDiff(i,j,k,1)+pRHOG(i,j,k,1)*pVisc_t(i,j,k,1)/ScV
             end do; end do; end do
          end do
          call this%amr%mfiter_destroy(mfi)
@@ -2261,7 +2269,7 @@ contains
                bx=mfi%tilebox()
                do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
                   rho=max(pQ(i,j,k,1)+pQ(i,j,k,2),this%rho_floor)
-                  viscmax=max(viscmax,pVisc(i,j,k,1)/rho,pBeta(i,j,k,1)/rho,pCond(i,j,k,1)/rho,pDiff(i,j,k,1)/rho)
+                  viscmax=max(viscmax,pVisc(i,j,k,1)/rho,pBeta(i,j,k,1)/rho,max(pCond(i,j,k,1),pCond(i,j,k,2))/rho,pDiff(i,j,k,1)/rho)
                end do; end do; end do
             end do
             call this%amr%mfiter_destroy(mfi)
@@ -2488,16 +2496,51 @@ contains
 
    !> Restore solver data from checkpoint
    subroutine restore_checkpoint(this,io,dirname,time)
-      use amrio_class, only: amrio
+      use amrio_class,      only: amrio
+      use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy,amrex_mfiter,amrex_mfiter_build,amrex_mfiter_destroy,amrex_box
+      use string,           only: str_long
       implicit none
       class(amrmpcomp), intent(inout) :: this
       class(amrio), intent(inout) :: io
       character(len=*), intent(in) :: dirname
       real(WP), intent(in) :: time
+      type(amrex_multifab) :: Qtmp
+      real(WP), contiguous, pointer, dimension(:,:,:,:) :: pQtmp,pQ
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      character(len=str_long) :: header_path
+      integer :: lvl,n,ncomp_file,i,j,k,iounit,dummy
       ! VOF data is restored via parent
       call this%amrvof%restore_checkpoint(io,dirname,time)
-      ! Restore flow data
-      call io%read_data(dirname,this%Q,'Q')
+      ! Restore Q level by level; handles legacy files with fewer than 8 components (no Yv)
+      do lvl=0,this%amr%nlevels-1
+         ! Read ncomp from VisMF header (line 3: version, how, ncomp, ...)
+         write(header_path,'(a,"/Level_",i0,"/Q_H")') trim(dirname),lvl
+         open(newunit=iounit,file=trim(header_path),status='old',action='read')
+         read(iounit,*) dummy   ! version
+         read(iounit,*) dummy   ! how
+         read(iounit,*) ncomp_file
+         close(iounit)
+         ! Build Qtmp with the correct ncomp to satisfy VisMF::Read assertion
+         call this%amr%mfab_build(lvl=lvl,mfab=Qtmp,ncomp=ncomp_file,nover=0)
+         call io%read_mfab(dirname,Qtmp,'Q',lvl)
+         call amrex_mfiter_build(mfi,Qtmp,tiling=.false.)
+         do while (mfi%next())
+            bx=mfi%tilebox()
+            pQtmp=>Qtmp%dataptr(mfi)
+            pQ   =>this%Q%mf(lvl)%dataptr(mfi)
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               do n=1,ncomp_file
+                  pQ(i,j,k,n)=pQtmp(i,j,k,n)
+               end do
+               do n=ncomp_file+1,this%Q%ncomp
+                  pQ(i,j,k,n)=0.0_WP
+               end do
+            end do; end do; end do
+         end do
+         call amrex_mfiter_destroy(mfi)
+         call amrex_multifab_destroy(Qtmp)
+      end do
       ! Fill ghost cells as io reads valid data only
       call this%Q%fill(time=time)
       ! Rebuild primitive variables

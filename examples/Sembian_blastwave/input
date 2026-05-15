@@ -31,8 +31,9 @@ HP pressure         : 5e7
 Liquid density              : 1000
 Liquid viscosity            : 9e-4
 Gas viscosity               : 1.27e-5
-Liquid thermal conductivity : 0
-Gas thermal conductivity    : 0
+Liquid Prandtl number       : 0
+Gas Prandtl number          : 0
+Vapor Schmidt number        : 0
 Liquid specific heat        : 1816
 Air specific heat           : 718
 Vapor specific heat         : 1040
@@ -52,9 +53,9 @@ Vapor etap                  : -2.34e4
 # Time integration
 Max dt   : 1e-8
 Max CFL  : 0.5
-Max time : 4e-4
+Max time : 2.00001E-04 ! 4e-4
 
 # Output
-Output period     : 1.0e-6
+Output period     : 1e-8 ! 1.0e-6
 Checkpoint period : 2.5e-5
-Restart from      : !restart/Sembian_blastwave_2.00001E-04
+Restart from      : restart/Sembian_blastwave_2.00001E-04
