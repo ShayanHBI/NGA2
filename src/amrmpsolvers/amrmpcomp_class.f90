@@ -2496,51 +2496,16 @@ contains
 
    !> Restore solver data from checkpoint
    subroutine restore_checkpoint(this,io,dirname,time)
-      use amrio_class,      only: amrio
-      use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy,amrex_mfiter,amrex_mfiter_build,amrex_mfiter_destroy,amrex_box
-      use string,           only: str_long
+      use amrio_class, only: amrio
       implicit none
       class(amrmpcomp), intent(inout) :: this
       class(amrio), intent(inout) :: io
       character(len=*), intent(in) :: dirname
       real(WP), intent(in) :: time
-      type(amrex_multifab) :: Qtmp
-      real(WP), contiguous, pointer, dimension(:,:,:,:) :: pQtmp,pQ
-      type(amrex_mfiter) :: mfi
-      type(amrex_box) :: bx
-      character(len=str_long) :: header_path
-      integer :: lvl,n,ncomp_file,i,j,k,iounit,dummy
       ! VOF data is restored via parent
       call this%amrvof%restore_checkpoint(io,dirname,time)
-      ! Restore Q level by level; handles legacy files with fewer than 8 components (no Yv)
-      do lvl=0,this%amr%nlevels-1
-         ! Read ncomp from VisMF header (line 3: version, how, ncomp, ...)
-         write(header_path,'(a,"/Level_",i0,"/Q_H")') trim(dirname),lvl
-         open(newunit=iounit,file=trim(header_path),status='old',action='read')
-         read(iounit,*) dummy   ! version
-         read(iounit,*) dummy   ! how
-         read(iounit,*) ncomp_file
-         close(iounit)
-         ! Build Qtmp with the correct ncomp to satisfy VisMF::Read assertion
-         call this%amr%mfab_build(lvl=lvl,mfab=Qtmp,ncomp=ncomp_file,nover=0)
-         call io%read_mfab(dirname,Qtmp,'Q',lvl)
-         call amrex_mfiter_build(mfi,Qtmp,tiling=.false.)
-         do while (mfi%next())
-            bx=mfi%tilebox()
-            pQtmp=>Qtmp%dataptr(mfi)
-            pQ   =>this%Q%mf(lvl)%dataptr(mfi)
-            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-               do n=1,ncomp_file
-                  pQ(i,j,k,n)=pQtmp(i,j,k,n)
-               end do
-               do n=ncomp_file+1,this%Q%ncomp
-                  pQ(i,j,k,n)=0.0_WP
-               end do
-            end do; end do; end do
-         end do
-         call amrex_mfiter_destroy(mfi)
-         call amrex_multifab_destroy(Qtmp)
-      end do
+      ! Restore flow data
+      call io%read_data(dirname,this%Q,'Q')
       ! Fill ghost cells as io reads valid data only
       call this%Q%fill(time=time)
       ! Rebuild primitive variables
