@@ -51,7 +51,9 @@ module amrmpcomp_class
       type(amrdata) :: C                 !< Speed of sound
       type(amrdata) :: visc              !< Dynamic viscosity
       type(amrdata) :: beta              !< Bulk viscosity
-      type(amrdata) :: diff              !< Heat diffusivity
+      type(amrdata) :: cond              !< Phasic thermal conductivity: comp 1 = liquid, comp 2 = gas
+      type(amrdata) :: diff              !< Vapor mass diffusivity (rho_v*D_v)
+      type(amrdata) :: Yv               !< Gas-phase vapor mass fraction
       real(WP) :: sigma                  !< Surface tension coefficient
 
       ! CFL numbers
@@ -66,6 +68,7 @@ module amrmpcomp_class
       real(WP) :: PLmin=0.0_WP,PLmax=0.0_WP,PGmin=0.0_WP,PGmax=0.0_WP
       real(WP) :: TLmin=0.0_WP,TLmax=0.0_WP,TGmin=0.0_WP,TGmax=0.0_WP
       real(WP) :: Cmin=0.0_WP,Cmax=0.0_WP
+      real(WP) :: Yvmin=0.0_WP,Yvmax=0.0_WP
       real(WP) :: dPmax=0.0_WP
       real(WP) :: rhoKint=0.0_WP
 
@@ -177,30 +180,33 @@ module amrmpcomp_class
       end subroutine mpcomp_vofbc_iface
    end interface
 
-   !> Abstract interface for EoS: P=P(rho,I)
+   !> Abstract interface for EoS: P=P(rho,I[,Yv])
    abstract interface
-      pure real(WP) function eos_P_iface(rho,I)
+      real(WP) function eos_P_iface(rho,I,Yv)
          import :: WP
          real(WP), intent(in) :: rho
          real(WP), intent(in) :: I
+         real(WP), intent(in), optional :: Yv
       end function eos_P_iface
    end interface
 
-   !> Abstract interface for EoS: C=C(rho,P)
+   !> Abstract interface for EoS: C=C(rho,P[,Yv])
    abstract interface
-      pure real(WP) function eos_C_iface(rho,P)
+      real(WP) function eos_C_iface(rho,P,Yv)
          import :: WP
          real(WP), intent(in) :: rho
          real(WP), intent(in) :: P
+         real(WP), intent(in), optional :: Yv
       end function eos_C_iface
    end interface
 
-   !> Abstract interface for EoS: T=T(rho,P)
+   !> Abstract interface for EoS: T=T(rho,P[,Yv])
    abstract interface
-      pure real(WP) function eos_T_iface(rho,P)
+      real(WP) function eos_T_iface(rho,P,Yv)
          import :: WP
          real(WP), intent(in) :: rho
          real(WP), intent(in) :: P
+         real(WP), intent(in), optional :: Yv
       end function eos_T_iface
    end interface
 
@@ -320,8 +326,8 @@ contains
       class(amrgrid), target, intent(in) :: amr
       character(len=*), intent(in), optional :: name
 
-      ! Initialize amrmpflow parent with 7 conserved components and at least 2 ghost cells
-      this%nQ=7; this%nover=max(this%nover,2)
+      ! Initialize amrmpflow parent with 8 conserved components and at least 2 ghost cells
+      this%nQ=8; this%nover=max(this%nover,2)
       call this%amrmpflow%initialize(amr,name); call this%set_parent()
 
       ! Initialize mixture velocity
@@ -343,21 +349,29 @@ contains
       ! Initialize physical properties (Neumann BCs on those)
       call this%visc%initialize(amr,name='visc',ncomp=1,ng=this%nover); this%visc%parent=>this
       call this%beta%initialize(amr,name='beta',ncomp=1,ng=this%nover); this%beta%parent=>this
+      call this%cond%initialize(amr,name='cond',ncomp=2,ng=this%nover); this%cond%parent=>this
       call this%diff%initialize(amr,name='diff',ncomp=1,ng=this%nover); this%diff%parent=>this
+      call this%Yv%initialize  (amr,name='Yv'  ,ncomp=1,ng=this%nover); this%Yv%parent  =>this
       if (.not.amr%xper) then
          this%visc%lo_bc(1,1)=amrex_bc_foextrap; this%visc%hi_bc(1,1)=amrex_bc_foextrap
          this%beta%lo_bc(1,1)=amrex_bc_foextrap; this%beta%hi_bc(1,1)=amrex_bc_foextrap
+         this%cond%lo_bc(1,:)=amrex_bc_foextrap; this%cond%hi_bc(1,:)=amrex_bc_foextrap
          this%diff%lo_bc(1,1)=amrex_bc_foextrap; this%diff%hi_bc(1,1)=amrex_bc_foextrap
+         this%Yv%lo_bc(1,1)  =amrex_bc_foextrap; this%Yv%hi_bc(1,1)  =amrex_bc_foextrap
       end if
       if (.not.amr%yper) then
          this%visc%lo_bc(2,1)=amrex_bc_foextrap; this%visc%hi_bc(2,1)=amrex_bc_foextrap
          this%beta%lo_bc(2,1)=amrex_bc_foextrap; this%beta%hi_bc(2,1)=amrex_bc_foextrap
+         this%cond%lo_bc(2,:)=amrex_bc_foextrap; this%cond%hi_bc(2,:)=amrex_bc_foextrap
          this%diff%lo_bc(2,1)=amrex_bc_foextrap; this%diff%hi_bc(2,1)=amrex_bc_foextrap
+         this%Yv%lo_bc(2,1)  =amrex_bc_foextrap; this%Yv%hi_bc(2,1)  =amrex_bc_foextrap
       end if
       if (.not.amr%zper) then
          this%visc%lo_bc(3,1)=amrex_bc_foextrap; this%visc%hi_bc(3,1)=amrex_bc_foextrap
          this%beta%lo_bc(3,1)=amrex_bc_foextrap; this%beta%hi_bc(3,1)=amrex_bc_foextrap
+         this%cond%lo_bc(3,:)=amrex_bc_foextrap; this%cond%hi_bc(3,:)=amrex_bc_foextrap
          this%diff%lo_bc(3,1)=amrex_bc_foextrap; this%diff%hi_bc(3,1)=amrex_bc_foextrap
+         this%Yv%lo_bc(3,1)  =amrex_bc_foextrap; this%Yv%hi_bc(3,1)  =amrex_bc_foextrap
       end if
 
       ! Initialize pressure solver if requested
@@ -396,7 +410,8 @@ contains
       ! Mixture properties
       call this%C%finalize()
       ! Physical properties
-      call this%visc%finalize(); call this%beta%finalize(); call this%diff%finalize()
+      call this%visc%finalize(); call this%beta%finalize()
+      call this%cond%finalize(); call this%diff%finalize(); call this%Yv%finalize()
       ! Nullify pointers
       nullify(this%user_init); nullify(this%user_tagging); nullify(this%user_bc); nullify(this%user_vofbc)
       nullify(this%getPL); nullify(this%getCL); nullify(this%getTL)
@@ -432,7 +447,9 @@ contains
       ! Reset physical properties
       call this%visc%reset_level(lvl,ba,dm)
       call this%beta%reset_level(lvl,ba,dm)
+      call this%cond%reset_level(lvl,ba,dm)
       call this%diff%reset_level(lvl,ba,dm)
+      call this%Yv%reset_level(lvl,ba,dm)
       ! Zero out everything
       call this%UVW%setval(val=0.0_WP,lvl=lvl)
       call this%RHOL%setval(val=0.0_WP,lvl=lvl); call this%RHOG%setval(val=0.0_WP,lvl=lvl)
@@ -444,7 +461,9 @@ contains
       ! Reset physical properties
       call this%visc%setval(val=0.0_WP,lvl=lvl)
       call this%beta%setval(val=0.0_WP,lvl=lvl)
+      call this%cond%setval(val=0.0_WP,lvl=lvl)
       call this%diff%setval(val=0.0_WP,lvl=lvl)
+      call this%Yv%setval(val=0.0_WP,lvl=lvl)
    end subroutine on_init
 
    !> Override on_coarse: create new fine level from coarse using conservative interpolation
@@ -466,7 +485,9 @@ contains
       call this%C%reset_level(lvl,ba,dm)
       call this%visc%reset_level(lvl,ba,dm)
       call this%beta%reset_level(lvl,ba,dm)
+      call this%cond%reset_level(lvl,ba,dm)
       call this%diff%reset_level(lvl,ba,dm)
+      call this%Yv%reset_level(lvl,ba,dm)
    end subroutine on_coarse
 
    !> Override on_remake: migrate data on regrid using conservative interpolation
@@ -488,7 +509,9 @@ contains
       call this%C%reset_level(lvl,ba,dm)
       call this%visc%reset_level(lvl,ba,dm)
       call this%beta%reset_level(lvl,ba,dm)
+      call this%cond%reset_level(lvl,ba,dm)
       call this%diff%reset_level(lvl,ba,dm)
+      call this%Yv%reset_level(lvl,ba,dm)
    end subroutine on_remake
 
    !> Override on_clear: delete level
@@ -507,7 +530,9 @@ contains
       call this%C%clear_level(lvl)
       call this%visc%clear_level(lvl)
       call this%beta%clear_level(lvl)
+      call this%cond%clear_level(lvl)
       call this%diff%clear_level(lvl)
+      call this%Yv%clear_level(lvl)
    end subroutine on_clear
 
    !> Override post_regrid: average down for C/F consistency
@@ -1053,13 +1078,13 @@ contains
       real(WP) :: t0
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pUVW
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pUVW,pYv
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pRHOL,pRHOG,pIL,pIG,pPL,pPG,pTL,pTG,pC
-      real(WP) :: irho,CL,CG
+      real(WP) :: irho,CL,CG,Yv_local
       ! Start timer
       t0=MPI_Wtime()
       ! Check passed Q is as expected
-      if (Q%ncomp.ne.7) call die('[amrmpcomp get_primitive] Q must have 7 components')
+      if (Q%ncomp.ne.8) call die('[amrmpcomp get_primitive] Q must have 8 components')
       if (Q%ng.lt.this%nover) call die('[amrmpcomp get_primitive] Q must have at least nover ghost cells')
       ! Check EoS functions are set
       if (.not.associated(this%getPL)) call die('[amrmpcomp get_primitive] getPL not set')
@@ -1085,6 +1110,7 @@ contains
             pTL  =>this%TL%mf(lvl)%dataptr(mfi)
             pTG  =>this%TG%mf(lvl)%dataptr(mfi)
             pC   =>this%C%mf(lvl)%dataptr(mfi)
+            pYv  =>this%Yv%mf(lvl)%dataptr(mfi)
             ! Loop over grown tiles
             bx=mfi%growntilebox(this%nover)
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
@@ -1111,14 +1137,17 @@ contains
                if (pVF(i,j,k,1).le.VFhi.and.pQ(i,j,k,2).gt.0.0_WP.and.pQ(i,j,k,4).gt.0.0_WP) then
                   pRHOG(i,j,k,1)=pQ(i,j,k,2)/(1.0_WP-pVF(i,j,k,1))
                   pIG  (i,j,k,1)=pQ(i,j,k,4)/pQ(i,j,k,2)
-                  pPG  (i,j,k,1)=this%getPG(pRHOG(i,j,k,1),pIG(i,j,k,1))
-                  pTG  (i,j,k,1)=this%getTG(pRHOG(i,j,k,1),pPG(i,j,k,1))
-                  CG            =this%getCG(pRHOG(i,j,k,1),pPG(i,j,k,1))
+                  Yv_local       =pQ(i,j,k,8)/max(pQ(i,j,k,2),tiny(1.0_WP))
+                  pYv  (i,j,k,1)=Yv_local
+                  pPG  (i,j,k,1)=this%getPG(pRHOG(i,j,k,1),pIG(i,j,k,1),Yv=Yv_local)
+                  pTG  (i,j,k,1)=this%getTG(pRHOG(i,j,k,1),pPG(i,j,k,1),Yv=Yv_local)
+                  CG            =this%getCG(pRHOG(i,j,k,1),pPG(i,j,k,1),Yv=Yv_local)
                else
                   pRHOG(i,j,k,1)=0.0_WP
                   pIG  (i,j,k,1)=0.0_WP
                   pPG  (i,j,k,1)=0.0_WP
                   pTG  (i,j,k,1)=0.0_WP
+                  pYv  (i,j,k,1)=0.0_WP
                   CG            =0.0_WP
                end if
                ! Get mixture speed of sound
@@ -2281,7 +2310,7 @@ contains
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
       integer :: lvl,i,j,k,ierr
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pUVW,pVisc,pBeta,pDiff,pVF,pPL,pPG,pC,pTL,pTG
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pUVW,pVisc,pBeta,pCond,pDiff,pVF,pPL,pPG,pC,pTL,pTG
       real(WP) :: dxi,dyi,dzi,rho,viscmax,conv,pgrad
       real(WP) :: Pmix_ip,Pmix_im,Pmix_jp,Pmix_jm,Pmix_kp,Pmix_km
       ! Get convective CFL from parent
@@ -2304,6 +2333,7 @@ contains
             pUVW =>this%UVW%mf(lvl)%dataptr(mfi)
             pVisc=>this%visc%mf(lvl)%dataptr(mfi)
             pBeta=>this%beta%mf(lvl)%dataptr(mfi)
+            pCond=>this%cond%mf(lvl)%dataptr(mfi)
             pDiff=>this%diff%mf(lvl)%dataptr(mfi)
             pVF  =>this%VF%mf(lvl)%dataptr(mfi)
             pPL  =>this%PL%mf(lvl)%dataptr(mfi)
@@ -2319,7 +2349,8 @@ contains
                ! Viscous CFL
                viscmax=max(pVisc(i,j,k,1)/rho, &
                &           pBeta(i,j,k,1)/rho, &
-               &           pDiff(i,j,k,1)*(pVF(i,j,k,1)*pTL(i,j,k,1)+(1.0_WP-pVF(i,j,k,1))*pTG(i,j,k,1))/max(pQ(i,j,k,3)+pQ(i,j,k,4),this%rho_floor))
+               &           max(pCond(i,j,k,1),pCond(i,j,k,2))/rho, &
+               &           pDiff(i,j,k,1)/rho)
                if (this%amr%nx.gt.1) this%CFLv_x=max(this%CFLv_x,4.0_WP*viscmax*dt*dxi**2)
                if (this%amr%ny.gt.1) this%CFLv_y=max(this%CFLv_y,4.0_WP*viscmax*dt*dyi**2)
                if (this%amr%nz.gt.1) this%CFLv_z=max(this%CFLv_z,4.0_WP*viscmax*dt*dzi**2)
@@ -2393,7 +2424,7 @@ contains
          type(amrex_box) :: bx
          type(amrex_imultifab) :: mask
          integer, dimension(:,:,:,:), contiguous, pointer :: pMask
-         real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pRHOL,pRHOG,pIL,pIG,pPL,pPG,pTL,pTG
+         real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pRHOL,pRHOG,pIL,pIG,pPL,pPG,pTL,pTG,pYv
          integer :: i,j,k
          ! Initialize extrema
          this%RHOLmin=huge(1.0_WP); this%RHOLmax=-huge(1.0_WP); this%RHOGmin=huge(1.0_WP); this%RHOGmax=-huge(1.0_WP)
@@ -2401,6 +2432,7 @@ contains
          this%PLmin=huge(1.0_WP); this%PLmax=-huge(1.0_WP); this%PGmin=huge(1.0_WP); this%PGmax=-huge(1.0_WP)
          this%TLmin=huge(1.0_WP); this%TLmax=-huge(1.0_WP); this%TGmin=huge(1.0_WP); this%TGmax=-huge(1.0_WP)
          this%Cmin=huge(1.0_WP); this%Cmax=-huge(1.0_WP)
+         this%Yvmin=huge(1.0_WP); this%Yvmax=-huge(1.0_WP)
          this%dPmax=0.0_WP
          ! Traverse levels
          do lvl=0,this%amr%clvl()
@@ -2424,6 +2456,7 @@ contains
                pIL=>this%IL%mf(lvl)%dataptr(mfi); pIG=>this%IG%mf(lvl)%dataptr(mfi)
                pPL=>this%PL%mf(lvl)%dataptr(mfi); pPG=>this%PG%mf(lvl)%dataptr(mfi)
                pTL=>this%TL%mf(lvl)%dataptr(mfi); pTG=>this%TG%mf(lvl)%dataptr(mfi)
+               pYv=>this%Yv%mf(lvl)%dataptr(mfi)
                if (lvl.lt.this%amr%clvl()) pMask=>mask%dataptr(mfi)
                ! Loop over interior tiles
                bx=mfi%tilebox()
@@ -2443,6 +2476,7 @@ contains
                      this%IGmin  =min(this%IGmin  ,pIG  (i,j,k,1)); this%IGmax  =max(this%IGmax  ,pIG  (i,j,k,1))
                      this%PGmin  =min(this%PGmin  ,pPG  (i,j,k,1)); this%PGmax  =max(this%PGmax  ,pPG  (i,j,k,1))
                      this%TGmin  =min(this%TGmin  ,pTG  (i,j,k,1)); this%TGmax  =max(this%TGmax  ,pTG  (i,j,k,1))
+                     this%Yvmin  =min(this%Yvmin  ,pYv  (i,j,k,1)); this%Yvmax  =max(this%Yvmax  ,pYv  (i,j,k,1))
                   end if
                   ! Pressure gap in mixed cells
                   if (pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi) then
@@ -2463,6 +2497,7 @@ contains
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%PGmin  ,1,MPI_REAL_WP,MPI_MIN,this%amr%comm,ierr); call MPI_ALLREDUCE(MPI_IN_PLACE,this%PGmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%TGmin  ,1,MPI_REAL_WP,MPI_MIN,this%amr%comm,ierr); call MPI_ALLREDUCE(MPI_IN_PLACE,this%TGmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%dPmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
+         call MPI_ALLREDUCE(MPI_IN_PLACE,this%Yvmin  ,1,MPI_REAL_WP,MPI_MIN,this%amr%comm,ierr); call MPI_ALLREDUCE(MPI_IN_PLACE,this%Yvmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
       end block phasic_extrema
 
       ! Kinetic energy integral: 0.5 * rho * (U^2 + V^2 + W^2) * dV
