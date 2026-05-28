@@ -46,6 +46,7 @@ module amrex_interface
    !=====================================================================
    ! FillPatch Operations
    !=====================================================================
+   public :: amrmfab_parallel_add
    public :: amrmfab_fillpatch_single
    public :: amrmfab_fillpatch_two
    public :: amrmfab_fillcoarsepatch
@@ -280,26 +281,26 @@ module amrex_interface
 
       !> FillPatch for level 0 (single level, physical BCs only)
       subroutine amrmfab_fillpatch_single_c(mf,t_old,mf_old,t_new,mf_new, &
-      &   geom,solver_ctx,bc_dispatch,time,scomp,dcomp,ncomp) &
+      &   geom,solver_ctx,bc_dispatch,time,scomp,dcomp,ncomp,nghost) &
       &   bind(c, name='amrmfab_fillpatch_single')
          import :: c_ptr,c_funptr,c_double,c_int
          type(c_ptr), value :: mf,mf_old,mf_new,geom,solver_ctx
          type(c_funptr), value :: bc_dispatch
          real(c_double), value :: t_old,t_new,time
-         integer(c_int), value :: scomp,dcomp,ncomp
+         integer(c_int), value :: scomp,dcomp,ncomp,nghost
       end subroutine amrmfab_fillpatch_single_c
 
       !> FillPatch for fine levels (two-level interpolation + BCs)
       subroutine amrmfab_fillpatch_two_c(mf,t_old_c,mf_old_c,t_new_c,mf_new_c,geom_c, &
       &   t_old_f,mf_old_f,t_new_f,mf_new_f,geom_f,solver_ctx,bc_dispatch, &
-      &   time,scomp,dcomp,ncomp,ref_ratio,interp_type,lo_bc,hi_bc,nbc) &
+      &   time,scomp,dcomp,ncomp,ref_ratio,interp_type,lo_bc,hi_bc,nbc,nghost) &
       &   bind(c, name='amrmfab_fillpatch_two')
          import :: c_ptr,c_funptr,c_double,c_int
          type(c_ptr), value :: mf,mf_old_c,mf_new_c,geom_c
          type(c_ptr), value :: mf_old_f,mf_new_f,geom_f,solver_ctx
          type(c_funptr), value :: bc_dispatch
          real(c_double), value :: t_old_c,t_new_c,t_old_f,t_new_f,time
-         integer(c_int), value :: scomp,dcomp,ncomp,interp_type,nbc
+         integer(c_int), value :: scomp,dcomp,ncomp,interp_type,nbc,nghost
          integer(c_int), intent(in) :: ref_ratio(3)
          integer(c_int), intent(in) :: lo_bc(*),hi_bc(*)
       end subroutine amrmfab_fillpatch_two_c
@@ -343,7 +344,7 @@ module amrex_interface
       &   t_old_f, mf_old_f_u, mf_old_f_v, mf_old_f_w, &
       &   t_new_f, mf_new_f_u, mf_new_f_v, mf_new_f_w, geom_f, &
       &   ctx_u, ctx_v, ctx_w, bc_u, bc_v, bc_w, &
-      &   scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc) &
+      &   scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc, nghost) &
       &   bind(c, name='amrmfab_fillpatch_two_faces')
          import :: c_ptr, c_funptr, c_double, c_int
          type(c_ptr), value :: mf_u, mf_v, mf_w
@@ -355,7 +356,7 @@ module amrex_interface
          type(c_ptr), value :: ctx_u, ctx_v, ctx_w
          type(c_funptr), value :: bc_u, bc_v, bc_w
          real(c_double), value :: time, t_old_c, t_new_c, t_old_f, t_new_f
-         integer(c_int), value :: scomp, dcomp, ncomp, interp_type
+         integer(c_int), value :: scomp, dcomp, ncomp, interp_type, nghost
          integer(c_int), intent(in) :: ref_ratio(3)
          integer(c_int), intent(in) :: lo_bc(*), hi_bc(*)
       end subroutine amrmfab_fillpatch_two_faces_c
@@ -578,6 +579,14 @@ module amrex_interface
          integer(c_int), value :: ngcrse
       end subroutine amrmfab_average_down_node_c
 
+      !> ParallelCopy with ADD semantics
+      subroutine amrmfab_parallel_add_c(dst,src,srccomp,dstcomp,ncomp,srcng,dstng,geom) &
+      &  bind(c,name='amrmfab_parallel_add')
+         import :: c_ptr,c_int
+         type(c_ptr), value :: dst,src,geom
+         integer(c_int), value :: srccomp,dstcomp,ncomp,srcng,dstng
+      end subroutine amrmfab_parallel_add_c
+
       !> Restrict-SUM all fine deposits into the coarse level (lvl+1 → lvl)
       subroutine amrmfab_sum_downto_c(fine_mf, crse_mf, crse_geom, fine_geom, ref_ratio) &
          bind(c, name='amrmfab_sum_downto')
@@ -703,6 +712,16 @@ contains
       end if
    end subroutine amrmfab_average_down_node
 
+   !> ParallelCopy with ADD semantics — accumulates src into dst instead of overwriting
+   subroutine amrmfab_parallel_add(dst,src,srccomp,dstcomp,ncomp,srcng,dstng,geom)
+      use amrex_amr_module, only: amrex_multifab,amrex_geometry
+      type(amrex_multifab), intent(inout) :: dst
+      type(amrex_multifab), intent(in) :: src
+      type(amrex_geometry), intent(in) :: geom
+      integer, intent(in) :: srccomp,dstcomp,ncomp,srcng,dstng
+      call amrmfab_parallel_add_c(dst%p,src%p,srccomp-1,dstcomp-1,ncomp,srcng,dstng,geom%p)
+   end subroutine amrmfab_parallel_add
+
    !> Restrict-SUM fine deposits (valid+ghost) into the coarse level.
    !> Delegates to AMReX's sum_fine_to_coarse; requires nGrow % ratio == 0.
    !> Call after SumBoundary; average_down afterward fixes double-counted cells.
@@ -792,7 +811,7 @@ contains
    &   t_old_f, mf_old_f_u, mf_old_f_v, mf_old_f_w, &
    &   t_new_f, mf_new_f_u, mf_new_f_v, mf_new_f_w, geom_f, &
    &   ctx_u, ctx_v, ctx_w, bc_u, bc_v, bc_w, &
-   &   scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc)
+   &   scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc, nghost)
       use iso_c_binding, only: c_ptr, c_funptr
       use amrex_amr_module, only: amrex_multifab, amrex_geometry
       type(amrex_multifab), intent(inout) :: mf_u, mf_v, mf_w
@@ -807,18 +826,21 @@ contains
       integer, intent(in) :: scomp, dcomp, ncomp, interp_type
       integer, intent(in) :: ref_ratio(3)
       integer, intent(in) :: lo_bc(*), hi_bc(*)
+      integer, intent(in), optional :: nghost
+      integer :: ng
+      ng = -1; if (present(nghost)) ng = nghost
       call amrmfab_fillpatch_two_faces_c(mf_u%p, mf_v%p, mf_w%p, time, &
       &   t_old_c, mf_old_c_u%p, mf_old_c_v%p, mf_old_c_w%p, &
       &   t_new_c, mf_new_c_u%p, mf_new_c_v%p, mf_new_c_w%p, geom_c%p, &
       &   t_old_f, mf_old_f_u%p, mf_old_f_v%p, mf_old_f_w%p, &
       &   t_new_f, mf_new_f_u%p, mf_new_f_v%p, mf_new_f_w%p, geom_f%p, &
       &   ctx_u, ctx_v, ctx_w, bc_u, bc_v, bc_w, &
-      &   scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc)
+      &   scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc, ng)
    end subroutine amrmfab_fillpatch_two_faces
 
    !> FillPatch for level 0 (single level, physical BCs only)
    subroutine amrmfab_fillpatch_single(mf, t_old, mf_old, t_new, mf_new, &
-   &   geom, solver_ctx, bc_dispatch, time, scomp, dcomp, ncomp)
+   &   geom, solver_ctx, bc_dispatch, time, scomp, dcomp, ncomp, nghost)
       use iso_c_binding, only: c_ptr, c_funptr
       use amrex_amr_module, only: amrex_multifab, amrex_geometry
       type(amrex_multifab), intent(inout) :: mf
@@ -828,14 +850,17 @@ contains
       type(c_funptr), intent(in) :: bc_dispatch
       real(8), intent(in) :: t_old, t_new, time
       integer, intent(in) :: scomp, dcomp, ncomp
+      integer, intent(in), optional :: nghost
+      integer :: ng
+      ng = -1; if (present(nghost)) ng = nghost
       call amrmfab_fillpatch_single_c(mf%p, t_old, mf_old%p, t_new, mf_new%p, &
-      &   geom%p, solver_ctx, bc_dispatch, time, scomp, dcomp, ncomp)
+      &   geom%p, solver_ctx, bc_dispatch, time, scomp, dcomp, ncomp, ng)
    end subroutine amrmfab_fillpatch_single
 
    !> FillPatch for fine levels (two-level interpolation + BCs)
    subroutine amrmfab_fillpatch_two(mf, t_old_c, mf_old_c, t_new_c, mf_new_c, geom_c, &
    &   t_old_f, mf_old_f, t_new_f, mf_new_f, geom_f, solver_ctx, bc_dispatch, &
-   &   time, scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc, nbc)
+   &   time, scomp, dcomp, ncomp, ref_ratio, interp_type, lo_bc, hi_bc, nbc, nghost)
       use iso_c_binding, only: c_ptr, c_funptr
       use amrex_amr_module, only: amrex_multifab, amrex_geometry
       type(amrex_multifab), intent(inout) :: mf
@@ -847,10 +872,13 @@ contains
       integer, intent(in) :: scomp, dcomp, ncomp, interp_type, nbc
       integer, intent(in) :: ref_ratio(3)
       integer, intent(in) :: lo_bc(*), hi_bc(*)
+      integer, intent(in), optional :: nghost
+      integer :: ng
+      ng = -1; if (present(nghost)) ng = nghost
       call amrmfab_fillpatch_two_c(mf%p, t_old_c, mf_old_c%p, t_new_c, mf_new_c%p, &
       &   geom_c%p, t_old_f, mf_old_f%p, t_new_f, mf_new_f%p, geom_f%p, &
       &   solver_ctx, bc_dispatch, time, scomp, dcomp, ncomp, ref_ratio, &
-      &   interp_type, lo_bc, hi_bc, nbc)
+      &   interp_type, lo_bc, hi_bc, nbc, ng)
    end subroutine amrmfab_fillpatch_two
 
    !> FillCoarsePatch - fill fine level from coarse only (for new levels)
