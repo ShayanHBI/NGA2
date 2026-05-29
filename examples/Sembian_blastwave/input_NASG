@@ -59,6 +59,6 @@ Max CFL    : 0.5
 Max time   : 0.001
 
 # Output
-Output period     : 2e-6
+Output period     : 1e-5
 !Checkpoint period : 4e-5
-Restart from      : restart/Sembian_blastwave_NASG_1.90094E-04
+Restart from      : restart/Sembian_blastwave_1.90000E-04

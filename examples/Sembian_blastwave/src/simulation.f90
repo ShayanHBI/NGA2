@@ -1376,7 +1376,7 @@ contains
 
       ! Initialize AMR grid
       create_amrgrid: block
-         amr%name='Sembian_blastwave_NASG'
+         amr%name='Sembian_blastwave'
          call param_read('Base nx',amr%nx)
          call param_read('Base ny',amr%ny)
          call param_read('Base nz',amr%nz)
@@ -1425,8 +1425,12 @@ contains
       create_solver: block
          use amrex_amr_module, only: amrex_bc_foextrap, amrex_bc_reflect_even, amrex_bc_reflect_odd
          use amrmpcomp_class, only: BC_REFLECT
+         use amrdata_class,   only: interp_face_lin
+         ! Use piecewise-linear face interpolation — FaceDivFree requires ratio==2 in all dirs
+         ! but this case is quasi-2D with ref_ratio_z=1
+         fs%interp_vel=interp_face_lin
          ! Create flow solver
-         call fs%initialize(amr=amr,name='Sembian_blastwave_NASG')
+         call fs%initialize(amr=amr,name='Sembian_blastwave')
          ! Provide thermodynamic model (6 EOS pointers)
          fs%getPL=>get_PL; fs%getCL=>get_CL; fs%getTL=>get_TL
          fs%getPG=>get_PG; fs%getCG=>get_CG; fs%getTG=>get_TG
@@ -1509,6 +1513,10 @@ contains
                call fs%Q%fill(time=time%t)
                call fs%get_primitive(fs%Q)
             end block init_Yv_restart
+            call fs%build_subVF()
+            call fs%get_face_velocity()
+            call fs%average_down_velocity()
+            call fs%fill_velocity(time=time%t)
          end if
          ! Compute viscosities
          call get_viscosities()
@@ -1534,7 +1542,7 @@ contains
       ! Initialize visualization
       create_viz: block
          ! Create visualization object
-         call viz%initialize(amr,'Sembian_blastwave_NASG',use_hdf5=.false.)
+         call viz%initialize(amr,'Sembian_blastwave',use_hdf5=.false.)
          call viz%add_scalar(fs%VF,1,'VF')
          call viz%add_scalar(fs%RHOL,1,'RHOL')
          call viz%add_scalar(fs%RHOG,1,'RHOG')
@@ -1680,24 +1688,32 @@ contains
          call fs%Qold%copy(src=fs%Q)
          call fs%store_old()
 
-         ! ===== RK2 Stage 1: dQdt = f(t, Q) =====
-         call fs%get_dQdt(Q=fs%Q,dQdt=dQdt,dt=0.5_WP*time%dt,time=time%t)
-
-         ! ===== RK2 Stage 2: Q* = Qold + dt/2*dQdt, dQdt* = f(t+dt/2, Q*) =====
+         ! ===== RK2 Stage 1: advective flux at t =====
+         call fs%get_dQdt(dQdt=dQdt,dt=0.5_WP*time%dt,time=time%t)
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=0.5_WP*time%dt,src=dQdt)
          call fs%Q%average_down(); call fs%Q%fill(time=time%t+0.5_WP*time%dt)
+         call fs%build_plic(time%t)
          call fs%apply_relax(time=time%t+0.5_WP*time%dt)
-         call fs%get_dQdt(Q=fs%Q,dQdt=dQdt,dt=time%dt,time=time%t+0.5_WP*time%dt)
+         call fs%get_primitive(fs%Q)
+         call fs%build_subVF()
+         call fs%get_face_velocity()
+         call fs%add_phasic_pressure(scale=0.5_WP*time%dt)
+         call fs%Q%average_down(); call fs%Q%fill(time=time%t+0.5_WP*time%dt)
+         call fs%average_down_velocity(); call fs%fill_velocity(time=time%t+0.5_WP*time%dt)
+         call fs%get_primitive(fs%Q)
 
-         ! ===== RK2 Final: Q = Qold + dt*dQdt* =====
+         ! ===== RK2 Stage 2: advective flux at midpoint =====
+         call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t+0.5_WP*time%dt)
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=time%dt,src=dQdt)
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
-         call fs%apply_relax(time=time%t)
-
-         ! Rebuild PLIC
          call fs%build_plic(time%t)
-
-         ! Recompute primitive variables
+         call fs%apply_relax(time=time%t)
+         call fs%get_primitive(fs%Q)
+         call fs%build_subVF()
+         call fs%get_face_velocity()
+         call fs%add_phasic_pressure(scale=time%dt)
+         call fs%Q%average_down(); call fs%Q%fill(time=time%t)
+         call fs%average_down_velocity(); call fs%fill_velocity(time=time%t)
          call fs%get_primitive(fs%Q)
 
          ! Regrid if event triggers
@@ -1725,7 +1741,7 @@ contains
          if (save_evt%occurs()) then
             save_checkpoint: block
                use string, only: rtoa
-               call io%write(dirname='restart/Sembian_blastwave_NASG_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
+               call io%write(dirname='restart/Sembian_blastwave_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
             end block save_checkpoint
          end if
 
@@ -1741,7 +1757,7 @@ contains
       ! Save the final checkpoint
       save_final_checkpoint: block
          use string, only: rtoa
-         call io%write(dirname='restart/Sembian_blastwave_NASG_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
+         call io%write(dirname='restart/Sembian_blastwave_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
       end block save_final_checkpoint
 
    end subroutine simulation_run
