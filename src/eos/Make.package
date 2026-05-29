@@ -1,0 +1,4 @@
+f90EXE_sources += eos_class.f90 ig_class.f90 sg_class.f90 nasg_class.f90 mix_class.f90 igmix_class.f90
+
+INCLUDE_LOCATIONS += $(NGA_HOME)/src/eos
+VPATH_LOCATIONS   += $(NGA_HOME)/src/eos

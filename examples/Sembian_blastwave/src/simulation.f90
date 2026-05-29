@@ -10,6 +10,9 @@ module simulation
    use event_class,       only: event
    use monitor_class,     only: monitor
    use amrio_class,       only: amrio
+   use nasg_class,        only: nasg
+   use ig_class,          only: ig
+   use igmix_class,       only: igmix
    implicit none
    private
 
@@ -43,9 +46,13 @@ module simulation
 
    !> EOS parameters (NASG liquid and ideal gas)
    real(WP) :: GammaL,PinfL,qL,qpL,CvL,CpL,bL
-   real(WP) :: GammaG,qG,qpG,CvG,CpG
    real(WP) :: GammaA,qA,qpA,CvA,CpA
    real(WP) :: GammaV,qV,qpV,CvV,CpV
+
+   !> EOS objects
+   type(nasg),  target,save                :: eosL      !< Liquid pure-substance EOS
+   type(ig),    allocatable,target,save    :: eosG(:)   !< Gas-phase species EOS array
+   type(igmix), target,save                :: mixG      !< Gas mixture
 
    !> Saturation curve coefficients
    real(WP) :: AS,BS,CS,DS,ES
@@ -95,186 +102,6 @@ contains
       if (amr%nz.eq.1) G=0.5_WP*dcyl-sqrt((xyz(1)-xcyl)**2+xyz(2)**2) ! Enable quasi-2D runs
    end function levelset_cyl
 
-   !> Liquid EOS: NASG
-   !> P=f(RHO,I)
-   real(WP) function get_PL(RHO,I,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,I
-      real(WP), intent(in), optional :: Yv
-      get_PL=(GammaL-1.0_WP)*RHO*(I-qL)/(1.0_WP-bL*RHO)-GammaL*PinfL
-   end function get_PL
-   !> T=f(RHO,P)
-   real(WP) function get_TL(RHO,P,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,P
-      real(WP), intent(in), optional :: Yv
-      get_TL=(P+PinfL)*(1.0_WP-bL*RHO)/((GammaL-1.0_WP)*CvL*RHO)
-   end function get_TL
-   !> C=f(RHO,P)
-   real(WP) function get_CL(RHO,P,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,P
-      real(WP), intent(in), optional :: Yv
-      get_CL=sqrt(max(0.0_WP,GammaL*(P+PinfL)/(RHO*(1.0_WP-bL*RHO))))
-   end function get_CL
-   !> I=f(RHO,P)
-   real(WP) function get_IL(RHO,P,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,P
-      real(WP), intent(in), optional :: Yv
-      get_IL=(1.0_WP-bL*RHO)*(P+GammaL*PinfL)/((GammaL-1.0_WP)*RHO)+qL
-   end function get_IL
-   !> I=f(P,T)
-   real(WP) function get_IL_PT(P,T)
-      implicit none
-      real(WP), intent(in) :: P,T
-      get_IL_PT=CvL*T*(P+GammaL*PinfL)/(P+PinfL)+qL
-   end function get_IL_PT
-   !> RHOLIL=f(P,RHO)
-   real(WP) function get_RHOLIL(P,RHO)
-      implicit none
-      real(WP), intent(in) :: P,RHO
-      get_RHOLIL=(1.0_WP-bL*RHO)*(P+GammaL*PinfL)/(GammaL-1.0_WP)+RHO*qL
-   end function get_RHOLIL
-   !> RHOLIL=f(P,T)
-   real(WP) function get_RHOLIL_PT(P,T)
-      implicit none
-      real(WP), intent(in) :: P,T
-      get_RHOLIL_PT=(P+GammaL*PinfL)*CvL*T+qL*(P+PinfL)/((GammaL-1.0_WP)*CvL*T+bL*(P+PinfL))
-   end function get_RHOLIL_PT
-   !> RHOL=f(P,T)
-   real(WP) function get_RHOL(P,T)
-      implicit none
-      real(WP), intent(in) :: P,T
-      get_RHOL=(P+PinfL)/((GammaL-1.0_WP)*CvL*T+bL*(P+PinfL))
-   end function get_RHOL
-   !> GL=f(RHO)
-   real(WP) function get_GL(RHO)
-      implicit none
-      real(WP), intent(in) :: RHO
-      get_GL=(GammaL-1.0_WP)/(1.0_WP-bL*RHO)
-   end function get_GL
-
-   !> Gas EOS: Ideal Gas
-   !> P=f(RHO,I)
-   real(WP) function get_PG(RHO,I,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,I
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_PG=RHO*I*(GammaG-1.0_WP)-(GammaG-1.0_WP)*qG*RHO
-   end function get_PG
-   !> T=f(RHO,P)
-   real(WP) function get_TG(RHO,P,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,P
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_TG=P/(CvG*RHO*(GammaG-1.0_WP))
-   end function get_TG
-   !> C=f(RHO,P)
-   real(WP) function get_CG(RHO,P,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,P
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_CG=sqrt(max(0.0_WP,GammaG*P/RHO))
-   end function get_CG
-   !> I=f(RHO,P)
-   real(WP) function get_IG(RHO,P,Yv)
-      implicit none
-      real(WP), intent(in) :: RHO,P
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_IG=P/(RHO*(GammaG-1.0_WP))+qG
-   end function get_IG
-   !> I=f(P,T,Yv)
-   real(WP) function get_IG_PT(P,T,Yv)
-      implicit none
-      real(WP), intent(in) :: P,T
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_IG_PT=CvG*T+qG
-   end function get_IG_PT
-   !> RHOGIG=f(P,RHO,Yv)
-   real(WP) function get_RHOGIG(P,RHO,Yv)
-      implicit none
-      real(WP), intent(in) :: P,RHO
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_RHOGIG=P/(GammaG-1.0_WP)+RHO*qG
-   end function get_RHOGIG
-   !> RHOGIG=f(P,T,Yv)
-   real(WP) function get_RHOGIG_PT(P,T,Yv)
-      implicit none
-      real(WP), intent(in) :: P,T
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_RHOGIG_PT=P*(CvG*T+qG)/((GammaG-1.0_WP)*CvG*T)
-   end function get_RHOGIG_PT
-   !> RHOG=f(P,T,Yv)
-   real(WP) function get_RHOG(P,T,Yv)
-      implicit none
-      real(WP), intent(in) :: P,T
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_RHOG=P/((GammaG-1.0_WP)*CvG*T)
-   end function get_RHOG
-   !> GG=f(Yv)
-   real(WP) function get_GG(Yv)
-      implicit none
-      real(WP), intent(in), optional :: Yv
-      if (present(Yv)) then
-         call set_gas_eos_cof(Yv)
-      else
-         call set_gas_eos_cof(0.0_WP)
-      end if
-      get_GG=GammaG-1.0_WP
-   end function get_GG
-   !> Set gas EOS coefficients from vapor mass fraction (Ideal gas mixture of vapor and air)
-   subroutine set_gas_eos_cof(Yv)
-      implicit none
-      real(WP), intent(in) :: Yv
-      real(WP) :: Ya
-      Ya    =1.0_WP-Yv
-      CvG   =Yv*CvV+Ya*CvA
-      CpG   =Yv*CpV+Ya*CpA
-      qG    =Yv*qV +Ya*qA
-      qpG   =Yv*qpV+Ya*qpA
-      GammaG=CpG/CvG
-   end subroutine set_gas_eos_cof
    !> Vapor mole fraction (Ideal gas mixture)
    real(WP) function get_xv(Yv)
       implicit none
@@ -284,7 +111,6 @@ contains
 
    !> Chemical relaxation
    subroutine PTg_relax(VF,Q,Pjump)
-      use messager, only: die
       implicit none
       real(WP),                intent(inout) :: VF
       real(WP), dimension(1:), intent(inout) :: Q
@@ -296,6 +122,8 @@ contains
       real(WP) :: Z,D,COF
       real(WP) :: VFeq,VF0,Peq,p,T,Teq,Yv
       real(WP) :: rho0,Eps0,rhoA0
+      real(WP),dimension(2) :: y
+      real(WP) :: GammaG,CvG,qG,CpG
       real(WP) :: rho_err,Eps_err
       real(WP), parameter :: lnP_eps=1.0e-10_WP,VFmin=1.0e-5_WP,Yvmin=0.0_WP,Yvmax=1.0_WP
       real(WP), parameter :: Yv_dry=1.0e-5_WP,ppv_dry=1.0_WP,Yv_pure=0.999_WP
@@ -318,10 +146,10 @@ contains
       ! Get phasic quantities
       RHOL=Q(1)/(       VF)
       RHOG=Q(2)/(1.0_WP-VF)
-      PL=get_PL(RHO=RHOL,I=Q(3)/Q(1))
-      PG=get_PG(RHO=RHOG,I=Q(4)/Q(2),Yv=Yv)
-      CL=get_CL(RHO=RHOL,P=PL)
-      CG=get_CG(RHO=RHOG,P=PG,Yv=Yv)
+      PL=eosL%get_p_from_rho_e(RHOL,Q(3)/Q(1))
+      PG=mixG%get_p_from_rho_e(RHOG,Q(4)/Q(2),y)
+      CL=eosL%get_c_from_p_rho(PL,RHOL)
+      CG=mixG%get_c_from_p_rho(PG,RHOG,y)
       ! Handle limit cases-should mass/energy be transfered or lost?-this should probably never happen...
       if (PL.le.-PinfL) then
          print*,"****************** LIQUID CLIPPED!",PL,VF,Q,Yv
@@ -332,13 +160,13 @@ contains
          VF=1.0_WP; Q(1)=sum(Q(1:2)); Q(2)=0.0_WP; Q(3)=sum(Q(3:4)); Q(4)=0.0_WP; Q(8)=0.0_WP;  call deallocate_Q0(); return
       end if
       ! Get phasic impedances
-      ZL=Q(1)/(       VF)*get_CL(RHO=Q(1)/(       VF),P=PL)
-      ZG=Q(2)/(1.0_WP-VF)*get_CG(RHO=Q(2)/(1.0_WP-VF),P=PG,Yv=Yv)
+      ZL=Q(1)/(       VF)*eosL%get_c_from_p_rho(PL,Q(1)/(       VF))
+      ZG=Q(2)/(1.0_WP-VF)*mixG%get_c_from_p_rho(PG,Q(2)/(1.0_WP-VF),y)
       ! Calculate model interface pressure
       Pint=(ZG*PL+ZL*PG)/(ZG+ZL)
       ! Setup the ODE coefficients
-      GL=get_GL(RHO=RHOL)
-      GG=get_GG(Yv=Yv)
+      GL=(GammaL-1.0_WP)/(1.0_WP-bL*RHOL)
+      GG=GammaG-1.0_WP
       xiL=         VF/(GL*(Pint-PL)+RHOL*CL**2)
       xiG=(1.0_WP-VF)/(GG*(Pint-PG)+RHOG*CG**2)
       xiLinv=1.0_WP/xiL
@@ -363,17 +191,17 @@ contains
       RHOG=Q0(2)/(1.0_WP-VFeq)
       ! Adjust conserved quantities (Masses and velocities remain unchanged)
       VF=VFeq
-      Q(3)=(       VFeq)*get_RHOLIL(P=Peq,RHO=RHOL)
-      Q(4)=(1.0_WP-VFeq)*get_RHOGIG(P=Peq,RHO=RHOG,Yv=Yv)
+      Q(3)=(       VFeq)*eosL%get_rhoe_from_p_rho(Peq,RHOL)
+      Q(4)=(1.0_WP-VFeq)*mixG%get_rhoe_from_p_rho(Peq,RHOG,y)
       ! ================= Second step for thermal relaxation =================
       ! Pelanti 2022: https://doi.org/10.1016/j.ijmultiphaseflow.2022.104097
       ! Update the thermodynamic state
-      TL=get_TL(P=Peq,RHO=RHOL)
-      TG=get_TG(P=Peq,RHO=RHOG,Yv=Yv)
-      GL=get_GL(RHOL)
-      GG=get_GG(Yv)
-      CL=get_CL(P=Peq,RHO=RHOL)
-      CG=get_CG(P=Peq,RHO=RHOG,Yv=Yv)
+      TL=eosL%get_T_from_p_rho(Peq,RHOL)
+      TG=mixG%get_T_from_p_rho(Peq,RHOG,y)
+      GL=(GammaL-1.0_WP)/(1.0_WP-bL*RHOL)
+      GG=GammaG-1.0_WP
+      CL=eosL%get_c_from_p_rho(Peq,RHOL)
+      CG=mixG%get_c_from_p_rho(Peq,RHOG,y)
       ! print '(A)',       '============ P_relax ============='
       ! print '(A,ES15.7)','p   =',Peq
       ! print '(A,ES15.7)','VF  =',VF
@@ -411,8 +239,8 @@ contains
       RHOG=Q0(2)/(1.0_WP-VFeq)
       ! Adjust conserved quantities (Masses and velocities remain unchanged)
       VF=VFeq
-      Q(3)=(       VFeq)*get_RHOLIL(P=Peq,RHO=RHOL)
-      Q(4)=(1.0_WP-VFeq)*get_RHOGIG(P=Peq,RHO=RHOG,Yv=Yv)
+      Q(3)=(       VFeq)*eosL%get_rhoe_from_p_rho(Peq,RHOL)
+      Q(4)=(1.0_WP-VFeq)*mixG%get_rhoe_from_p_rho(Peq,RHOG,y)
       ! ================= Third step for chemical relaxation =================
       ! Store input state to the chemical relaxation algorithm
       Q0=Q
@@ -459,8 +287,8 @@ contains
       ! print '(A)',       '=================================='
       ! Apply the converged state
       call set_gas_eos_cof(Yv)
-      RHOL=get_RHOL(p,T)
-      RHOG=get_RHOG(p,T,Yv)
+      RHOL=eosL%get_rho_from_p_T(p,T)
+      RHOG=mixG%get_rho_from_p_T(p,T,y)
       VF=(rho0-RHOG)/(RHOL-RHOG)
       ! Clean up solution
       if (VF.lt.0.0_WP) then; VF=0.0_WP; p=max(p,-PinfL); end if
@@ -468,8 +296,8 @@ contains
       ! Adjust conserved quantities
       Q(1)=(       VF)*RHOL
       Q(2)=(1.0_WP-VF)*RHOG
-      Q(3)=Q(1)*get_IL_PT(p,T)
-      Q(4)=Q(2)*get_IG_PT(p,T,Yv)
+      Q(3)=Q(1)*eosL%get_e_from_p_T(p,T)
+      Q(4)=Q(2)*mixG%get_e_from_p_T(p,T,y)
       Q(8)=Q(2)*Yv
       ! Evaluate conservation
       if (.not.check_cons()) then
@@ -488,6 +316,17 @@ contains
       ! Release memory
       call deallocate_Q0()
       contains
+         !> Set mixture EOS coefficients from vapor mass fraction and update y array
+         subroutine set_gas_eos_cof(Yv_loc)
+            real(WP),intent(in) :: Yv_loc
+            real(WP) :: Ya
+            Ya    =1.0_WP-Yv_loc
+            y(1)  =Yv_loc; y(2)=Ya
+            CvG   =Yv_loc*CvV+Ya*CvA
+            CpG   =Yv_loc*CpV+Ya*CpA
+            qG    =Yv_loc*qV +Ya*qA
+            GammaG=CpG/CvG
+         end subroutine set_gas_eos_cof
          real(WP) function get_Peq_from_Econs(VF_eq)
             real(WP), intent(in) :: VF_eq
             real(WP) :: one_brho
@@ -1020,15 +859,15 @@ contains
          function Eps_res_lvg(p_eq,T_eq,Yv_eq)
             real(WP), intent(in) :: p_eq,T_eq,Yv_eq
             real(WP) :: Eps_res_lvg
-            Eps_res_lvg=(rho0*(1.0_WP-Yv_eq)-rhoA0)*get_IL_PT(p_eq,T_eq)+rhoA0*get_IG_PT(P_eq,T_eq,Yv_eq)-Eps0*(1.0_WP-Yv_eq)
+            Eps_res_lvg=(rho0*(1.0_WP-Yv_eq)-rhoA0)*eosL%get_e_from_p_T(p_eq,T_eq)+rhoA0*mixG%get_e_from_p_T(P_eq,T_eq,[Yv_eq,1.0_WP-Yv_eq])-Eps0*(1.0_WP-Yv_eq)
          end function Eps_res_lvg
          !> Residual of the internal energy conservation equation for the lv case
          function Eps_res_lv(p_eq,T_eq)
             real(WP), intent(in) :: p_eq,T_eq
             real(WP) :: Eps_res_lv,rho_l,rho_g
-            rho_l=get_RHOL(P=p_eq,T=T_eq)
-            rho_g=get_RHOG(P=p_eq,T=T_eq,Yv=1.0_WP)
-            Eps_res_lv=(rho0-rho_g)/(rho_l-rho_g)*get_IL_PT(P=p_eq,T=T_eq)+(rho_l-rho0)/(rho_l-rho_g)*get_IG_PT(P=p_eq,T=T_eq,Yv=1.0_WP)-Eps0
+            rho_l=eosL%get_rho_from_p_T(p_eq,T_eq)
+            rho_g=mixG%get_rho_from_p_T(p_eq,T_eq,[1.0_WP,0.0_WP])
+            Eps_res_lv=(rho0-rho_g)/(rho_l-rho_g)*eosL%get_e_from_p_T(p_eq,T_eq)+(rho_l-rho0)/(rho_l-rho_g)*mixG%get_e_from_p_T(p_eq,T_eq,[1.0_WP,0.0_WP])-Eps0
          end function Eps_res_lv
          !> Equilibrium temperature as a function of equilibrium pressure
          function get_T_lv(ap,bp,dp)
@@ -1093,7 +932,7 @@ contains
       integer :: lvl,i,j,k
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pTG,pVF,pYv,pVisc,pBeta,pCond,pDiff
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pTG,pVF,pYg,pVisc,pBeta,pCond,pDiff
       real(WP) :: mu_g,mu_l,cp_g
       real(WP), parameter :: myeps=1.0e-15_WP
       !> Sutherland's law parameters (dimensional, SI units)
@@ -1109,7 +948,7 @@ contains
             ! Get pointers to data
             pTG=>fs%TG%mf(lvl)%dataptr(mfi)
             pVF=>fs%VF%mf(lvl)%dataptr(mfi)
-            pYv=>fs%Yv%mf(lvl)%dataptr(mfi)
+            pYg=>fs%Yg%mf(lvl)%dataptr(mfi)
             pVisc=>fs%visc%mf(lvl)%dataptr(mfi)
             pBeta=>fs%beta%mf(lvl)%dataptr(mfi)
             pCond=>fs%cond%mf(lvl)%dataptr(mfi)
@@ -1130,7 +969,7 @@ contains
                ! Zero bulk viscosity
                pBeta(i,j,k,1)=0.0_WP
                ! Thermal conductivity (zero when Pr=0 i.e. no heat conduction)
-               cp_g=pYv(i,j,k,1)*CpV+(1.0_WP-pYv(i,j,k,1))*CpA
+               cp_g=pYg(i,j,k,1)*CpV+(1.0_WP-pYg(i,j,k,1))*CpA
                if (PrL.gt.0.0_WP) then
                   pCond(i,j,k,1)=mu_l*CpL/PrL
                else
@@ -1175,7 +1014,7 @@ contains
       ! Get mesh size
       dx=solver%amr%dx(lvl); dy=solver%amr%dy(lvl); dz=solver%amr%dz(lvl)
       ! Get internal energy of liquid at ambient
-      IEL=get_IL(Lrho0,GP0)
+      IEL=eosL%get_e_from_p_rho(GP0,Lrho0)
       ! Get initial vapor mass fraction
       call param_read('Initial vapor mass fraction',Yv0,default=1.0e-1_WP)
       ! Use passed ba/dm since grid is being constructed
@@ -1214,7 +1053,7 @@ contains
                rhoG_local=Grho0
                pG_local  =GP0
             end if
-            IG_local=get_IG(rhoG_local,pG_local,Yv0)
+            IG_local=mixG%get_e_from_p_rho(pG_local,rhoG_local,[Yv0,1.0_WP-Yv0])
             ! Set conserved variables
             pQ(i,j,k,1)=(       myVF)*Lrho0
             pQ(i,j,k,2)=(1.0_WP-myVF)*rhoG_local
@@ -1350,15 +1189,20 @@ contains
          CS=(CpV-CpL)/(CpV-CvV)
          DS=(CpL-CvL)/(CpV-CvV)
          ES=bL/(CpV-CvV)
-         ! Set gas EOS coefficients using air properties
-         call set_gas_eos_cof(0.0_WP)
-         ! Use shock relations to get post-shock numbers (for informational / tagging purposes)
-         GP1 = GP0 * (2.0_WP*GammaG*Ms**2 - (GammaG-1.0_WP)) / (GammaG+1.0_WP)
-         Grho1 = Grho0 * (Ms**2 * (GammaG+1.0_WP) / ((GammaG-1.0_WP)*Ms**2 + 2.0_WP))
+         ! Initialize EOS objects
+         call eosL%initialize(gamma=GammaL,cv=CvL,pinf=PinfL,b=bL,q=qL,qp=qpL)
+         allocate(eosG(2))
+         call eosG(1)%initialize(gamma=GammaV,cv=CvV,q=qV,qp=qpV)   ! species 1 = vapor (transported)
+         call eosG(2)%initialize(gamma=GammaA,cv=CvA,q=qA,qp=qpA)   ! species 2 = air (carrier)
+         call mixG%initialize(ns=2)
+         call mixG%set_species(eosG)
+         ! Use shock relations for pure air (Yv=0, GammaG=GammaA) to get post-shock numbers
+         GP1 = GP0 * (2.0_WP*GammaA*Ms**2 - (GammaA-1.0_WP)) / (GammaA+1.0_WP)
+         Grho1 = Grho0 * (Ms**2 * (GammaA+1.0_WP) / ((GammaA-1.0_WP)*Ms**2 + 2.0_WP))
          ! Calculate post-shock Mach number
-         M1 = sqrt(((GammaG-1.0_WP)*(Ms**2)+2.0_WP)/(2.0_WP*GammaG*(Ms**2)-(GammaG-1.0_WP)))
+         M1 = sqrt(((GammaA-1.0_WP)*(Ms**2)+2.0_WP)/(2.0_WP*GammaA*(Ms**2)-(GammaA-1.0_WP)))
          ! Calculate post-shock velocity
-         u1 = -M1 * sqrt(GammaG*GP1/Grho1) + Ms*sqrt(GammaG*GP0/Grho0)
+         u1 = -M1 * sqrt(GammaA*GP1/Grho1) + Ms*sqrt(GammaA*GP0/Grho0)
          ! Velocity at which shock moves
          relshockvel = -Grho1*u1/(Grho0-Grho1)
          ! Log setup
@@ -1369,7 +1213,7 @@ contains
          write(message,'("[HP region] center=",es12.5," thickness=",es12.5)') HP_center,HP_thickness; call log(message)
          write(message,'("[HP region] density=",es12.5," pressure=",es12.5)') HP_density,HP_pressure; call log(message)
          write(message,'("[Liquid] rhoL=",es12.5," GammaL=",es12.5," PinfL=",es12.5)') Lrho0,GammaL,PinfL; call log(message)
-         write(message,'("[Gas]    GammaG=",es12.5)') GammaG; call log(message)
+         write(message,'("[Gas]    GammaA=",es12.5)') GammaA; call log(message)
          write(message,'("[Visc]   muG=",es12.5," muL=",es12.5)') muG,muL; call log(message)
          write(message,'("[Cylinder] diameter=",es12.5," location=",es12.5)') dcyl,xcyl; call log(message)
       end block init_eos_and_flow
@@ -1429,11 +1273,9 @@ contains
          ! Use piecewise-linear face interpolation — FaceDivFree requires ratio==2 in all dirs
          ! but this case is quasi-2D with ref_ratio_z=1
          fs%interp_vel=interp_face_lin
-         ! Create flow solver
+         ! Assign EOS objects and create flow solver
+         call fs%set_thermo(eosL,mixG)
          call fs%initialize(amr=amr,name='Sembian_blastwave')
-         ! Provide thermodynamic model (6 EOS pointers)
-         fs%getPL=>get_PL; fs%getCL=>get_CL; fs%getTL=>get_TL
-         fs%getPG=>get_PG; fs%getCG=>get_CG; fs%getTG=>get_TG
          ! Provide relaxation model
          fs%relax=>PTg_relax
          ! Set initial conditions via blastwave callback
@@ -1460,7 +1302,7 @@ contains
       ! Initialize workspaces
       create_workspace: block
          use amrdata_class, only: interp_none
-         call dQdt%initialize(amr,name='dQdt',ncomp=8,ng=0,interp=interp_none); call dQdt%register()
+         call dQdt%initialize(amr,name='dQdt',ncomp=fs%nQ,ng=0,interp=interp_none); call dQdt%register()
          call Umag%initialize(amr,name='Umag',ncomp=1,ng=0,interp=interp_none); call Umag%register()
          call Mach%initialize(amr,name='Mach',ncomp=1,ng=0,interp=interp_none); call Mach%register()
       end block create_workspace
@@ -1556,7 +1398,7 @@ contains
          call viz%add_scalar(fs%visc,1,'visc')
          call viz%add_scalar(fs%beta,1,'beta')
          call viz%add_scalar(fs%C,1,'C')
-         call viz%add_scalar(fs%Yv,1,'Yv')
+         call viz%add_scalar(fs%Yg,1,'Yv')
          call viz%add_scalar(fs%TL,1,'TL')
          call viz%add_scalar(fs%TG,1,'TG')
          call viz%add_scalar(fs%IL,1,'IL')
@@ -1594,8 +1436,8 @@ contains
          call mfile%add_column(fs%VFmin,'VFmin')
          call mfile%add_column(fs%VFmax,'VFmax')
          call mfile%add_column(fs%VFint,'VFint')
-         call mfile%add_column(fs%Yvmin,'Yvmin')
-         call mfile%add_column(fs%Yvmax,'Yvmax')
+         call mfile%add_column(fs%Ygmin(1),'Yvmin')
+         call mfile%add_column(fs%Ygmax(1),'Yvmax')
          call mfile%add_column(fs%Qint(8),'Vapor mass')
          call mfile%write()
          ! Create CFL monitor
