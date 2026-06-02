@@ -1,14 +1,15 @@
 !> Abstract pure-substance equation-of-state base class.
 module eos_class
    use precision, only: WP
+   use string,    only: str_medium
    implicit none
    private
 
    public :: eos
 
    type, abstract :: eos
+      character(len=str_medium) :: name = 'UNNAMED_EOS'
    contains
-      ! Primary thermodynamic closures
       procedure(eos_rho_e_iface), deferred :: get_p_from_rho_e
       procedure(eos_p_rho_iface), deferred :: get_T_from_p_rho
       procedure(eos_p_rho_iface), deferred :: get_c_from_p_rho
@@ -18,10 +19,10 @@ module eos_class
       procedure(eos_p_T_iface  ), deferred :: get_rho_from_p_T
       procedure(eos_p_T_iface  ), deferred :: get_h_from_p_T
       procedure(eos_p_T_iface  ), deferred :: get_s_from_p_T
+      procedure(eos_p_T_iface  ), deferred :: get_g_from_p_T
       procedure(eos_rho_e_iface), deferred :: get_gruneisen_from_rho_e
       procedure(eos_p_rho_iface), deferred :: get_rhoe_from_p_rho
       procedure(eos_p_T_iface  ), deferred :: get_rhoe_from_p_T
-      procedure(eos_p_T_iface  ), deferred :: get_g_from_p_T
    end type eos
 
    abstract interface

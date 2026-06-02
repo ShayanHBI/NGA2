@@ -10,6 +10,7 @@ module amrmpcomp_class
    use amrex_amr_module, only: amrex_box,amrex_boxarray,amrex_distromap,amrex_mfiter
    use eos_class,        only: eos
    use mix_class,        only: mix
+   use relax_class,      only: relax
    implicit none
    private
 
@@ -30,7 +31,7 @@ module amrmpcomp_class
       class(mix),pointer :: gas=>null()   !< Gas mixture (species ns = carrier)
 
       ! Pointer to subroutine for mixture cell relaxation
-      procedure(relax_iface), pointer, nopass :: relax=>null()
+      class(relax),pointer :: relax_model=>null()   !< Relaxation model (set before initialize)
 
       ! Pressure solver for pressure projection
       logical :: use_projection=.false.
@@ -66,7 +67,8 @@ module amrmpcomp_class
       real(WP) :: PLmin=0.0_WP,PLmax=0.0_WP,PGmin=0.0_WP,PGmax=0.0_WP
       real(WP) :: TLmin=0.0_WP,TLmax=0.0_WP,TGmin=0.0_WP,TGmax=0.0_WP
       real(WP) :: Cmin=0.0_WP,Cmax=0.0_WP
-      real(WP), allocatable :: Ygmin(:),Ygmax(:)   !< Per-species Yg extrema (size ns-1)
+      real(WP), allocatable :: Ygmin(:),Ygmax(:)   !< Per-species Yg extrema (size ns-1; NOT targetable — use Yvmin/Yvmax for monitor)
+      real(WP) :: Yvmin=0.0_WP,Yvmax=0.0_WP         !< Scalar copies of Ygmin/Ygmax(1) for monitor pointer compatibility
       real(WP) :: dPmax=0.0_WP
       real(WP) :: rhoKint=0.0_WP
 
@@ -178,16 +180,6 @@ module amrmpcomp_class
          type(amrex_box), intent(in) :: bx
          real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pCL,pCG,pPLIC
       end subroutine mpcomp_vofbc_iface
-   end interface
-
-   !> Abstract interface for pressure relaxation callback
-   abstract interface
-      subroutine relax_iface(VF,Q,Pjump)
-         import :: WP
-         real(WP), intent(inout) :: VF
-         real(WP), dimension(:), intent(inout) :: Q
-         real(WP), intent(in) :: Pjump
-      end subroutine relax_iface
    end interface
 
 contains
@@ -404,7 +396,7 @@ contains
       ! Nullify pointers
       nullify(this%user_init); nullify(this%user_tagging); nullify(this%user_bc); nullify(this%user_vofbc)
       nullify(this%liq); nullify(this%gas)
-      nullify(this%relax)
+      nullify(this%relax_model)
       if (allocated(this%Ygmin)) deallocate(this%Ygmin)
       if (allocated(this%Ygmax)) deallocate(this%Ygmax)
       ! Finalize parent
@@ -2158,6 +2150,8 @@ contains
                if      (pVF(i,j,k,1).lt.VFlo) then; pQ(i,j,k,1)=0.0_WP; pQ(i,j,k,3)=0.0_WP
                else if (pVF(i,j,k,1).gt.VFhi) then; pQ(i,j,k,2)=0.0_WP; pQ(i,j,k,4)=0.0_WP; pQ(i,j,k,8:this%nQ)=0.0_WP
                end if
+               ! Clip species to physical bounds: 0 <= Q(7+is) <= Q(2)  =>  0 <= Ys <= 1
+               pQ(i,j,k,8:this%nQ)=max(0.0_WP,min(pQ(i,j,k,8:this%nQ),pQ(i,j,k,2)))
             end do; end do; end do
          end do
          call this%amr%mfiter_destroy(mfi)
@@ -2181,7 +2175,7 @@ contains
       real(WP), dimension(3,8) :: hex
       real(WP), dimension(4) :: plane
       ! If no relaxation model was provided, return
-      if (.not.associated(this%relax)) return
+      if (.not.associated(this%relax_model)) return
       ! Return if clvl<maxlvl
       if (this%amr%clvl().lt.this%amr%maxlvl) return
       ! Start timer
@@ -2205,7 +2199,7 @@ contains
             ! Only relax mixture cells
             if (pVF(i,j,k,1).lt.VFlo.or.pVF(i,j,k,1).gt.VFhi) cycle
             ! Apply user-provided relaxation model (modifies VF and Q)
-            call this%relax(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
+            call this%relax_model%apply(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
             ! Adjust PLIC plane to match new VF
             lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
             hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]
@@ -2543,6 +2537,8 @@ contains
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%dPmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%Ygmin,this%gas%ns-1,MPI_REAL_WP,MPI_MIN,this%amr%comm,ierr)
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%Ygmax,this%gas%ns-1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
+         ! Copy species 1 (transported) into scalar fields for monitor pointer compatibility
+         this%Yvmin=this%Ygmin(1); this%Yvmax=this%Ygmax(1)
       end block phasic_extrema
 
       ! Kinetic energy integral: 0.5 * rho * (U^2 + V^2 + W^2) * dV

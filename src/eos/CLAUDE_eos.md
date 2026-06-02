@@ -1,71 +1,84 @@
-# CLAUDE.md
+# CLAUDE.md — `src/eos/`
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Overview
-
-This is a collection of Fortran 90 modules implementing equation-of-state (EOS) models for compressible multi-phase flow simulations. The modules are designed to plug into a larger simulation framework (e.g., an AMReX-based solver) via polymorphic pointers; they are not standalone executables and have no build system of their own. The `precision` module (not in this directory) must provide the `WP` kind parameter.
+EOS and mixture classes for compressible multi-phase flow. Standalone Fortran modules; no build system of their own. Require only `precision` (from `src/libraries/precision_dp.f90`).
 
 ## Module Hierarchy
 
 ```
-eos (pure interface, eos_class.f90)
-└── ig  (ideal gas + caloric params, ig_class.f90)
-    └── sg   (stiffened gas, sg_class.f90)
-        └── nasg (Noble-Abel stiffened gas, nasg_class.f90)
+eos  (abstract interface, no data)              eos_class.f90
+└── ig   (γ, cv, q, qp)                        ig_class.f90
+    └── sg   (+ pinf)                          sg_class.f90
+        └── nasg (+ b)                         nasg_class.f90
 
-mix (pure interface, mix_class.f90)
-└── igmix (ideal-gas mixture, igmix_class.f90)
+mix  (abstract interface, no data)             mix_class.f90
+└── igmix (array of ig species)               igmix_class.f90
 ```
 
-`mix_class` also exports `eos_ptr` — a wrapper holding a `class(eos), pointer` — for storing heterogeneous EOS objects in arrays.
+## Argument Ordering
 
-## Key Design Conventions
+All thermodynamic closures follow `p, rho, T` precedence:
 
-**`eos` is a pure interface with no data.** Caloric parameters (`gamma`, `cv`, `q`, `qp`) and their five accessors (`get_gamma`, `get_cv`, `get_cp`, `get_q`, `get_qp`) live in `ig`, the first concrete subclass. All subclasses of `ig` inherit them without redeclaring.
+| Form | Arguments |
+|---|---|
+| Conserved | `get_*(rho, e)` |
+| Pressure-density | `get_*(p, rho)` |
+| Pressure-temperature | `get_*(p, T)` |
+| Density-temperature | `get_*(rho, T)` |
 
-**Argument ordering for all thermodynamic closures follows `p, rho, T` precedence:**
-- `get_*(rho, e)` — conserved-variable form
-- `get_*(p, rho)` — pressure-density form
-- `get_*(p, T)` — pressure-temperature form
-- `get_*(rho, T)` — density-temperature form
+`mix` closures carry a trailing `y(:)` (mass fractions, unnormalized; normalized internally).
 
-`mix` closures carry an additional trailing `y(:)` (gas-phase mass fractions, unnormalized; internally normalized before use). The `mix` interface is otherwise structurally identical to `eos`.
-
-**Each subclass `initialize` takes only the parameters it owns**, then chains up to its parent:
+## Initialize Signatures
 
 ```fortran
-! ig:   initialize(gamma, cv [, q, qp])
-! sg:   initialize(gamma, cv [, pinf, q, qp])   — calls this%ig%initialize, then sets pinf
-! nasg: initialize(gamma, cv [, pinf, b, q, qp]) — calls this%sg%initialize, then sets b
+! ig:   initialize(gamma, cv [, q, qp, pinf, b])
+! sg:   initialize(gamma, cv [, q, qp, pinf, b])   ! pinf used, b ignored
+! nasg: initialize(gamma, cv [, q, qp, pinf, b])   ! both pinf and b used
 ```
 
-`q` and `qp` default to zero when omitted at every level. There are no positional-alias initializers (`initialize_sg`, `initialize_nasg` no longer exist).
+All optional args default to zero. **Important**: gfortran requires overriding procedures to have the same number of arguments as the parent — hence `ig/sg/nasg` all share the same 7-argument signature `(this, gamma, cv, q, qp, pinf, b)` with the extras optional.
 
-**Subclass-specific accessors:** `sg` adds `get_pinf()`; `nasg` adds `get_b()`. These are not in the base interface.
+## Public Fields
 
-**`get_rhoe_from_p_rho`, `get_rhoe_from_p_T`, and `get_g_from_p_T` are primary (deferred) closures**, not derived ones. Every concrete class implements them directly with the simplified formula for that EOS. For example, `ig`: `ρe(p,ρ) = p/(γ-1) + ρq`; `nasg`: `ρe(p,ρ) = (1-bρ)(p+γp∞)/(γ-1) + ρq`. The `igmix` exception: `g(p,T,y)` cannot be further simplified because entropy requires a per-species loop, so it calls `h - T*s` inline.
+| Type | Public fields |
+|---|---|
+| `ig` | `gamma`, `cv`, `cp` (=γcv), `R` (=(γ−1)cv), `q`, `qp` |
+| `sg` | inherits + `pinf` |
+| `nasg` | inherits + `b` |
 
-**`igmix` species pointers are polymorphic** (`class(ig), pointer`), so `sg` or `nasg` objects can be registered as gas-phase species. `set_species(ispecies, eos_model)` takes `class(ig), target`.
+`cp` and `R` are computed once in `ig%initialize` and stored. Access all parameters directly as fields — there are no getter methods.
 
-**`igmix` mixture rules:** `cv`, `R`, and `q` are mass-fraction-weighted averages of the species values; entropy uses partial pressures (mole fractions × total pressure) evaluated per-species.
+## igmix
 
-## Integration with `amrmpcomp`
+`igmix` holds `ns` species as `ig_ptr` (non-owning pointers; caller keeps objects alive).
 
-The solver-side component stores two polymorphic pointers:
-- `eosL` — `class(eos)` — the liquid pure-substance EOS
-- `mixG` — `class(mix)` — the gas mixture closure
+```fortran
+type(ig), allocatable, target :: eosG(:)
+type(igmix), target           :: mixG
 
-Set both with `call fs%set_thermo(liquid_eos, gas_mix)` before `initialize`. This also fixes `ns` (number of gas species) and `nQ = 7 + ns`.
+allocate(eosG(ns))
+call eosG(1)%initialize(...)   ! each species
+call mixG%initialize(ns=ns)
+call mixG%set_species(eosG)    ! takes full array in one call
+```
 
-**Conserved variable layout `Q(1:nQ)`:**
-| Index | Quantity |
-|-------|----------|
-| 1 | `VF·ρL` |
-| 2 | `(1−VF)·ρG` |
-| 3 | `VF·ρL·eL` |
-| 4 | `(1−VF)·ρG·eG` |
-| 5–7 | `ρu`, `ρv`, `ρw` |
-| 8 : 7+ns | `(1−VF)·ρG·Ys` (one per species) |
+**`set_species`** signature: `(this, eos_models(:))` where `eos_models` is `class(ig), target, intent(in)`.
 
-Any array, loop range, or flux declaration that previously hardcoded index 8 or size 8 must be replaced with `this%nQ` / `7+ns` loops. See `amrmpcomp_generic_species_snippets.f90` for the canonical patterns (flux reconstruction, `clean_Q`, `update_Q`, stats).
+**Species accessors** (for external code that can't reach the private `species` array directly):
+- `get_species_cv(is)`, `get_species_cp(is)`, `get_species_gamma(is)`, `get_species_q(is)`
+
+**Mixture rules**: cv, R, q are mass-fraction-weighted averages; entropy uses per-species partial pressures.
+
+## Integration with amrmpcomp
+
+```fortran
+class(ig), allocatable, target :: eosL     ! or type(sg)/type(nasg)
+type(ig),  allocatable, target :: eosG(:)
+type(igmix),            target :: mixG
+
+! Initialize all objects, then:
+call fs%set_thermo(eosL, mixG)   ! before fs%initialize
+```
+
+`set_thermo` stores `fs%liq => eosL` and `fs%gas => mixG`. After `set_thermo`, `fs%nQ = 6 + mixG%ns` (i.e., 7 + (ns−1) transported species).
+
+**Species ordering in the simulation**: species 1…ns−1 are transported (in Q); species ns is the carrier (reconstructed). For Sembian: species 1 = vapor (Q(8)), species 2 = air (carrier).

@@ -5,14 +5,10 @@ module mix_class
    implicit none
    private
 
-   public :: mix,eos_ptr
-
-   type :: eos_ptr
-      class(eos), pointer :: ptr => null()
-   end type eos_ptr
+   public :: mix
 
    type, abstract :: mix
-      integer :: ns = 0
+      integer :: ns=0
    contains
       procedure(mix_rho_e_iface), deferred :: get_p_from_rho_e
       procedure(mix_p_rho_iface), deferred :: get_T_from_p_rho
