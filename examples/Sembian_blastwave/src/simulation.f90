@@ -393,9 +393,15 @@ contains
          call mixG%set_species(eosG)
          select type (relax_model)
          type is (relax_sg)
-            call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
+            select type (eosL)
+            type is (sg)
+               call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
+            end select
          type is (relax_nasg)
-            call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
+            select type (eosL)
+            type is (nasg)
+               call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
+            end select
          end select
          ! Use shock relations for pure air (Yv=0, GammaG=GammaA) to get post-shock numbers
          GP1 = GP0 * (2.0_WP*GammaA*Ms**2 - (GammaA-1.0_WP)) / (GammaA+1.0_WP)

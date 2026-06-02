@@ -1,8 +1,6 @@
 !> Abstract base class for two-phase compressible relaxation models.
 module relax_class
    use precision, only: WP
-   use eos_class, only: eos
-   use mix_class, only: mix
    implicit none
    private
 
@@ -10,10 +8,6 @@ module relax_class
 
    !> Abstract relaxation model type
    type, abstract :: relax
-
-      !> EOS objects
-      class(eos), pointer :: liq=>null()   !< Liquid EOS
-      class(mix), pointer :: gas=>null()   !< Gas mixture
 
    contains
       procedure(relax_apply_iface), deferred :: apply

@@ -3,10 +3,7 @@
 !> algorithm for SG liquid + ideal-gas mixture (PinfG=0).
 module relax_sg_class
    use precision,   only: WP
-   use messager,    only: die
    use relax_class, only: relax
-   use eos_class,   only: eos
-   use mix_class,   only: mix
    use sg_class,    only: sg
    use igmix_class, only: igmix
    implicit none
@@ -18,13 +15,9 @@ module relax_sg_class
    real(WP), parameter :: Ma=0.02897_WP     !< Molar mass of air [kg/mol]
 
    type, extends(relax) :: relax_sg
-      !> Cached liquid EOS parameters
-      real(WP) :: GammaL=0.0_WP,PinfL=0.0_WP,CvL=0.0_WP,CpL=0.0_WP,qL=0.0_WP,qpL=0.0_WP
-      !> Cached gas species EOS parameters (indV=vapor, indA=air/carrier)
-      real(WP) :: CvV=0.0_WP,CpV=0.0_WP,GammaV=0.0_WP,qV=0.0_WP,qpV=0.0_WP
-      real(WP) :: CvA=0.0_WP,CpA=0.0_WP,GammaA=0.0_WP,qA=0.0_WP,qpA=0.0_WP
-      !> Typed gas pointer for direct igmix method access in apply
-      class(igmix), pointer :: igas => null()
+      !> Typed EOS pointers
+      type(sg),     pointer :: liq => null()   !< Liquid EOS (SG)
+      class(igmix), pointer :: gas => null()   !< Gas mixture (igmix)
       !> Species indices for vapor and air/carrier in the gas mixture
       integer :: indV=0,indA=0
       !> Saturation curve coefficients (Clausius-Clapeyron, SG form: ES=0)
@@ -47,45 +40,24 @@ module relax_sg_class
 
 contains
 
-   !> Initialize: call parent, cache EOS scalars, compute saturation coefficients
+   !> Initialize: store typed EOS pointers and compute saturation curve coefficients
    subroutine relax_sg_initialize(this,liq,gas,indV,indA)
-      class(relax_sg), intent(inout) :: this
-      class(eos), target, intent(in) :: liq
-      class(mix), target, intent(in) :: gas
+      class(relax_sg), intent(inout)   :: this
+      type(sg),     target, intent(in) :: liq
+      class(igmix), target, intent(in) :: gas
       integer, intent(in) :: indV,indA
-      real(WP) :: CpV,CvV
-      ! Store EOS pointers and species indices
-      this%liq=>liq; this%gas=>gas
-      this%indV=indV; this%indA=indA
-      ! Liquid must be exactly sg (not nasg — different physics)
-      select type(liq)
-      type is(sg)
-         this%GammaL=liq%gamma; this%CvL=liq%cv
-         this%CpL   =liq%cp;    this%qL =liq%q; this%qpL=liq%qp
-         this%PinfL =liq%pinf
-      class default
-         call die('[relax_sg initialize] liq must be sg')
-      end select
-      ! Gas must be igmix
-      select type(gas)
-      class is(igmix)
-         this%igas  => gas
-         this%CvV   =gas%get_species_cv(indV);    this%CpV   =gas%get_species_cp(indV)
-         this%GammaV=gas%get_species_gamma(indV); this%qV    =gas%get_species_q(indV)
-         this%qpV   =gas%get_species_qp(indV)
-         this%CvA   =gas%get_species_cv(indA);    this%CpA   =gas%get_species_cp(indA)
-         this%GammaA=gas%get_species_gamma(indA); this%qA    =gas%get_species_q(indA)
-         this%qpA   =gas%get_species_qp(indA)
-         CpV=this%CpV
-         CvV=this%CvV
-      class default
-         call die('[relax_sg initialize] gas must be igmix')
-      end select
-      ! Clausius-Clapeyron saturation curve coefficients (ES=0 for SG: no co-volume)
-      this%AS=(this%CpL-CpV+this%qpV-this%qpL)/(CpV-CvV)
-      this%BS=(this%qL -this%qV)               /(CpV-CvV)
-      this%CS=(CpV-this%CpL)                   /(CpV-CvV)
-      this%DS=(this%CpL-this%CvL)              /(CpV-CvV)
+      real(WP) :: CpV,CvV,RV
+      this%liq  => liq
+      this%gas  => gas
+      this%indV =  indV
+      this%indA =  indA
+      CpV=gas%get_species_cp(indV)
+      CvV=gas%get_species_cv(indV)
+      RV =CpV-CvV
+      this%AS=(liq%cp-CpV+gas%get_species_qp(indV)-liq%qp)/RV
+      this%BS=(liq%q -gas%get_species_q(indV))            /RV
+      this%CS=(CpV-liq%cp)                                /RV
+      this%DS=(liq%cp-liq%cv)                             /RV
       this%ES=0.0_WP
    end subroutine relax_sg_initialize
 
@@ -114,13 +86,13 @@ contains
          Yv=0.0_WP
       end if
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
-      call this%igas%get_mix_coeffs(y=y,cv=CvG,cp=CpG,q=qG,gamma=GammaG)
+      call this%gas%get_mix_coeffs(y=y,cv=CvG,cp=CpG,q=qG,gamma=GammaG)
       ! ================ First step for mechanical relaxation ================
       ! Get phasic pressures
       PL=this%liq%get_p_from_rho_e(Q(1)/(       VF),Q(3)/Q(1))
       PG=this%gas%get_p_from_rho_e(Q(2)/(1.0_WP-VF),Q(4)/Q(2),y)
       ! Handle limit cases - should mass/energy be transfered or lost? - this should probably never happen...
-      if (PL.le.-this%PinfL) then
+      if (PL.le.-this%liq%pinf) then
          print*,"*** LIQUID CLIPPED!",PL,VF
          VF=0.0_WP; Q(2)=sum(Q(1:2)); Q(1)=0.0_WP; Q(4)=sum(Q(3:4)); Q(3)=0.0_WP
          return
@@ -136,15 +108,15 @@ contains
       ! Calculate model interface pressure
       Pint=(ZG*PL+ZL*PG)/(ZG+ZL)
       ! Setup quadratic problem
-      coeffL=(this%GammaL-1.0_WP)*Pint+2.0_WP*this%GammaL*this%PinfL
-      coeffG=(GammaG      -1.0_WP)*Pint   ! PinfG=0 for ideal gas
-      a=1.0_WP+GammaG*VF+this%GammaL*(1.0_WP-VF)
-      b=coeffL*(1.0_WP-VF)+coeffG*VF-(1.0_WP+GammaG)*VF*PL-(1.0_WP+this%GammaL)*(1.0_WP-VF)*PG
+      coeffL=(this%liq%gamma-1.0_WP)*Pint+2.0_WP*this%liq%gamma*this%liq%pinf
+      coeffG=(GammaG        -1.0_WP)*Pint   ! PinfG=0 for ideal gas
+      a=1.0_WP+GammaG*VF+this%liq%gamma*(1.0_WP-VF)
+      b=coeffL*(1.0_WP-VF)+coeffG*VF-(1.0_WP+GammaG)*VF*PL-(1.0_WP+this%liq%gamma)*(1.0_WP-VF)*PG
       d=-(coeffG*VF*PL+coeffL*(1.0_WP-VF)*PG)
       ! Get equilibrium pressure
       Peq=(-b+sqrt(b**2-4.0_WP*a*d))/(2.0_WP*a)
       ! Get equilibrium volume fraction
-      VFeq=VF*((this%GammaL-1.0_WP)*Peq+2.0_WP*PL+coeffL)/((1.0_WP+this%GammaL)*Peq+coeffL)
+      VFeq=VF*((this%liq%gamma-1.0_WP)*Peq+2.0_WP*PL+coeffL)/((1.0_WP+this%liq%gamma)*Peq+coeffL)
       ! Adjust conserved quantities
       Q(3)=Q(3)-0.5_WP*(Pint+Peq)*(VFeq-VF)
       Q(4)=Q(4)+0.5_WP*(Pint+Peq)*(VFeq-VF)
@@ -152,25 +124,25 @@ contains
       ! ================= Second step for thermal relaxation =================
       ! etaL=qL, etaG=qG, PinfG=0 (ideal gas)
       ! Setup quadratic problem
-      a=Q(1)*this%CvL+Q(2)*CvG
-      b=this%qL*this%CvL*(this%GammaL-1.0_WP)*Q(1)**2 &
+      a=Q(1)*this%liq%cv+Q(2)*CvG
+      b=this%liq%q*this%liq%cv*(this%liq%gamma-1.0_WP)*Q(1)**2 &
       &+qG*CvG*(GammaG-1.0_WP)*Q(2)**2 &
-      &+Q(1)*this%CvL*this%GammaL*this%PinfL &
-      &+Q(1)*Q(2)*(this%qL*CvG*(GammaG-1.0_WP)+qG*this%CvL*(this%GammaL-1.0_WP)) &
-      &-sum(Q(3:4))*(Q(1)*this%CvL*(this%GammaL-1.0_WP)+Q(2)*CvG*(GammaG-1.0_WP))
-      d=CvG*(GammaG-1.0_WP)*this%PinfL &
-      & *(qG*Q(2)**2+this%qL*Q(1)*Q(2)-sum(Q(3:4))*Q(2))
+      &+Q(1)*this%liq%cv*this%liq%gamma*this%liq%pinf &
+      &+Q(1)*Q(2)*(this%liq%q*CvG*(GammaG-1.0_WP)+qG*this%liq%cv*(this%liq%gamma-1.0_WP)) &
+      &-sum(Q(3:4))*(Q(1)*this%liq%cv*(this%liq%gamma-1.0_WP)+Q(2)*CvG*(GammaG-1.0_WP))
+      d=CvG*(GammaG-1.0_WP)*this%liq%pinf &
+      & *(qG*Q(2)**2+this%liq%q*Q(1)*Q(2)-sum(Q(3:4))*Q(2))
       ! Get equilibrium pressure
       Peq=(-b+sqrt(b**2-4.0_WP*a*d))/(2.0_WP*a)
       ! Check if pressure is sound
-      if (Peq.le.max(0.0_WP,-this%PinfL)) return
+      if (Peq.le.max(0.0_WP,-this%liq%pinf)) return
       ! Get equilibrium volume fraction
-      VFeq=Q(1)*this%CvL*(this%GammaL-1.0_WP)*Peq &
-          /(Q(1)*this%CvL*(this%GammaL-1.0_WP)*Peq+Q(2)*CvG*(GammaG-1.0_WP)*(Peq+this%PinfL))
+      VFeq=Q(1)*this%liq%cv*(this%liq%gamma-1.0_WP)*Peq &
+          /(Q(1)*this%liq%cv*(this%liq%gamma-1.0_WP)*Peq+Q(2)*CvG*(GammaG-1.0_WP)*(Peq+this%liq%pinf))
       ! Clean up solution
       if (VFeq.lt.0.0_WP) then
          VFeq=0.0_WP
-         Peq=max(Peq,-this%PinfL)
+         Peq=max(Peq,-this%liq%pinf)
       end if
       if (VFeq.gt.1.0_WP) then
          VFeq=1.0_WP
@@ -215,7 +187,7 @@ contains
          ! print*,'****************** Using pure LV chemical relaxation!'
          Yv=Yvmax
          y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
-         call this%igas%get_mix_coeffs(y=y,cv=CvG,cp=CpG,q=qG,gamma=GammaG)
+         call this%gas%get_mix_coeffs(y=y,cv=CvG,cp=CpG,q=qG,gamma=GammaG)
          call solve_lv(p,T,chem_relax)
       else
          call solve_lvg(p,T,Yv,chem_relax)
@@ -234,14 +206,14 @@ contains
       ! print '(A)',       '=================================='
       ! Apply the converged state
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
-      call this%igas%get_mix_coeffs(y=y,cv=CvG,cp=CpG,q=qG,gamma=GammaG)
+      call this%gas%get_mix_coeffs(y=y,cv=CvG,cp=CpG,q=qG,gamma=GammaG)
       RHOL=this%liq%get_rho_from_p_T(p,T)
       RHOG=this%gas%get_rho_from_p_T(p,T,y)
       VF=(rho0-RHOG)/(RHOL-RHOG)
       ! Clean up solution
       if (VF.lt.0.0_WP) then
          VF=0.0_WP
-         p=max(p,-this%PinfL)
+         p=max(p,-this%liq%pinf)
       end if
       if (VF.gt.1.0_WP) then
          VF=1.0_WP
@@ -283,7 +255,7 @@ contains
       !> Sanity check pressure value
       logical function check_p(pv)
          real(WP), intent(in) :: pv
-         check_p=(pv.gt.p_eps).and.((pv+this%PinfL).gt.p_eps)
+         check_p=(pv.gt.p_eps).and.((pv+this%liq%pinf).gt.p_eps)
       end function check_p
       !> Vapor mole fraction (Ideal gas mixture)
       real(WP) function get_xv(Yv_loc)
@@ -314,7 +286,7 @@ contains
             ! from saturation at the current thermally-relaxed state and
             ! then continue with the ordinary LVG Newton solve.
             ! SG saturation seed: no ES*p term
-            ppv=exp(this%AS+this%BS/T_eq+this%CS*log(T_eq)+this%DS*log(p_eq+this%PinfL))
+            ppv=exp(this%AS+this%BS/T_eq+this%CS*log(T_eq)+this%DS*log(p_eq+this%liq%pinf))
             if (.not.check_p(ppv)) then
                ! print*,"****************** Vapor partial pressure too low. Skipping the cell!"
                return
@@ -427,7 +399,7 @@ contains
       !> Function that defines p-T saturation curve (SG: no ES*p/T term)
       real(WP) function PTsat(p_l,p_v,T_eq)
          real(WP), intent(in) :: p_l,p_v,T_eq
-         PTsat=this%AS+this%BS/T_eq+this%CS*log(T_eq)+this%DS*log(p_l+this%PinfL)-log(p_v)
+         PTsat=this%AS+this%BS/T_eq+this%CS*log(T_eq)+this%DS*log(p_l+this%liq%pinf)-log(p_v)
       end function PTsat
       !> Temperature derivative of p-T saturation curve function
       real(WP) function dPTsatdT(T_eq)
@@ -437,14 +409,15 @@ contains
       !> Pressure derivative of p-T saturation curve function for pure vapor p iteration
       real(WP) function dPTsatdp_lv(p_eq,T_eq,dTdp)
          real(WP), intent(in) :: p_eq,T_eq,dTdp
-         dPTsatdp_lv=dPTsatdT(T_eq)*dTdp+this%DS/(p_eq+this%PinfL)-1.0_WP/p_eq
+         dPTsatdp_lv=dPTsatdT(T_eq)*dTdp+this%DS/(p_eq+this%liq%pinf)-1.0_WP/p_eq
       end function dPTsatdp_lv
       !> Equilibrium temperature as a function of pressure and vapor mass fraction (SG form, no bL correction)
       real(WP) function get_T_lvg(p_eq,Yv_eq)
          real(WP), intent(in) :: p_eq,Yv_eq
          get_T_lvg=(1.0_WP-Yv_eq) &
-         &        /((rho0*(1.0_WP-Yv_eq)-rhoA0)*(this%GammaL-1.0_WP)*this%CvL/(p_eq+this%PinfL) &
-         &         +rhoA0*((this%GammaV-1.0_WP)*this%CvV*Yv_eq+(this%GammaA-1.0_WP)*this%CvA*(1.0_WP-Yv_eq))/p_eq)
+         &        /((rho0*(1.0_WP-Yv_eq)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_eq+this%liq%pinf) &
+         &         +rhoA0*((this%gas%get_species_gamma(this%indV)-1.0_WP)*this%gas%get_species_cv(this%indV)*Yv_eq+   &
+         &                 (this%gas%get_species_gamma(this%indA)-1.0_WP)*this%gas%get_species_cv(this%indA)*(1.0_WP-Yv_eq))/p_eq)
       end function get_T_lvg
       !> Equilibrium temperature as a function of equilibrium pressure
       real(WP) function get_T_lv(ap,bp,dp)
@@ -479,17 +452,17 @@ contains
          real(WP), intent(in)  :: p_eq
          real(WP), intent(out) :: ap,bp,dp,dapdp,dbpdp,ddpdp
          ! Coefficients
-         ap=sum(Q(1:2))*this%CvL*CvG*((GammaG-1.0_WP)*(p_eq+this%GammaL*this%PinfL)-(this%GammaL-1.0_WP)*p_eq)
-         bp=sum(Q(3:4))*((this%GammaL-1.0_WP)*this%CvL*p_eq-(GammaG-1.0_WP)*CvG*(p_eq+this%PinfL)) &
-         &  +sum(Q(1:2))*((GammaG-1.0_WP)*CvG*this%qL*(p_eq+this%PinfL)-(this%GammaL-1.0_WP)*this%CvL*qG*p_eq) &
-         &  +CvG*p_eq*(p_eq+this%PinfL)-this%CvL*p_eq*(p_eq+this%GammaL*this%PinfL)    ! PinfG=0
-         dp=(qG-this%qL)*(p_eq+this%PinfL)*p_eq                                          ! PinfG=0
+         ap=sum(Q(1:2))*this%liq%cv*CvG*((GammaG-1.0_WP)*(p_eq+this%liq%gamma*this%liq%pinf)-(this%liq%gamma-1.0_WP)*p_eq)
+         bp=sum(Q(3:4))*((this%liq%gamma-1.0_WP)*this%liq%cv*p_eq-(GammaG-1.0_WP)*CvG*(p_eq+this%liq%pinf))  &
+         &  +sum(Q(1:2))*((GammaG-1.0_WP)*CvG*this%liq%q*(p_eq+this%liq%pinf)-(this%liq%gamma-1.0_WP)*this%liq%cv*qG*p_eq) &
+         &  +CvG*p_eq*(p_eq+this%liq%pinf)-this%liq%cv*p_eq*(p_eq+this%liq%gamma*this%liq%pinf)    ! PinfG=0
+         dp=(qG-this%liq%q)*(p_eq+this%liq%pinf)*p_eq                                               ! PinfG=0
          ! Pressure derivative of the coefficients
-         dapdp=sum(Q(1:2))*this%CvL*CvG*(GammaG-this%GammaL)
-         dbpdp=sum(Q(3:4))*((this%GammaL-1.0_WP)*this%CvL-(GammaG-1.0_WP)*CvG) &
-         &     +sum(Q(1:2))*((GammaG-1.0_WP)*CvG*this%qL-(this%GammaL-1.0_WP)*this%CvL*qG) &
-         &     +CvG*(2.0_WP*p_eq+this%PinfL)-this%CvL*(2.0_WP*p_eq+this%GammaL*this%PinfL)  ! PinfG=0
-         ddpdp=(qG-this%qL)*(2.0_WP*p_eq+this%PinfL)                                         ! PinfG=0
+         dapdp=sum(Q(1:2))*this%liq%cv*CvG*(GammaG-this%liq%gamma)
+         dbpdp=sum(Q(3:4))*((this%liq%gamma-1.0_WP)*this%liq%cv-(GammaG-1.0_WP)*CvG)                           &
+         &     +sum(Q(1:2))*((GammaG-1.0_WP)*CvG*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qG)            &
+         &     +CvG*(2.0_WP*p_eq+this%liq%pinf)-this%liq%cv*(2.0_WP*p_eq+this%liq%gamma*this%liq%pinf)  ! PinfG=0
+         ddpdp=(qG-this%liq%q)*(2.0_WP*p_eq+this%liq%pinf)                                           ! PinfG=0
       end subroutine get_coeffs_lv
       !> Pure liquid and vapor chemical relaxation (Pelanti and Shyue 2014)
       !> In the pure-vapor branch, Yv=1 so x_v=1 and p_v=p; pass p_eq for both
