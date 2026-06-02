@@ -173,8 +173,6 @@ def main():
         fig.savefig(VF_pdf)
         print(f"Saved: {VF_pdf}")
 
-    plt.show()
-
 
 if __name__ == "__main__":
     main()

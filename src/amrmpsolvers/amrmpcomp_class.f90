@@ -2199,7 +2199,7 @@ contains
             ! Only relax mixture cells
             if (pVF(i,j,k,1).lt.VFlo.or.pVF(i,j,k,1).gt.VFhi) cycle
             ! Apply user-provided relaxation model (modifies VF and Q)
-            call this%relax_model%apply(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
+            call this%relax_model%relax_pTg(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
             ! Adjust PLIC plane to match new VF
             lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
             hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]

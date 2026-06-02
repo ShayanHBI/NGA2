@@ -1,0 +1,4 @@
+f90EXE_sources += relax_class.f90 relax_sg_ig_class.f90 relax_nasg_ig_class.f90
+
+INCLUDE_LOCATIONS += $(NGA_HOME)/src/relaxation
+VPATH_LOCATIONS   += $(NGA_HOME)/src/relaxation

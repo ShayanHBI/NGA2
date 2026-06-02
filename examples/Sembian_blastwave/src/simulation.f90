@@ -15,8 +15,8 @@ module simulation
    use ig_class,          only: ig
    use igmix_class,       only: igmix
    use relax_class,       only: relax
-   use relax_sg_class,    only: relax_sg
-   use relax_nasg_class,  only: relax_nasg
+   use relax_sg_ig_class,    only: relax_sg_ig
+   use relax_nasg_ig_class,  only: relax_nasg_ig
    implicit none
    private
 
@@ -372,10 +372,10 @@ contains
          select case (trim(liquid_eos_type))
          case ('SG')
             allocate(sg :: eosL)
-            allocate(relax_sg :: relax_model)
+            allocate(relax_sg_ig :: relax_model)
          case ('NASG')
             allocate(nasg :: eosL)
-            allocate(relax_nasg :: relax_model)
+            allocate(relax_nasg_ig :: relax_model)
          case default
             call die('[simulation] Unknown Liquid EOS type: '//trim(liquid_eos_type))
          end select
@@ -392,12 +392,12 @@ contains
          call mixG%initialize(ns=2)
          call mixG%set_species(eosG)
          select type (relax_model)
-         type is (relax_sg)
+         type is (relax_sg_ig)
             select type (eosL)
             type is (sg)
                call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
             end select
-         type is (relax_nasg)
+         type is (relax_nasg_ig)
             select type (eosL)
             type is (nasg)
                call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)

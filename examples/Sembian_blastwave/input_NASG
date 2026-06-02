@@ -36,15 +36,14 @@ Gas viscosity               : 1.27e-5
 Gas Prandtl number          : 0
 Vapor Schmidt number        : 0
 
-# EOS parameters — NASG, calibrated for liquid water + steam [300–500 K]
-# Source: Le Metayer & Saurel (2016), Table V
+# EOS parameters
 Liquid EOS type                                  : NASG
-Liquid specific heat capacity at constant volume : 3.8212e+03 ! 3610
-Liquid specific heat capacity ratio              : 1.1173e+00 ! 1.19
-Liquid reference energy shift                    : -1.1711e+06 ! -1177788
+Liquid specific heat capacity at constant volume : 3.8212e+03
+Liquid specific heat capacity ratio              : 1.1173e+00
+Liquid reference energy shift                    : -1.1711e+06
 Liquid reference entropy shift                   : 0
-Liquid stiffening pressure                       : 5.0017e+08 ! 7.028e8
-Liquid co-volume                                 : 7.2341e-04 ! 6.61e-4
+Liquid stiffening pressure                       : 5.0017e+08
+Liquid co-volume                                 : 7.2341e-04
 Vapor specific heat capacity at constant volume  : 9.2906e+02
 Vapor specific heat capacity ratio               : 1.4963e+00
 Vapor reference energy shift                     : 2.1442e+06
@@ -58,9 +57,9 @@ Air reference entropy shift                      : 0
 Max dt     : 1e-7
 Initial dt : 1e-7
 Max CFL    : 0.5
-Max time   : 0.00019 ! 0.001
+Max time   : 0.0003
 
 # Output
 Output period     : 2e-5
 !Checkpoint period : 2e-4
-!Restart from      : restart/Sembian_blastwave_NASG_1.90000E-04
+Restart from      : restart/Sembian_blastwave_NASG_1.90000E-04
