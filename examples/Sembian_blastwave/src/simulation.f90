@@ -58,7 +58,7 @@ module simulation
    type(ig),     allocatable, target, save  :: eosG(:)      !< Gas-phase species EOS array
    type(igmix),  target, save               :: mixG         !< Gas mixture
    class(relax), allocatable, target, save  :: relax_model  !< Relaxation model
-   character(len=str_medium), save          :: liquid_eos_type
+   character(len=str_medium), save          :: liquid_eos_type,relaxation_type
    character(len=str_medium), save          :: case_name
 
    !> Molar mass of the gas
@@ -97,14 +97,32 @@ module simulation
 
 contains
 
-   !> Relaxation step wrapper
-   subroutine relax_step(VF,Q,Pjump)
+   !> Relaxation step wrapper for p
+   subroutine relax_p(VF,Q,Pjump)
+      implicit none
+      real(WP), intent(inout) :: VF
+      real(WP), dimension(:), intent(inout) :: Q
+      real(WP), intent(in) :: Pjump
+      call relax_model%relax_p(VF=VF,Q=Q,Pjump=Pjump)
+   end subroutine relax_p
+
+   !> Relaxation step wrapper for p and T
+   subroutine relax_pT(VF,Q,Pjump)
+      implicit none
+      real(WP), intent(inout) :: VF
+      real(WP), dimension(:), intent(inout) :: Q
+      real(WP), intent(in) :: Pjump
+      call relax_model%relax_pT(VF=VF,Q=Q,Pjump=Pjump)
+   end subroutine relax_pT
+
+   !> Relaxation step wrapper for p, T, and g
+   subroutine relax_pTg(VF,Q,Pjump)
       implicit none
       real(WP), intent(inout) :: VF
       real(WP), dimension(:), intent(inout) :: Q
       real(WP), intent(in) :: Pjump
       call relax_model%relax_pTg(VF=VF,Q=Q,Pjump=Pjump)
-   end subroutine relax_step
+   end subroutine relax_pTg
 
    !> Levelset function for 2D cylinder centered at (xcyl, 0)
    function levelset_cyl(xyz,t) result(G)
@@ -375,8 +393,14 @@ contains
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
          ! Select liquid EOS type and allocate eosL and relax_model
-         call param_read('Liquid EOS type',liquid_eos_type,default='NASG')
-         case_name='Sembian_blastwave_'//trim(liquid_eos_type)
+         call param_read('Liquid EOS type',liquid_eos_type)
+         call param_read('Relaxation type',relaxation_type)
+         select case(relaxation_type)
+         case('p','pT','pTg')
+            case_name='Sembian_blastwave_'//trim(liquid_eos_type)//'_relax_'//trim(relaxation_type)
+         case default
+            call die('Relaxation type has to be either p, pT, or pTg')
+         end select
          select case (trim(liquid_eos_type))
          case ('SG')
             allocate(sg :: eosL)
@@ -461,6 +485,7 @@ contains
          ! Check if restarting
          call param_read('Restart from',restart_dir,default='')
          restarted=(len_trim(restart_dir).gt.0)
+         if (restarted) restart_dir='restart/'//trim(case_name)//'_'//trim(adjustl(restart_dir))
          ! If restarting, read header
          if (restarted) call io%read_header(dirname=trim(restart_dir),time=restart_time,step=restart_step)
       end block handle_restart
@@ -492,7 +517,14 @@ contains
          call fs%set_thermo(eosL,mixG)
          call fs%initialize(amr=amr,name=trim(case_name))
          ! Provide relaxation step
-         fs%relax=>relax_step
+         select case(relaxation_type)
+         case('p')
+            fs%relax=>relax_p
+         case('pT')
+            fs%relax=>relax_pT
+         case('pTg')
+            fs%relax=>relax_pTg
+         end select
          ! Set initial conditions via blastwave callback
          fs%user_init=>blastwave_init
          ! Set BCs

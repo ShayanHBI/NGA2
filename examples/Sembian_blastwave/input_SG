@@ -38,6 +38,7 @@ Vapor Schmidt number        : 0
 
 # EOS parameters
 Liquid EOS type                                  : SG
+Relaxation type                                  : pTg
 Liquid specific heat capacity at constant volume : 1816
 Liquid specific heat capacity ratio              : 2.35
 Liquid reference energy shift                    : -1167000
