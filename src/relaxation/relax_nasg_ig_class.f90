@@ -1,7 +1,4 @@
-!> NASG liquid EOS relaxation model.
-!> Extends relax_sg_ig — overrides steps 1 and 2 (ODE-based, Pelanti 2022) and the two
-!> helper procedures that differ in step 3 (b co-volume corrections).  relax_pTg is
-!> inherited unchanged; polymorphic dispatch on get_T_lvg and get_coeffs_lv handles NASG.
+!> NASG liquid and ideal gas relaxation model
 module relax_nasg_ig_class
    use precision,         only: WP
    use relax_sg_ig_class, only: relax_sg_ig,Mv,Ma

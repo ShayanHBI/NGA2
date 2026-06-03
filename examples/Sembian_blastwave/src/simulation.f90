@@ -41,7 +41,7 @@ module simulation
    type(amrio) :: io
    type(event) :: save_evt
    character(len=str_medium) :: restart_dir
-   logical :: restarted
+   logical  :: restarted
    real(WP) :: restart_time
    integer  :: restart_step
 
@@ -97,6 +97,15 @@ module simulation
 
 contains
 
+   !> Relaxation step wrapper
+   subroutine relax_step(VF,Q,Pjump)
+      implicit none
+      real(WP), intent(inout) :: VF
+      real(WP), dimension(:), intent(inout) :: Q
+      real(WP), intent(in) :: Pjump
+      call relax_model%relax_pTg(VF=VF,Q=Q,Pjump=Pjump)
+   end subroutine relax_step
+
    !> Levelset function for 2D cylinder centered at (xcyl, 0)
    function levelset_cyl(xyz,t) result(G)
       real(WP), dimension(3), intent(in) :: xyz
@@ -105,7 +114,6 @@ contains
       G=0.5_WP*dcyl-sqrt((xyz(1)-xcyl)**2+xyz(2)**2+xyz(3)**2)
       if (amr%nz.eq.1) G=0.5_WP*dcyl-sqrt((xyz(1)-xcyl)**2+xyz(2)**2) ! Enable quasi-2D runs
    end function levelset_cyl
-
 
    !> Compute viscosity: constant gas and liquid, VF-weighted blend
    !> Contains commented-out Sutherland law for variable gas viscosity (dimensional form)
@@ -475,16 +483,16 @@ contains
       ! Initialize compressible multiphase solver
       create_solver: block
          use amrex_amr_module, only: amrex_bc_foextrap, amrex_bc_reflect_even, amrex_bc_reflect_odd
-         use amrmpcomp_class, only: BC_REFLECT
-         use amrdata_class,   only: interp_face_lin
+         use amrmpcomp_class,  only: BC_REFLECT
+         use amrdata_class,    only: interp_face_lin
          ! Use piecewise-linear face interpolation — FaceDivFree requires ratio==2 in all dirs
          ! but this case is quasi-2D with ref_ratio_z=1
          fs%interp_vel=interp_face_lin
          ! Assign EOS objects and create flow solver
          call fs%set_thermo(eosL,mixG)
          call fs%initialize(amr=amr,name=trim(case_name))
-         ! Provide relaxation model
-         fs%relax_model=>relax_model
+         ! Provide relaxation step
+         fs%relax=>relax_step
          ! Set initial conditions via blastwave callback
          fs%user_init=>blastwave_init
          ! Set BCs

@@ -10,7 +10,6 @@ module amrmpcomp_class
    use amrex_amr_module, only: amrex_box,amrex_boxarray,amrex_distromap,amrex_mfiter
    use eos_class,        only: eos
    use mix_class,        only: mix
-   use relax_class,      only: relax
    implicit none
    private
 
@@ -31,7 +30,7 @@ module amrmpcomp_class
       class(mix),pointer :: gas=>null()   !< Gas mixture (species ns = carrier)
 
       ! Pointer to subroutine for mixture cell relaxation
-      class(relax),pointer :: relax_model=>null()   !< Relaxation model (set before initialize)
+      procedure(relax_iface), pointer, nopass :: relax=>null()   !< Relaxation step (set before initialize)
 
       ! Pressure solver for pressure projection
       logical :: use_projection=.false.
@@ -180,6 +179,16 @@ module amrmpcomp_class
          type(amrex_box), intent(in) :: bx
          real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pCL,pCG,pPLIC
       end subroutine mpcomp_vofbc_iface
+   end interface
+
+   !> Abstract interface for relaxation step callback
+   abstract interface
+      subroutine relax_iface(VF,Q,Pjump)
+         import WP
+         real(WP), intent(inout) :: VF
+         real(WP), dimension(:), intent(inout) :: Q
+         real(WP), intent(in) :: Pjump
+      end subroutine relax_iface
    end interface
 
 contains
@@ -396,7 +405,7 @@ contains
       ! Nullify pointers
       nullify(this%user_init); nullify(this%user_tagging); nullify(this%user_bc); nullify(this%user_vofbc)
       nullify(this%liq); nullify(this%gas)
-      nullify(this%relax_model)
+      nullify(this%relax)
       if (allocated(this%Ygmin)) deallocate(this%Ygmin)
       if (allocated(this%Ygmax)) deallocate(this%Ygmax)
       ! Finalize parent
@@ -2175,7 +2184,7 @@ contains
       real(WP), dimension(3,8) :: hex
       real(WP), dimension(4) :: plane
       ! If no relaxation model was provided, return
-      if (.not.associated(this%relax_model)) return
+      if (.not.associated(this%relax)) return
       ! Return if clvl<maxlvl
       if (this%amr%clvl().lt.this%amr%maxlvl) return
       ! Start timer
@@ -2199,7 +2208,7 @@ contains
             ! Only relax mixture cells
             if (pVF(i,j,k,1).lt.VFlo.or.pVF(i,j,k,1).gt.VFhi) cycle
             ! Apply user-provided relaxation model (modifies VF and Q)
-            call this%relax_model%relax_pTg(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
+            call this%relax(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
             ! Adjust PLIC plane to match new VF
             lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
             hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]

@@ -1,6 +1,4 @@
-!> SG liquid EOS relaxation model (base for NASG).
-!> Implements the 3-step pressure-temperature-chemical PTg relaxation for SG liquid + ideal-gas mixture.
-!> relax_pT calls relax_p internally; relax_pTg calls relax_pT internally.
+!> SG liquid and ideal gas relaxation model
 module relax_sg_ig_class
    use precision,   only: WP
    use relax_class, only: relax
