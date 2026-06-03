@@ -57,7 +57,7 @@ Air reference entropy shift                      : 0
 Max dt     : 1e-7
 Initial dt : 1e-7
 Max CFL    : 0.5
-Max time   : 0.0003
+Max time   : 0.0005
 
 # Output
 Output period     : 2e-5

@@ -178,11 +178,16 @@ contains
       allocate(y(this%gas%ns))
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       call this%gas%get_mix_coeffs(y=y,cv=cvG,cp=cpG,q=qG,gamma=gammaG)
-      ! Recover equilibrium pressure from the p-relaxed state (PL=PG=Peq after relax_p)
+      ! Get densities
       RHOL=Q(1)/(       VF)
       RHOG=Q(2)/(1.0_WP-VF)
-      Peq=this%liq%get_p_from_rho_e(rho=RHOL,e=Q(3)/Q(1))
-      ! Update thermodynamic state
+      ! Recover p from the dominant phase for better numerical stability
+      if (VF.gt.0.5_WP) then
+         Peq=this%liq%get_p_from_rho_e(rho=RHOL,e=Q(3)/Q(1))
+      else
+         Peq=this%gas%get_p_from_rho_e(rho=RHOG,e=Q(4)/Q(2),y=y)
+      end if
+      ! Update phasic thermodynamic quantities
       IL=Q(3)/Q(1)
       IG=Q(4)/Q(2)
       TL=this%liq%get_T_from_p_rho(p=Peq,rho=RHOL)
@@ -197,7 +202,7 @@ contains
       ! print '(A,ES15.7)','TL  =',TL
       ! print '(A,ES15.7)','TG  =',TG
       ! print '(A)',       '==================================='
-      ! Setup the ODE coefficients
+      ! Setup ODE coefficients
       Z=(1.0_WP-VF)*GL+VF*GG
       D=VF*RHOG*CG**2+(1.0_WP-VF)*RHOL*CL**2
       PHIL=-(this%liq%gamma-1.0_WP)*this%liq%cv*RHOL**2/(Peq+this%liq%pinf)
@@ -209,10 +214,9 @@ contains
       xiTG=-PHIG*D/(RHOG/(1.0_WP-VF)*Z-zetaG*COF)
       xiTLinv=1.0_WP/xiTL
       xiTGinv=1.0_WP/xiTG
-      ! Get equilibrium VF and T
+      ! Get equilibrium VF, T ,and p
       VFeq=VF+Z/D*(TG-TL)/(xiTLinv+xiTGinv)
       Teq=(xiTL*TL+xiTG*TG)/(xiTL+xiTG)
-      ! Get equilibrium pressure
       Peq=this%get_p_eq(VFeq,Q0,qG,gammaG)
       ! Check if pressure is sound
       if (Peq.le.max(0.0_WP,-this%liq%pinf)) then
@@ -235,6 +239,7 @@ contains
       VF=VFeq
       Q(3)=(       VFeq)*this%liq%get_rhoe_from_p_rho(p=Peq,rho=RHOL)
       Q(4)=(1.0_WP-VFeq)*this%gas%get_rhoe_from_p_rho(p=Peq,rho=RHOG,y=y)
+      ! Release memory
       deallocate(Q0,y)
    end subroutine relax_nasg_ig_relax_pT
 
@@ -246,17 +251,18 @@ contains
       real(WP), intent(in) :: qG_,gammaG_
       real(WP) :: one_brho
       one_brho=1.0_WP-this%liq_nasg%b*Q0_(1)/VF_
-      relax_nasg_ig_get_p_eq=(sum(Q0_(3:4))-Q0_(1)*this%liq%q-one_brho*VF_*this%liq%gamma*this%liq%pinf/(this%liq%gamma-1.0_WP)-Q0_(2)*qG_)/(one_brho*VF_/(this%liq%gamma-1.0_WP)+(1.0_WP-VF_)/(gammaG_-1.0_WP))
+      relax_nasg_ig_get_p_eq=(sum(Q0_(3:4))-Q0_(1)*this%liq%q-one_brho*VF_*this%liq%gamma*this%liq%pinf/(this%liq%gamma-1.0_WP)-Q0_(2)*qG_)/&
+      &                      (one_brho*VF_/(this%liq%gamma-1.0_WP)+(1.0_WP-VF_)/(gammaG_-1.0_WP))
    end function relax_nasg_ig_get_p_eq
 
    !> Equilibrium T from energy conservation
    real(WP) function relax_nasg_ig_get_T_lvg(this,p_,Yv_,rho0,rhoA0)
       class(relax_nasg_ig), intent(in) :: this
       real(WP), intent(in) :: p_,Yv_,rho0,rhoA0
-      relax_nasg_ig_get_T_lvg=(1.0_WP-Yv_-this%liq_nasg%b*(rho0*(1.0_WP-Yv_)-rhoA0))/                                                                                                      &
-      &         ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)+                                                                                          &
-      &           rhoA0*((this%gas%get_species_gamma(this%indV)-1.0_WP)*this%gas%get_species_cv(this%indV)*Yv_+                                                                               &
-      &                  (this%gas%get_species_gamma(this%indA)-1.0_WP)*this%gas%get_species_cv(this%indA)*(1.0_WP-Yv_))/p_)
+      relax_nasg_ig_get_T_lvg=(1.0_WP-Yv_-this%liq_nasg%b*(rho0*(1.0_WP-Yv_)-rhoA0))/&
+      & ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)                           +&
+          rhoA0*((this%gas%get_species_gamma(this%indV)-1.0_WP)*this%gas%get_species_cv(this%indV)*Yv_              +&
+      &          (this%gas%get_species_gamma(this%indA)-1.0_WP)*this%gas%get_species_cv(this%indA)*(1.0_WP-Yv_))/p_)
    end function relax_nasg_ig_get_T_lvg
 
    !> Update the quadratic coefficients of equilibrium temperature equation
@@ -270,17 +276,17 @@ contains
       qV_    =this%gas%get_species_q(this%indV)
       ! Coefficients
       ap=rho0*this%liq%cv*cvV_*((gammaV_-this%liq%gamma)*p_eq+this%liq%gamma*(gammaV_-1.0_WP)*this%liq%pinf)
-      bp=(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq**2+                                                    &
-      &  (this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-                                                          &
+      bp=(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq**2                                                    +&
+      &  (this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)                                                          -&
       &   this%liq%gamma*this%liq%cv)+rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)+&
-      &   rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_))*p_eq+                                    &
+      &   rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_))*p_eq                                    +&
       &   (gammaV_-1.0_WP)*cvV_*this%liq%pinf*(rho0*this%liq%q-rhoe0)
       dp=p_eq*(p_eq+this%liq%pinf)*(qV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%q+this%liq_nasg%b*rhoe0)
       ! Pressure derivative of the coefficients
       dapdp=rho0*this%liq%cv*cvV_*(gammaV_-this%liq%gamma)
-      dbpdp=2.0_WP*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq+                   &
-      &     this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%gamma*this%liq%cv)+  &
-      &     rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)+&
+      dbpdp=2.0_WP*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq                                             +&
+      &     this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%gamma*this%liq%cv)                            +&
+      &     rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)                          +&
       &     rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_)
       ddpdp=(2.0_WP*p_eq+this%liq%pinf)*(qV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%q+this%liq_nasg%b*rhoe0)
    end subroutine relax_nasg_ig_get_coeffs_lv

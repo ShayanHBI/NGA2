@@ -11,8 +11,9 @@ module relax_sg_ig_class
 
    public :: relax_sg_ig,Mv,Ma
 
-   real(WP), parameter :: Mv=0.0180153_WP   !< Molar mass of vapor [kg/mol]
-   real(WP), parameter :: Ma=0.02897_WP     !< Molar mass of air [kg/mol]
+   !> Molar mass of vapor and air [kg/mol]
+   real(WP), parameter :: Mv=0.0180153_WP
+   real(WP), parameter :: Ma=0.02897_WP
 
    type, extends(relax) :: relax_sg_ig
       !> Typed EOS pointers (liq is class(sg) so nasg IS-A sg works for child class)
@@ -40,9 +41,9 @@ module relax_sg_ig_class
       procedure :: relax_pTg    =>relax_sg_ig_relax_pTg
       procedure :: get_T_lvg    =>relax_sg_ig_get_T_lvg
       procedure :: get_coeffs_lv=>relax_sg_ig_get_coeffs_lv
-      procedure :: PTsat        =>relax_sg_ig_PTsat
-      procedure :: dPTsatdT     =>relax_sg_ig_dPTsatdT
-      procedure :: dPTsatdp_lv  =>relax_sg_ig_dPTsatdp_lv
+      procedure :: pTsat        =>relax_sg_ig_pTsat
+      procedure :: dpTsatdT     =>relax_sg_ig_dpTsatdT
+      procedure :: dpTsatdp_lv  =>relax_sg_ig_dpTsatdp_lv
       procedure :: get_Tsat     =>relax_sg_ig_get_Tsat
       procedure :: get_xv       =>relax_sg_ig_get_xv
    end type relax_sg_ig
@@ -64,9 +65,9 @@ contains
       cvV=gas%get_species_cv(indV)
       RV=cpV-cvV
       this%AS=(liq%cp-cpV+gas%get_species_qp(indV)-liq%qp)/RV
-      this%BS=(liq%q -gas%get_species_q(indV))             /RV
-      this%CS=(cpV-liq%cp)                                 /RV
-      this%DS=(liq%cp-liq%cv)                              /RV
+      this%BS=(liq%q -gas%get_species_q(indV))            /RV
+      this%CS=(cpV-liq%cp)                                /RV
+      this%DS=(liq%cp-liq%cv)                             /RV
       ! ES stays 0.0_WP (SG has no co-volume b); NASG overrides this after calling parent init
    end subroutine relax_sg_ig_initialize
 
@@ -90,7 +91,6 @@ contains
       allocate(y(this%gas%ns))
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       call this%gas%get_mix_coeffs(y=y,cv=cvG,cp=cpG,q=qG,gamma=gammaG)
-      ! ================ First step for mechanical relaxation ================
       ! Get phasic pressures
       PL=this%liq%get_p_from_rho_e(Q(1)/(       VF),Q(3)/Q(1))
       PG=this%gas%get_p_from_rho_e(Q(2)/(1.0_WP-VF),Q(4)/Q(2),y)
@@ -113,14 +113,14 @@ contains
          deallocate(y)
          return
       end if
-      ! Get phasic impedances (use C^2 for the SG quadratic formulation)
+      ! Get phasic impedances
       ZL=Q(1)/(       VF)*this%liq%get_c_from_p_rho(PL,Q(1)/(       VF))**2
       ZG=Q(2)/(1.0_WP-VF)*this%gas%get_c_from_p_rho(PG,Q(2)/(1.0_WP-VF),y)**2
       ! Calculate model interface pressure
       Pint=(ZG*PL+ZL*PG)/(ZG+ZL)
       ! Setup quadratic problem
       coeffL=(this%liq%gamma-1.0_WP)*Pint+2.0_WP*this%liq%gamma*this%liq%pinf
-      coeffG=(gammaG         -1.0_WP)*Pint   ! PinfG=0 for ideal gas
+      coeffG=(gammaG        -1.0_WP)*Pint
       a=1.0_WP+gammaG*VF+this%liq%gamma*(1.0_WP-VF)
       b=coeffL*(1.0_WP-VF)+coeffG*VF-(1.0_WP+gammaG)*VF*PL-(1.0_WP+this%liq%gamma)*(1.0_WP-VF)*PG
       d=-(coeffG*VF*PL+coeffL*(1.0_WP-VF)*PG)
@@ -159,8 +159,9 @@ contains
       call this%gas%get_mix_coeffs(y=y,cv=cvG,cp=cpG,q=qG,gamma=gammaG)
       ! Setup quadratic problem
       a=Q(1)*this%liq%cv+Q(2)*cvG
-      b=this%liq%q*this%liq%cv*(this%liq%gamma-1.0_WP)*Q(1)**2+qG*cvG*(gammaG-1.0_WP)*Q(2)**2+                                           &
-      &  Q(1)*this%liq%cv*this%liq%gamma*this%liq%pinf+Q(1)*Q(2)*(this%liq%q*cvG*(gammaG-1.0_WP)+qG*this%liq%cv*(this%liq%gamma-1.0_WP))-&
+      b=this%liq%q*this%liq%cv*(this%liq%gamma-1.0_WP)*Q(1)**2+qG*cvG*(gammaG-1.0_WP)*Q(2)**2+&
+      &  Q(1)*this%liq%cv*this%liq%gamma*this%liq%pinf+Q(2)*cvG*this%liq%pinf                +&
+      &  Q(1)*Q(2)*(this%liq%q*cvG*(gammaG-1.0_WP)+qG*this%liq%cv*(this%liq%gamma-1.0_WP))   -&
       &  sum(Q(3:4))*(Q(1)*this%liq%cv*(this%liq%gamma-1.0_WP)+Q(2)*cvG*(gammaG-1.0_WP))
       d=cvG*(gammaG-1.0_WP)*this%liq%pinf*(qG*Q(2)**2+this%liq%q*Q(1)*Q(2)-sum(Q(3:4))*Q(2))
       ! Get equilibrium pressure
@@ -215,9 +216,14 @@ contains
       allocate(y(this%gas%ns))
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       call this%gas%get_mix_coeffs(y=y,cv=cvG,cp=cpG,q=qG,gamma=gammaG)
-      ! Recover p and T
-      p=this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
-      T=this%liq%get_T_from_p_rho(p=p,rho=Q(1)/VF)
+      ! Recover p and T from the dominant phase for better numerical stability
+      if (VF.gt.0.5_WP) then
+         p=this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
+         T=this%liq%get_T_from_p_rho(p=p,rho=Q(1)/VF)
+      else
+         p=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
+         T=this%gas%get_T_from_p_rho(p=p,rho=Q(2)/(1.0_WP-VF),y=y)
+      end if
       ! Store input state to the chemical relaxation algorithm
       VF0=VF
       allocate(Q0(size(Q)))
@@ -261,12 +267,13 @@ contains
       ! print '(A,ES15.7)','Yv  =',Yv
       ! print '(A,ES15.7)','VF  =',VF
       ! print '(A)',       '=================================='
-      ! Apply the converged state
+      ! Adjust vapor mass fraction and update gas EOS parameters
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       call this%gas%get_mix_coeffs(y=y,cv=cvG,cp=cpG,q=qG,gamma=gammaG)
       ! Adjust densities
       RHOL=this%liq%get_rho_from_p_T(p=p,T=T)
       RHOG=this%gas%get_rho_from_p_T(p=p,T=T,y=y)
+      ! Adjust VF
       VF=(rho0-RHOG)/(RHOL-RHOG)
       ! Clean up solution
       if (VF.lt.0.0_WP) then
@@ -342,7 +349,7 @@ contains
                return
             end if
             if (pv_.ge.p_) then
-               ! pv_sat >= p: flash regime. Seed with a small Yv so that get_T stays well-conditioned (energy balance requires Yv << 1).
+               ! pv_sat >= p: flash regime. Seed with a small Yv so that get_T stays well-conditioned.
                Yv_=sqrt(0.0001_WP)
             else
                xv=pv_/p_
@@ -351,9 +358,7 @@ contains
             Yv_=max(Yvmin,min(Yvmax,Yv_))
             ! print '(A,ES15.7)','Seeded Yv from saturation at Teq=',Yv_
          else
-            ! Get saturation temperature from total pressure and vapor partial pressure.
-            ! Use a safeguarded Newton solve rather than trusting T_ as the initial guess.
-            ! At high-T metastable states, T_ can be far above the saturation temperature corresponding to (p_,pv_).
+            ! Get saturation temperature at current pressure
             call this%get_Tsat(p_,pv_,T_,Tsat,conv,Tsat_it)
             if (.not.conv) then
                ! print*,"****************** Saturation temperature iterations blew up. Skipping the cell!!"
@@ -363,7 +368,7 @@ contains
             ! print '(A,I2)','Tsat it= ',Tsat_it
             ! print '(A,ES15.7)','Tsat   =',Tsat
             ! print '(A)',       '==================================='
-            ! Activate chemical relaxation only for metastable states
+            ! Activate chemical relaxation only for vaporizing metastable states
             if (T_.le.Tsat) return
          end if
          activate_chem=.true.
@@ -412,7 +417,7 @@ contains
             dTdp=get_dTdp_lv(ap,bp,dp,dapdp,dbpdp,ddpdp)
             ! Newton-Raphson iteration: Pure-vapor branch: Y_v=1 so the vapor mole fraction x_v=1.
             pOld=p_eq
-            p_eq=pOld-this%PTsat(pOld,pOld,T_eq)/this%dPTsatdp_lv(pOld,T_eq,dTdp)
+            p_eq=pOld-this%pTsat(pOld,pOld,T_eq)/this%dpTsatdp_lv(pOld,T_eq,dTdp)
             ! Evaluate the error
             if (abs((p_eq-pOld)/pOld).lt.this%p_tol) then
                conv=.true.
@@ -455,7 +460,7 @@ contains
             pv=xv*p_eq
             if (.not.check_pv(pv)) return
             ! Get residuals at current state
-            F1=this%PTsat(p_eq,pv,T_eq)/p_eq
+            F1=this%pTsat(p_eq,pv,T_eq)/p_eq
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
             res0=sqrt(F1**2+F2**2)
             ! Perturbation in p
@@ -465,7 +470,7 @@ contains
             ! Get the corresponding T
             T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0)
             ! Get residuals
-            F1p=this%PTsat(p_pert,ppv_pert,T_pert)/p_eq
+            F1p=this%pTsat(p_pert,ppv_pert,T_pert)/p_eq
             F2p=rhoe_res_lvg(p_pert,T_pert,Yv_eq)/rhoe0
             dF1dp=(F1p-F1)/(p_pert-p_eq)
             dF2dp=(F2p-F2)/(p_pert-p_eq)
@@ -479,7 +484,7 @@ contains
             ! Get the corresponding T
             T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0)
             ! Get residuals
-            F1Y=this%PTsat(p_eq,ppv_pert,T_pert)/p_eq
+            F1Y=this%pTsat(p_eq,ppv_pert,T_pert)/p_eq
             F2Y=rhoe_res_lvg(p_eq,T_pert,Yv_pert)/rhoe0
             dF1dYv=(F1Y-F1)/(Yv_pert-Yv_eq)
             dF2dYv=(F2Y-F2)/(Yv_pert-Yv_eq)
@@ -543,7 +548,7 @@ contains
                      alpha=0.5_WP*alpha
                      cycle
                   end if
-                  F1_try=this%PTsat(p_try,ppv_try,T_try)/p_try
+                  F1_try=this%pTsat(p_try,ppv_try,T_try)/p_try
                   F2_try=rhoe_res_lvg(p_try,T_try,Yv_try)/rhoe0
                   res_try=sqrt(F1_try**2+F2_try**2)
                   if (res_try.lt.res0) then
@@ -569,7 +574,7 @@ contains
             ! Get temperature
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
             ! Evaluate residuals
-            F1=this%PTsat(p_eq,pv,T_eq)/p_eq
+            F1=this%pTsat(p_eq,pv,T_eq)/p_eq
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
             if ((p_err.lt.this%p_tol).and.(Yv_err.lt.this%Yv_tol).and.(abs(F1).lt.this%F1_tol).and.(abs(F2).lt.this%F2_tol)) then
                conv=.true.
@@ -585,25 +590,25 @@ contains
    end subroutine relax_sg_ig_relax_pTg
 
    !> p-T saturation curve (general form: ES=0 for SG reduces exactly to the SG formula)
-   real(WP) function relax_sg_ig_PTsat(this,pl_,pv_,T_)
+   real(WP) function relax_sg_ig_pTsat(this,pl_,pv_,T_)
       class(relax_sg_ig), intent(in) :: this
       real(WP), intent(in) :: pl_,pv_,T_
-      relax_sg_ig_PTsat=this%AS+(this%BS+this%ES*pl_)/T_+this%CS*log(T_)+this%DS*log(pl_+this%liq%pinf)-log(pv_)
-   end function relax_sg_ig_PTsat
+      relax_sg_ig_pTsat=this%AS+(this%BS+this%ES*pl_)/T_+this%CS*log(T_)+this%DS*log(pl_+this%liq%pinf)-log(pv_)
+   end function relax_sg_ig_pTsat
 
-   !> d(PTsat)/dT
-   real(WP) function relax_sg_ig_dPTsatdT(this,pl_,T_)
+   !> d(pTsat)/dT
+   real(WP) function relax_sg_ig_dpTsatdT(this,pl_,T_)
       class(relax_sg_ig), intent(in) :: this
       real(WP), intent(in) :: pl_,T_
-      relax_sg_ig_dPTsatdT=-(this%BS+this%ES*pl_)/T_**2+this%CS/T_
-   end function relax_sg_ig_dPTsatdT
+      relax_sg_ig_dpTsatdT=-(this%BS+this%ES*pl_)/T_**2+this%CS/T_
+   end function relax_sg_ig_dpTsatdT
 
-   !> d(PTsat)/dp for the LV solve (pv_ = pl_)
-   real(WP) function relax_sg_ig_dPTsatdp_lv(this,p_,T_,dTdp)
+   !> d(pTsat)/dp for the LV solve (pv_ = pl_)
+   real(WP) function relax_sg_ig_dpTsatdp_lv(this,p_,T_,dTdp)
       class(relax_sg_ig), intent(in) :: this
       real(WP), intent(in) :: p_,T_,dTdp
-      relax_sg_ig_dPTsatdp_lv=this%dPTsatdT(p_,T_)*dTdp+this%ES/T_+this%DS/(p_+this%liq%pinf)-1.0_WP/p_
-   end function relax_sg_ig_dPTsatdp_lv
+      relax_sg_ig_dpTsatdp_lv=this%dpTsatdT(p_,T_)*dTdp+this%ES/T_+this%DS/(p_+this%liq%pinf)-1.0_WP/p_
+   end function relax_sg_ig_dpTsatdp_lv
 
    !> Safeguarded Newton-Raphson for saturation temperature at fixed (pl_, pv_)
    subroutine relax_sg_ig_get_Tsat(this,pl_,pv_,Tguess,Tsat,conv,Tsat_it)
@@ -620,17 +625,17 @@ contains
       ! otherwise the update falls back to bisection.
       Tlo=250.0_WP
       Thi=900.0_WP
-      Flo=this%PTsat(pl_,pv_,Tlo)
-      Fhi=this%PTsat(pl_,pv_,Thi)
-      ! Expand the bracket if needed.  In the normal liquid-vapor range PTsat is monotone in T, so these one-sided expansions are enough.
+      Flo=this%pTsat(pl_,pv_,Tlo)
+      Fhi=this%pTsat(pl_,pv_,Thi)
+      ! Expand the bracket if needed.  In the normal liquid-vapor range pTsat is monotone in T, so these one-sided expansions are enough.
       expand_it=0
       do while ((Flo*Fhi.gt.0.0_WP).and.(expand_it.lt.20))
          if ((Flo.gt.0.0_WP).and.(Fhi.gt.0.0_WP)) then
             Tlo=max(1.0_WP,0.8_WP*Tlo)
-            Flo=this%PTsat(pl_,pv_,Tlo)
+            Flo=this%pTsat(pl_,pv_,Tlo)
          else if ((Flo.lt.0.0_WP).and.(Fhi.lt.0.0_WP)) then
             Thi=1.2_WP*Thi
-            Fhi=this%PTsat(pl_,pv_,Thi)
+            Fhi=this%pTsat(pl_,pv_,Thi)
          else
             exit
          end if
@@ -644,8 +649,8 @@ contains
       Tsat=max(Tlo,min(Thi,Tguess))
       do it=1,this%Tsat_itmax
          Told=Tsat
-         Fold=this%PTsat(pl_,pv_,Told)
-         dFold=this%dPTsatdT(pl_,Told)
+         Fold=this%pTsat(pl_,pv_,Told)
+         dFold=this%dpTsatdT(pl_,Told)
          if (abs(dFold).gt.tiny(1.0_WP)) then
             Tnew=Told-Fold/dFold
          else
@@ -655,10 +660,10 @@ contains
          if ((Tnew.ne.Tnew).or.(Tnew.le.Tlo).or.(Tnew.ge.Thi)) then
             Tnew=0.5_WP*(Tlo+Thi)
          end if
-         Fnew=this%PTsat(pl_,pv_,Tnew)
+         Fnew=this%pTsat(pl_,pv_,Tnew)
          if (Fnew.ne.Fnew) then
             Tnew=0.5_WP*(Tlo+Thi)
-            Fnew=this%PTsat(pl_,pv_,Tnew)
+            Fnew=this%pTsat(pl_,pv_,Tnew)
          end if
          ! Update the bracket around the root.
          if (Flo*Fnew.le.0.0_WP) then
@@ -701,16 +706,16 @@ contains
       real(WP), intent(out) :: ap,bp,dp,dapdp,dbpdp,ddpdp
       ! Coefficients (rho0 = sum of phase masses; rhoe0 = sum of phase energies — both invariant during steps 1-2)
       ap=rho0*this%liq%cv*cvG*((GammaG-1.0_WP)*(p_eq+this%liq%gamma*this%liq%pinf)-(this%liq%gamma-1.0_WP)*p_eq)
-      bp=rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv*p_eq-(GammaG-1.0_WP)*cvG*(p_eq+this%liq%pinf))  &
-      &  +rho0*((GammaG-1.0_WP)*cvG*this%liq%q*(p_eq+this%liq%pinf)-(this%liq%gamma-1.0_WP)*this%liq%cv*qG*p_eq) &
-      &  +cvG*p_eq*(p_eq+this%liq%pinf)-this%liq%cv*p_eq*(p_eq+this%liq%gamma*this%liq%pinf)    ! PinfG=0
-      dp=(qG-this%liq%q)*(p_eq+this%liq%pinf)*p_eq                                               ! PinfG=0
+      bp=rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv*p_eq-(GammaG-1.0_WP)*cvG*(p_eq+this%liq%pinf))              +&
+      &  rho0*((GammaG-1.0_WP)*cvG*this%liq%q*(p_eq+this%liq%pinf)-(this%liq%gamma-1.0_WP)*this%liq%cv*qG*p_eq) +&
+      &  cvG*p_eq*(p_eq+this%liq%pinf)-this%liq%cv*p_eq*(p_eq+this%liq%gamma*this%liq%pinf)
+      dp=(qG-this%liq%q)*(p_eq+this%liq%pinf)*p_eq
       ! Pressure derivative of the coefficients
       dapdp=rho0*this%liq%cv*cvG*(GammaG-this%liq%gamma)
-      dbpdp=rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(GammaG-1.0_WP)*cvG)                                      &
-      &     +rho0*((GammaG-1.0_WP)*cvG*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qG)                        &
-      &     +cvG*(2.0_WP*p_eq+this%liq%pinf)-this%liq%cv*(2.0_WP*p_eq+this%liq%gamma*this%liq%pinf)  ! PinfG=0
-      ddpdp=(qG-this%liq%q)*(2.0_WP*p_eq+this%liq%pinf)                                           ! PinfG=0
+      dbpdp=rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(GammaG-1.0_WP)*cvG)                                     +&
+      &     rho0*((GammaG-1.0_WP)*cvG*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qG)                        +&
+      &     cvG*(2.0_WP*p_eq+this%liq%pinf)-this%liq%cv*(2.0_WP*p_eq+this%liq%gamma*this%liq%pinf)
+      ddpdp=(qG-this%liq%q)*(2.0_WP*p_eq+this%liq%pinf)
    end subroutine relax_sg_ig_get_coeffs_lv
 
 end module relax_sg_ig_class

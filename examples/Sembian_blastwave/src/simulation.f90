@@ -1,22 +1,22 @@
 !> Sembian blastwave case – high-pressure region initialization (dimensional)
 module simulation
-   use precision,         only: WP
-   use string,            only: str_medium
-   use amrgrid_class,     only: amrgrid
-   use amrmpcomp_class,   only: amrmpcomp
-   use amrviz_class,      only: amrviz
-   use amrdata_class,     only: amrdata
-   use timetracker_class, only: timetracker
-   use event_class,       only: event
-   use monitor_class,     only: monitor
-   use amrio_class,       only: amrio
-   use nasg_class,        only: nasg
-   use sg_class,          only: sg
-   use ig_class,          only: ig
-   use igmix_class,       only: igmix
-   use relax_class,       only: relax
-   use relax_sg_ig_class,    only: relax_sg_ig
-   use relax_nasg_ig_class,  only: relax_nasg_ig
+   use precision,           only: WP
+   use string,              only: str_medium
+   use amrgrid_class,       only: amrgrid
+   use amrmpcomp_class,     only: amrmpcomp
+   use amrviz_class,        only: amrviz
+   use amrdata_class,       only: amrdata
+   use timetracker_class,   only: timetracker
+   use event_class,         only: event
+   use monitor_class,       only: monitor
+   use amrio_class,         only: amrio
+   use nasg_class,          only: nasg
+   use sg_class,            only: sg
+   use ig_class,            only: ig
+   use igmix_class,         only: igmix
+   use relax_class,         only: relax
+   use relax_sg_ig_class,   only: relax_sg_ig
+   use relax_nasg_ig_class, only: relax_nasg_ig
    implicit none
    private
 
@@ -31,7 +31,7 @@ module simulation
    type(amrdata) :: dQdt,Umag,Mach
 
    !> Visualization
-   type(event) :: viz_evt
+   type(event)  :: viz_evt
    type(amrviz) :: viz
 
    ! Regrid parameters
@@ -48,7 +48,7 @@ module simulation
    !> Simulation monitoring
    type(monitor) :: mfile,consfile,cflfile,gridfile,tfile
 
-   !> EOS parameters (NASG liquid and ideal gas)
+   !> EOS parameters (SG/NASG liquid and ideal gas)
    real(WP) :: GammaL,PinfL,qL,qpL,CvL,CpL,bL
    real(WP) :: GammaA,qA,qpA,CvA,CpA
    real(WP) :: GammaV,qV,qpV,CvV,CpV

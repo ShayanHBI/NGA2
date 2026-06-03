@@ -15,9 +15,7 @@ module relax_class
       procedure(relax_iface), deferred :: relax_pTg
    end type relax
 
-   !> Shared interface for all three relaxation steps.
-   !> relax_pT calls relax_p internally; relax_pTg calls relax_pT internally.
-   !> The caller selects the level: relax_p for P only, relax_pT for P+T, relax_pTg for P+T+g.
+   !> Shared interface for liquid-gas relaxation
    abstract interface
       subroutine relax_iface(this,VF,Q,Pjump)
          import :: relax,WP
