@@ -1317,9 +1317,6 @@ contains
                   pFx(i,j,k,5)=sum(pFx(i,j,k,1:2))*0.5_WP*(pQold(i-1,j,k,5)/rhoLo+pQold(i,j,k,5)/rhoHi)
                   pFx(i,j,k,6)=sum(pFx(i,j,k,1:2))*0.5_WP*(pQold(i-1,j,k,6)/rhoLo+pQold(i,j,k,6)/rhoHi)
                   pFx(i,j,k,7)=sum(pFx(i,j,k,1:2))*0.5_WP*(pQold(i-1,j,k,7)/rhoLo+pQold(i,j,k,7)/rhoHi)
-                  do is=1,ns-1
-                     pFx(i,j,k,7+is)=sum(pFx(i,j,k,1:2))*0.5_WP*(pQold(i-1,j,k,7+is)/rhoLo+pQold(i,j,k,7+is)/rhoHi)
-                  end do
                end if
             end do; end do; end do
             ! Y-fluxes
@@ -1360,9 +1357,6 @@ contains
                   pFy(i,j,k,5)=sum(pFy(i,j,k,1:2))*0.5_WP*(pQold(i,j-1,k,5)/rhoLo+pQold(i,j,k,5)/rhoHi)
                   pFy(i,j,k,6)=sum(pFy(i,j,k,1:2))*0.5_WP*(pQold(i,j-1,k,6)/rhoLo+pQold(i,j,k,6)/rhoHi)
                   pFy(i,j,k,7)=sum(pFy(i,j,k,1:2))*0.5_WP*(pQold(i,j-1,k,7)/rhoLo+pQold(i,j,k,7)/rhoHi)
-                  do is=1,ns-1
-                     pFy(i,j,k,7+is)=sum(pFy(i,j,k,1:2))*0.5_WP*(pQold(i,j-1,k,7+is)/rhoLo+pQold(i,j,k,7+is)/rhoHi)
-                  end do
                end if
             end do; end do; end do
             ! Z-fluxes
@@ -1403,9 +1397,6 @@ contains
                   pFz(i,j,k,5)=sum(pFz(i,j,k,1:2))*0.5_WP*(pQold(i,j,k-1,5)/rhoLo+pQold(i,j,k,5)/rhoHi)
                   pFz(i,j,k,6)=sum(pFz(i,j,k,1:2))*0.5_WP*(pQold(i,j,k-1,6)/rhoLo+pQold(i,j,k,6)/rhoHi)
                   pFz(i,j,k,7)=sum(pFz(i,j,k,1:2))*0.5_WP*(pQold(i,j,k-1,7)/rhoLo+pQold(i,j,k,7)/rhoHi)
-                  do is=1,ns-1
-                     pFz(i,j,k,7+is)=sum(pFz(i,j,k,1:2))*0.5_WP*(pQold(i,j,k-1,7+is)/rhoLo+pQold(i,j,k,7+is)/rhoHi)
-                  end do
                end if
             end do; end do; end do
             ! Deallocate proj for this tile
@@ -1480,7 +1471,7 @@ contains
                         pFx(i,j,k,3)=0.5_WP*(pFx(i,j,k,1)-abs(pFx(i,j,k,1)))*sum(wenop*pIL(i-2:i  ,j,k,1)) &
                         &           +0.5_WP*(pFx(i,j,k,1)+abs(pFx(i,j,k,1)))*sum(wenom*pIL(i-1:i+1,j,k,1))
                      end if
-                     ! WENO gas mass, energy, and vapor mass fluxes
+                     ! WENO gas mass, energy, and species mass fluxes
                      if (any(pVF(i-1:i,j,k,1).le.VFhi)) then
                         w=weno_weight((abs(pQ(i-1,j,k,2)-pQ(i-2,j,k,2))+eps)/(abs(pQ(i,j,k,2)-pQ(i-1,j,k,2))+eps)); wenop=0.5_WP*[-w,1.0_WP+2.0_WP*w,1.0_WP-w]
                         w=weno_weight((abs(pQ(i+1,j,k,2)-pQ(i  ,j,k,2))+eps)/(abs(pQ(i,j,k,2)-pQ(i-1,j,k,2))+eps)); wenom=0.5_WP*[1.0_WP-w,1.0_WP+2.0_WP*w,-w]
@@ -1522,7 +1513,7 @@ contains
                   pFx(i,j,k,5)=pFx(i,j,k,5)+visc_f*(gradU(1,1)+gradU(1,1))+(beta_f-2.0_WP/3.0_WP*visc_f)*div
                   pFx(i,j,k,6)=pFx(i,j,k,6)+visc_f*(gradU(2,1)+gradU(1,2))
                   pFx(i,j,k,7)=pFx(i,j,k,7)+visc_f*(gradU(3,1)+gradU(1,3))
-                  ! Phasic heat and vapor diffusion flux (pure cells only)
+                  ! Phasic heat and species mass diffusion flux (pure cells only)
                   if (all(pVF(i-1:i,j,k,1).gt.VFhi)) pFx(i,j,k,3)=pFx(i,j,k,3)+0.5_WP*sum(pCond(i-1:i,j,k,1))*dxi*(pTL(i,j,k,1)-pTL(i-1,j,k,1))
                   if (all(pVF(i-1:i,j,k,1).lt.VFlo)) then
                      pFx(i,j,k,4)=pFx(i,j,k,4)+0.5_WP*sum(pCond(i-1:i,j,k,2))*dxi*(pTG(i,j,k,1)-pTG(i-1,j,k,1))
@@ -1549,7 +1540,7 @@ contains
                         pFy(i,j,k,3)=0.5_WP*(pFy(i,j,k,1)-abs(pFy(i,j,k,1)))*sum(wenop*pIL(i,j-2:j  ,k,1)) &
                         &           +0.5_WP*(pFy(i,j,k,1)+abs(pFy(i,j,k,1)))*sum(wenom*pIL(i,j-1:j+1,k,1))
                      end if
-                     ! WENO gas mass, energy, and vapor mass fluxes
+                     ! WENO gas mass, energy, and species mass fluxes
                      if (any(pVF(i,j-1:j,k,1).le.VFhi)) then
                         w=weno_weight((abs(pQ(i,j-1,k,2)-pQ(i,j-2,k,2))+eps)/(abs(pQ(i,j,k,2)-pQ(i,j-1,k,2))+eps)); wenop=0.5_WP*[-w,1.0_WP+2.0_WP*w,1.0_WP-w]
                         w=weno_weight((abs(pQ(i,j+1,k,2)-pQ(i,j  ,k,2))+eps)/(abs(pQ(i,j,k,2)-pQ(i,j-1,k,2))+eps)); wenom=0.5_WP*[1.0_WP-w,1.0_WP+2.0_WP*w,-w]
@@ -1591,7 +1582,7 @@ contains
                   pFy(i,j,k,5)=pFy(i,j,k,5)+visc_f*(gradU(1,2)+gradU(2,1))
                   pFy(i,j,k,6)=pFy(i,j,k,6)+visc_f*(gradU(2,2)+gradU(2,2))+(beta_f-2.0_WP/3.0_WP*visc_f)*div
                   pFy(i,j,k,7)=pFy(i,j,k,7)+visc_f*(gradU(3,2)+gradU(2,3))
-                  ! Phasic heat and vapor diffusion flux (pure cells only)
+                  ! Phasic heat and species mass diffusion flux (pure cells only)
                   if (all(pVF(i,j-1:j,k,1).gt.VFhi)) pFy(i,j,k,3)=pFy(i,j,k,3)+0.5_WP*sum(pCond(i,j-1:j,k,1))*dyi*(pTL(i,j,k,1)-pTL(i,j-1,k,1))
                   if (all(pVF(i,j-1:j,k,1).lt.VFlo)) then
                      pFy(i,j,k,4)=pFy(i,j,k,4)+0.5_WP*sum(pCond(i,j-1:j,k,2))*dyi*(pTG(i,j,k,1)-pTG(i,j-1,k,1))
@@ -1618,7 +1609,7 @@ contains
                         pFz(i,j,k,3)=0.5_WP*(pFz(i,j,k,1)-abs(pFz(i,j,k,1)))*sum(wenop*pIL(i,j,k-2:k  ,1)) &
                         &           +0.5_WP*(pFz(i,j,k,1)+abs(pFz(i,j,k,1)))*sum(wenom*pIL(i,j,k-1:k+1,1))
                      end if
-                     ! WENO gas mass, energy, and vapor mass fluxes
+                     ! WENO gas mass, energy, and species mass fluxes
                      if (any(pVF(i,j,k-1:k,1).le.VFhi)) then
                         w=weno_weight((abs(pQ(i,j,k-1,2)-pQ(i,j,k-2,2))+eps)/(abs(pQ(i,j,k,2)-pQ(i,j,k-1,2))+eps)); wenop=0.5_WP*[-w,1.0_WP+2.0_WP*w,1.0_WP-w]
                         w=weno_weight((abs(pQ(i,j,k+1,2)-pQ(i,j,k  ,2))+eps)/(abs(pQ(i,j,k,2)-pQ(i,j,k-1,2))+eps)); wenom=0.5_WP*[1.0_WP-w,1.0_WP+2.0_WP*w,-w]
@@ -1660,7 +1651,7 @@ contains
                   pFz(i,j,k,5)=pFz(i,j,k,5)+visc_f*(gradU(1,3)+gradU(3,1))
                   pFz(i,j,k,6)=pFz(i,j,k,6)+visc_f*(gradU(2,3)+gradU(3,2))
                   pFz(i,j,k,7)=pFz(i,j,k,7)+visc_f*(gradU(3,3)+gradU(3,3))+(beta_f-2.0_WP/3.0_WP*visc_f)*div
-                  ! Phasic heat and vapor diffusion flux (pure cells only)
+                  ! Phasic heat and species mass diffusion flux (pure cells only)
                   if (all(pVF(i,j,k-1:k,1).gt.VFhi)) pFz(i,j,k,3)=pFz(i,j,k,3)+0.5_WP*sum(pCond(i,j,k-1:k,1))*dzi*(pTL(i,j,k,1)-pTL(i,j,k-1,1))
                   if (all(pVF(i,j,k-1:k,1).lt.VFlo)) then
                      pFz(i,j,k,4)=pFz(i,j,k,4)+0.5_WP*sum(pCond(i,j,k-1:k,2))*dzi*(pTG(i,j,k,1)-pTG(i,j,k-1,1))
