@@ -202,6 +202,34 @@ contains
       real(WP), parameter :: Yv_dry=1.0e-5_WP,pv_dry=1.0_WP,Yv_pure=0.999_WP
       real(WP), parameter :: fd_eps=1.0e-8_WP,F_line_search_tol=0.1_WP
       logical :: chem_relax
+      ! Cavitation nucleation: Conservatively move a little mass and energy from liquid to vapor so the chemical relaxation starts
+      ! from a non-stiff initial condition.
+      nucleation: block
+         real(WP), parameter :: VF_cav_seed=1.0e-7_WP
+         real(WP) :: rhoL_cav,pL_cav,TL_cav,pv_sat,rhoV_cav,eV_cav,drho,de
+         real(WP) :: y_nuc(this%gas%ns)
+         if (VF.ge.1.0_WP-VF_cav_seed) then
+            rhoL_cav=Q(1)/VF
+            pL_cav=this%liq%get_p_from_rho_e(rhoL_cav,Q(3)/Q(1))
+            TL_cav=this%liq%get_T_from_p_rho(pL_cav,rhoL_cav)
+            if (pL_cav.le.-this%liq%pinf.or.TL_cav.le.0.0_WP) exit nucleation
+            ! Saturation vapor pressure at current liquid state
+            pv_sat=exp(this%AS+(this%BS+this%ES*pL_cav)/TL_cav)*TL_cav**this%CS*(pL_cav+this%liq%pinf)**this%DS
+            if (pv_sat.le.pL_cav) exit nucleation
+            ! Superheated liquid: seed a tiny vapor phase.
+            ! Transfer volumetric mass drho and its energy de from the liquid to the vapor; total rho and rhoe conserved.
+            y_nuc           =0.0_WP
+            y_nuc(this%indV)=1.0_WP
+            rhoV_cav=this%gas%get_rho_from_p_T(pL_cav,TL_cav,y_nuc)
+            eV_cav=this%gas%get_e_from_p_T(pL_cav,TL_cav,y_nuc)
+            drho=VF_cav_seed*rhoV_cav
+            de=drho*eV_cav
+            Q(1)=Q(1)-drho; Q(2)=drho
+            Q(3)=Q(3)-de;   Q(4)=de
+            Q(8)=drho
+            VF=1.0_WP-VF_cav_seed
+         end if
+      end block nucleation
       ! ================ First and second steps for mechanical and thermal relaxation ================
       call this%relax_pT(VF,Q,Pjump)
       ! ================= Third step for chemical relaxation =================
