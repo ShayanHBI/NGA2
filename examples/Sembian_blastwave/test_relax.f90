@@ -21,14 +21,14 @@
 
 
 program test_relax
-   use precision,        only: WP
-   use eos_class,        only: eos
-   use mix_class,        only: mix
-   use relax_class,      only: relax
-   use ig_class,         only: ig
-   use igmix_class,      only: igmix
-   use sg_class,         only: sg
-   use nasg_class,       only: nasg
+   use precision,           only: WP
+   use eos_class,           only: eos
+   use mix_class,           only: mix
+   use relax_class,         only: relax
+   use ig_class,            only: ig
+   use igmix_class,         only: igmix
+   use sg_class,            only: sg
+   use nasg_class,          only: nasg
    use relax_sg_ig_class,   only: relax_sg_ig
    use relax_nasg_ig_class, only: relax_nasg_ig
    implicit none
@@ -78,8 +78,8 @@ program test_relax
       print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
       print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
 
-      call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.5_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
-      ! call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=-8.0017e+08_WP,VF0=1.0_WP,Yv0=0.0_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.5_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      ! call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=-8.0017e+08_WP,VF0=1.0_WP,Yv0=0.0_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block nasg_block
 
    ! ── SG configuration ──────────────────────────────────────────────────────
