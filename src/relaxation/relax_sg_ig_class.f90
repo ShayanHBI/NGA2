@@ -22,13 +22,13 @@ module relax_sg_ig_class
       !> Saturation curve coefficients
       real(WP) :: AS=0.0_WP,BS=0.0_WP,CS=0.0_WP,DS=0.0_WP,ES=0.0_WP
       !> Convergence tolerances
-      real(WP) :: p_tol   =1.0e-4_WP
-      real(WP) :: Yv_tol  =1.0e-4_WP
+      real(WP) :: p_tol   =1.0e-5_WP
+      real(WP) :: Yv_tol  =1.0e-5_WP
       real(WP) :: Tsat_tol=1.0e-5_WP
-      real(WP) :: rho_tol =1.0e-4_WP
-      real(WP) :: rhoe_tol=1.0e-4_WP
-      real(WP) :: F1_tol  =1.0e-4_WP
-      real(WP) :: F2_tol  =1.0e-4_WP
+      real(WP) :: rho_tol =1.0e-5_WP
+      real(WP) :: rhoe_tol=1.0e-5_WP
+      real(WP) :: F1_tol  =1.0e-5_WP
+      real(WP) :: F2_tol  =1.0e-5_WP
       !> Iteration limits
       integer :: Tsat_itmax=40
       integer :: NR_itmax  =40
@@ -200,7 +200,7 @@ contains
       real(WP) :: cvG,cpG,qG,gammaG
       real(WP), parameter :: p_eps=1.0e-10_WP,VFmin=1.0e-5_WP,Yvmin=0.0_WP,Yvmax=1.0_WP
       real(WP), parameter :: Yv_dry=1.0e-5_WP,pv_dry=1.0_WP,Yv_pure=0.999_WP
-      real(WP), parameter :: fd_eps=1.0e-8_WP,F_line_search_tol=0.1_WP
+      real(WP), parameter :: fd_eps=1.0e-7_WP,F_line_search_tol=0.3_WP
       logical :: chem_relax
       ! Cavitation nucleation: Conservatively move a little mass and energy from liquid to vapor so the chemical relaxation starts
       ! from a non-stiff initial condition.
@@ -521,9 +521,7 @@ contains
       logical function activate_chem(p_,T_,Yv_)
          real(WP), intent(in)    :: p_,T_
          real(WP), intent(inout) :: Yv_
-         real(WP) :: xv,pv_,Tsat
-         integer  :: Tsat_it
-         logical  :: conv
+         real(WP) :: xv,pv_,Fsat
          activate_chem=.false.
          ! Get vapor mole fraction and partial pressure
          xv=this%get_xv(Yv_)
@@ -546,20 +544,9 @@ contains
             Yv_=max(Yvmin,min(Yvmax,Yv_))
             ! print '(A,ES15.7)','Seeded Yv from saturation at Teq=',Yv_
          else
-            ! Get saturation temperature at current pressure
-            call this%get_Tsat(p_,pv_,T_,Tsat,conv,Tsat_it)
-            if (.not.conv) then
-               ! print*,"****************** Saturation temperature iterations blew up. Skipping the cell!!"
-               return
-            end if
-            ! print '(A)',       '========== Finding Tsat ==========='
-            ! print '(A,I2)','Tsat it= ',Tsat_it
-            ! print '(A,ES15.7)','Tsat   =',Tsat
-            ! print '(A)',       '==================================='
-            ! Activate chemical relaxation only for vaporizing metastable states
-            ! if (T_.le.Tsat) return
-            ! Activate chemical relaxation for either vaporization or condensation
-            if (abs((T_-Tsat)/Tsat).le.this%Tsat_tol) return
+            ! Direct saturation residual. No Tsat solve needed.
+            Fsat=this%pTsat(p_,pv_,T_)
+            if (abs(Fsat).lt.this%F1_tol) return
          end if
          activate_chem=.true.
       end function activate_chem
@@ -650,7 +637,7 @@ contains
             pv=xv*p_eq
             if (.not.check_pv(pv)) return
             ! Get residuals at current state
-            F1=this%pTsat(p_eq,pv,T_eq)/p_eq
+            F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
             res0=sqrt(F1**2+F2**2)
             ! Perturbation in p
@@ -660,7 +647,7 @@ contains
             ! Get the corresponding T
             T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0)
             ! Get residuals
-            F1p=this%pTsat(p_pert,ppv_pert,T_pert)/p_eq
+            F1p=this%pTsat(p_pert,ppv_pert,T_pert)
             F2p=rhoe_res_lvg(p_pert,T_pert,Yv_eq)/rhoe0
             dF1dp=(F1p-F1)/(p_pert-p_eq)
             dF2dp=(F2p-F2)/(p_pert-p_eq)
@@ -674,7 +661,7 @@ contains
             ! Get the corresponding T
             T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0)
             ! Get residuals
-            F1Y=this%pTsat(p_eq,ppv_pert,T_pert)/p_eq
+            F1Y=this%pTsat(p_eq,ppv_pert,T_pert)
             F2Y=rhoe_res_lvg(p_eq,T_pert,Yv_pert)/rhoe0
             dF1dYv=(F1Y-F1)/(Yv_pert-Yv_eq)
             dF2dYv=(F2Y-F2)/(Yv_pert-Yv_eq)
@@ -738,7 +725,7 @@ contains
                      alpha=0.5_WP*alpha
                      cycle
                   end if
-                  F1_try=this%pTsat(p_try,ppv_try,T_try)/p_try
+                  F1_try=this%pTsat(p_try,ppv_try,T_try)
                   F2_try=rhoe_res_lvg(p_try,T_try,Yv_try)/rhoe0
                   res_try=sqrt(F1_try**2+F2_try**2)
                   if (res_try.lt.res0) then
@@ -764,7 +751,7 @@ contains
             ! Get temperature
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
             ! Evaluate residuals
-            F1=this%pTsat(p_eq,pv,T_eq)/p_eq
+            F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
             if ((p_err.lt.this%p_tol).and.(Yv_err.lt.this%Yv_tol).and.(abs(F1).lt.this%F1_tol).and.(abs(F2).lt.this%F2_tol)) then
                conv=.true.
@@ -907,5 +894,6 @@ contains
       &     cvG*(2.0_WP*p_eq+this%liq%pinf)-this%liq%cv*(2.0_WP*p_eq+this%liq%gamma*this%liq%pinf)
       ddpdp=(qG-this%liq%q)*(2.0_WP*p_eq+this%liq%pinf)
    end subroutine relax_sg_ig_get_coeffs_lv
+
 
 end module relax_sg_ig_class

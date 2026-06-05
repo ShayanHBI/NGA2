@@ -78,7 +78,7 @@ program test_relax
       print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
       print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
 
-      call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.0_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.5_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block nasg_block
 
    ! ── SG configuration ──────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ program test_relax
       call gas%initialize(ns=2); call gas%set_species(gas_species)
       call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
 
-      call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.0_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.5_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block sg_block
 
 contains
