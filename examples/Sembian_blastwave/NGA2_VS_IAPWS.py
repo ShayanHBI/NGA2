@@ -20,10 +20,10 @@ CURVES = {
 }
 
 PLOTS = [                                        # (csv_col, iapws_col, ylabel, log)
-    ("p",    "p_sat", r"$p\;[\mathrm{Pa}]$",                     True ),
-    ("hG",   "hg",    r"$h_g\;[\mathrm{J\,kg^{-1}}]$",           False),
+    ("pV",    "p_sat", r"$p\;[\mathrm{Pa}]$",                     True ),
+    ("hV",   "hg",    r"$h_v\;[\mathrm{J\,kg^{-1}}]$",           False),
     ("rhoL", "rhoL",  r"$\rho_l\;[\mathrm{kg\,m^{-3}}]$",        False),
-    ("rhoG", "rhoG",  r"$\rho_g\;[\mathrm{kg\,m^{-3}}]$",        False),
+    ("rhoV", "rhoG",  r"$\rho_v\;[\mathrm{kg\,m^{-3}}]$",        False),
 ]
 
 OUTPUT = "NGA2_VS_IAPWS.pdf"

@@ -2159,6 +2159,91 @@ contains
    end subroutine clean_Q
 
    !> Apply relaxation to mixture cells
+   ! subroutine apply_relax(this,time)
+   !    use mpi_f08, only: MPI_Wtime
+   !    use amrvof_geometry, only: get_plane_dist,cut_hex_vol
+   !    implicit none
+   !    class(amrmpcomp), intent(inout) :: this
+   !    real(WP), intent(in) :: time
+   !    integer :: lvl,i,j,k
+   !    real(WP) :: t0
+   !    type(amrex_mfiter) :: mfi
+   !    type(amrex_box) :: bx
+   !    real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC
+   !    real(WP) :: dx,dy,dz,cell_vol,vol_liq,vol_gas
+   !    real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas
+   !    real(WP), dimension(3,8) :: hex
+   !    real(WP), dimension(4) :: plane
+   !    ! If no relaxation model was provided, return
+   !    if (.not.associated(this%relax)) return
+   !    ! Return if clvl<maxlvl
+   !    if (this%amr%clvl().lt.this%amr%maxlvl) return
+   !    ! Start timer
+   !    t0=MPI_Wtime()
+   !    ! Apply relaxation on finest level only (mixture cells are always at finest)
+   !    lvl=this%amr%maxlvl
+   !    dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl)
+   !    cell_vol=this%amr%cell_vol(lvl)
+   !    call this%amr%mfiter_build(lvl,mfi)
+   !    do while (mfi%next())
+   !       ! Get pointers to data
+   !       pVF  =>this%VF%mf(lvl)%dataptr(mfi)
+   !       pQ   =>this%Q%mf(lvl)%dataptr(mfi)
+   !       pCL  =>this%CL%dataptr(mfi)
+   !       pCG  =>this%CG%dataptr(mfi)
+   !       pCurv=>this%curv%dataptr(mfi)
+   !       pPLIC=>this%plic%dataptr(mfi)
+   !       ! Loop over all cells
+   !       bx=mfi%growntilebox(this%nover)
+   !       do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+   !          ! Only relax mixture cells
+   !          if (pVF(i,j,k,1).lt.VFlo.or.pVF(i,j,k,1).gt.VFhi) cycle
+   !          ! Apply user-provided relaxation model (modifies VF and Q)
+   !          call this%relax(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
+   !          ! Adjust PLIC plane to match new VF
+   !          lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
+   !          hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]
+   !          ! Reposition plane: keep normal, adjust distance for new VF
+   !          pPLIC(i,j,k,4)=get_plane_dist(pPLIC(i,j,k,1:3),lo,hi,pVF(i,j,k,1))
+   !          ! Recompute barycenters from adjusted PLIC
+   !          hex(:,1)=[lo(1),lo(2),lo(3)]
+   !          hex(:,2)=[hi(1),lo(2),lo(3)]
+   !          hex(:,3)=[hi(1),hi(2),lo(3)]
+   !          hex(:,4)=[lo(1),hi(2),lo(3)]
+   !          hex(:,5)=[lo(1),lo(2),hi(3)]
+   !          hex(:,6)=[hi(1),lo(2),hi(3)]
+   !          hex(:,7)=[hi(1),hi(2),hi(3)]
+   !          hex(:,8)=[lo(1),hi(2),hi(3)]
+   !          plane=pPLIC(i,j,k,:)
+   !          call cut_hex_vol(hex,plane,vol_liq,vol_gas,bary_liq,bary_gas)
+   !          pVF(i,j,k,1)=vol_liq/cell_vol
+   !          pCL(i,j,k,1:3)=bary_liq
+   !          pCG(i,j,k,1:3)=bary_gas
+   !          ! Ensure consistency with modified VF
+   !          if (pVF(i,j,k,1).lt.VFlo) then
+   !             ! Pure gas
+   !             pVF(i,j,k,1)=0.0_WP
+   !             pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+   !             pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+   !             pQ(i,j,k,1)=0.0_WP
+   !             pQ(i,j,k,3)=0.0_WP
+   !             pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,-1.0e10_WP]
+   !          else if (pVF(i,j,k,1).gt.VFhi) then
+   !             ! Pure liquid
+   !             pVF(i,j,k,1)=1.0_WP
+   !             pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+   !             pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+   !             pQ(i,j,k,2)=0.0_WP
+   !             pQ(i,j,k,4)=0.0_WP
+   !             pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,+1.0e10_WP]
+   !          end if
+   !       end do; end do; end do
+   !    end do
+   !    call this%amr%mfiter_destroy(mfi)
+   !    ! End timer
+   !    this%wt_relax=this%wt_relax+(MPI_Wtime()-t0)
+   ! end subroutine apply_relax
+
    subroutine apply_relax(this,time)
       use mpi_f08, only: MPI_Wtime
       use amrvof_geometry, only: get_plane_dist,cut_hex_vol
@@ -2170,6 +2255,7 @@ contains
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC
+      logical :: oldmix,newmix
       real(WP) :: dx,dy,dz,cell_vol,vol_liq,vol_gas
       real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas
       real(WP), dimension(3,8) :: hex
@@ -2193,13 +2279,42 @@ contains
          pCG  =>this%CG%dataptr(mfi)
          pCurv=>this%curv%dataptr(mfi)
          pPLIC=>this%plic%dataptr(mfi)
-         ! Loop over all cells
-         bx=mfi%growntilebox(this%nover)
+         ! Loop over valid cells
+         bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-            ! Only relax mixture cells
-            if (pVF(i,j,k,1).lt.VFlo.or.pVF(i,j,k,1).gt.VFhi) cycle
+
+            ! Check if mixture cell prior to relaxation
+            oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
             ! Apply user-provided relaxation model (modifies VF and Q)
             call this%relax(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
+            ! Check if mixture cell after relaxation
+            newmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
+
+            ! If not mixture cells, clean up and cycle
+            if (.not.newmix) then
+               if (pVF(i,j,k,1).lt.VFlo) then
+                  ! Pure gas
+                  pVF(i,j,k,1)=0.0_WP
+                  pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pQ(i,j,k,1)=0.0_WP
+                  pQ(i,j,k,3)=0.0_WP
+                  pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,-1.0e10_WP]
+               else if (pVF(i,j,k,1).gt.VFhi) then
+                  ! Pure liquid
+                  pVF(i,j,k,1)=1.0_WP
+                  pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pQ(i,j,k,2)=0.0_WP
+                  pQ(i,j,k,4)=0.0_WP
+                  pQ(i,j,k,8:this%nQ)=0.0_WP
+                  pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,+1.0e10_WP]
+               end if
+               cycle
+            end if
+
+            ! If mixture cell, post-process PLIC and barycenters
+            if (.not.oldmix) pPLIC(i,j,k,1:3)=[1.0_WP,0.0_WP,0.0_WP]
             ! Adjust PLIC plane to match new VF
             lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
             hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]
@@ -2219,27 +2334,13 @@ contains
             pVF(i,j,k,1)=vol_liq/cell_vol
             pCL(i,j,k,1:3)=bary_liq
             pCG(i,j,k,1:3)=bary_gas
-            ! Ensure consistency with modified VF
-            if (pVF(i,j,k,1).lt.VFlo) then
-               ! Pure liquid
-               pVF(i,j,k,1)=0.0_WP
-               pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
-               pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
-               pQ(i,j,k,1)=0.0_WP
-               pQ(i,j,k,3)=0.0_WP
-               pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,-1.0e10_WP]
-            else if (pVF(i,j,k,1).gt.VFhi) then
-               ! Pure gas
-               pVF(i,j,k,1)=1.0_WP
-               pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
-               pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
-               pQ(i,j,k,2)=0.0_WP
-               pQ(i,j,k,4)=0.0_WP
-               pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,+1.0e10_WP]
-            end if
+
          end do; end do; end do
       end do
       call this%amr%mfiter_destroy(mfi)
+      ! Sync and apply BC
+      call this%VF%average_down(); call this%fill(lvl=this%amr%maxlvl,time=time)
+      call this%Q%average_down(); call this%Q%fill(time=time)
       ! End timer
       this%wt_relax=this%wt_relax+(MPI_Wtime()-t0)
    end subroutine apply_relax

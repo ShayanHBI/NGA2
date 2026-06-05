@@ -202,6 +202,8 @@ contains
       real(WP), parameter :: Yv_dry=1.0e-5_WP,pv_dry=1.0_WP,Yv_pure=0.999_WP
       real(WP), parameter :: fd_eps=1.0e-8_WP,F_line_search_tol=0.1_WP
       logical :: chem_relax
+      ! Skip gas cells for now
+      if (VF.eq.0.0_WP) return
       ! Cavitation nucleation: Conservatively move a little mass and energy from liquid to vapor so the chemical relaxation starts
       ! from a non-stiff initial condition.
       nucleation: block

@@ -440,9 +440,9 @@ def plot_saturation(results, sat_data,
         (axes[0, 0], r"$p\;[\mathrm{Pa}]$",                    True ),
         (axes[0, 1], r"$L_v\;[\mathrm{J\,kg^{-1}}]$",          False),
         (axes[0, 2], r"$h_l\;[\mathrm{J\,kg^{-1}}]$",          False),
-        (axes[1, 0], r"$h_g\;[\mathrm{J\,kg^{-1}}]$",          False),
+        (axes[1, 0], r"$h_v\;[\mathrm{J\,kg^{-1}}]$",          False),
         (axes[1, 1], r"$v_l\;[\mathrm{m^3\,kg^{-1}}]$",        False),
-        (axes[1, 2], r"$v_g\;[\mathrm{m^3\,kg^{-1}}]$",        True ),
+        (axes[1, 2], r"$v_v\;[\mathrm{m^3\,kg^{-1}}]$",        True ),
     ]
 
     ref_curves = [p_ref, Lv_ref, hl_ref, hg_ref, vl_ref, vg_ref]
