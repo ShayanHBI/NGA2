@@ -85,7 +85,7 @@ for ax, (col, ref_col, ylabel, log) in zip(axes.flat, PLOTS):
             continue
         mfc = col_ if filled.get(label, True) else "none"
         (ax.semilogy if log else ax.plot)(
-            df["T"], df[col], markevery=5, marker=mk, ms=5, lw=0,
+            df["T"], df[col], markevery=8, marker=mk, ms=5, lw=0,
             markerfacecolor=mfc, markeredgecolor=col_, markeredgewidth=1.5,
             label=label, zorder=4)
 

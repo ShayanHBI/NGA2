@@ -342,92 +342,51 @@ contains
       ! print '(A,ES15.7)','VF  =',VF
       ! print '(A,ES15.7)','T   =',T
       ! print '(A)',       '==================================='
-      ! Check whether a stable pure phase state exists.  This is the phase-change trigger from
-      ! Caze et al.: use the conserved rho and rhoe of the cell and ask whether they admit a
-      ! stable pure-liquid or pure-vapor state.  Only if no such state exists do we solve the
-      ! saturated mixture problem.
+      ! Check whether a stable pure phase state exists.
       pure_phase_bounds: block
          real(WP), parameter :: rhoA_pure=1.0e-12_WP
          real(WP) :: rhoL_pure,eL_pure,pL_pure,TL_pure,Tsat_pure
          real(WP) :: rhoV_pure,eV_pure,pV_pure,TV_pure
-         real(WP) :: rhoV0,Yv_gas,pG_pure,TG_pure,xv_gas,pv_gas
          integer  :: Tsat_it_pure
          logical  :: conv_pure
 
-         if (rho0.le.0.0_WP.or.rhoe0.le.0.0_WP) exit pure_phase_bounds
+         if (rhoA0/rho0.gt.rhoA_pure) exit pure_phase_bounds
 
-         if (rhoA0/rho0.le.rhoA_pure) then
-            ! Try pure liquid: rho_l = rho0, e_l = rhoe0/rho0.
-            rhoL_pure=rho0
-            eL_pure=rhoe0/rho0
-            pL_pure=this%liq%get_p_from_rho_e(rhoL_pure,eL_pure)
-            TL_pure=this%liq%get_T_from_p_rho(pL_pure,rhoL_pure)
+         ! Try pure liquid: rho_l = rho0, e_l = rhoe0/rho0.
+         rhoL_pure=rho0
+         eL_pure=rhoe0/rho0
+         pL_pure=this%liq%get_p_from_rho_e(rhoL_pure,eL_pure)
+         TL_pure=this%liq%get_T_from_p_rho(pL_pure,rhoL_pure)
 
-            if (pL_pure.gt.p_eps.and.TL_pure.gt.0.0_WP) then
-               call this%get_Tsat(pL_pure,pL_pure,TL_pure,Tsat_pure,conv_pure,Tsat_it_pure)
+         if (pL_pure.gt.-this%liq%pinf.and.TL_pure.gt.0.0_WP) then
+            call this%get_Tsat(pL_pure,pL_pure,TL_pure,Tsat_pure,conv_pure,Tsat_it_pure)
 
-               if (conv_pure.and.TL_pure.le.Tsat_pure*(1.0_WP+this%Tsat_tol)) then
-                  VF=1.0_WP
-                  Q(1)=rho0;     Q(2)=0.0_WP
-                  Q(3)=rhoe0;    Q(4)=0.0_WP
-                  Q(8)=0.0_WP
-                  call dealloc()
-                  return
-               end if
+            if (conv_pure.and.TL_pure.lt.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
+               VF=1.0_WP
+               Q(1)=rho0;     Q(2)=0.0_WP
+               Q(3)=rhoe0;    Q(4)=0.0_WP
+               Q(8)=0.0_WP
+               call dealloc()
+               return
             end if
+         end if
 
-            ! Try pure vapor: rho_v = rho0, e_v = rhoe0/rho0.
-            rhoV_pure=rho0
-            eV_pure=rhoe0/rho0
-            y=0.0_WP
-            y(this%indV)=1.0_WP
-            pV_pure=this%gas%get_p_from_rho_e(rhoV_pure,eV_pure,y)
-            TV_pure=this%gas%get_T_from_p_rho(pV_pure,rhoV_pure,y)
+         ! Try pure vapor: rho_v = rho0, e_v = rhoe0/rho0.
+         rhoV_pure=rho0
+         eV_pure=rhoe0/rho0
+         pV_pure=this%gas%get_p_from_rho_e(rhoV_pure,eV_pure,[1.0_WP,0.0_WP])
+         TV_pure=this%gas%get_T_from_p_rho(pV_pure,rhoV_pure,[1.0_WP,0.0_WP])
 
-            if (pV_pure.gt.p_eps.and.TV_pure.gt.0.0_WP) then
-               call this%get_Tsat(pV_pure,pV_pure,TV_pure,Tsat_pure,conv_pure,Tsat_it_pure)
+         if (pV_pure.gt.0.0_WP.and.TV_pure.gt.0.0_WP) then
+            call this%get_Tsat(pV_pure,pV_pure,TV_pure,Tsat_pure,conv_pure,Tsat_it_pure)
 
-               if (conv_pure.and.TV_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
-                  VF=0.0_WP
-                  Q(1)=0.0_WP;   Q(2)=rho0
-                  Q(3)=0.0_WP;   Q(4)=rhoe0
-                  Q(8)=rho0
-                  call dealloc()
-                  return
-               end if
-            end if
-         else
-            ! With non-condensable gas, the literal pure-liquid/pure-vapor tests from the
-            ! two-phase paper cannot be used directly because dry air cannot be assigned to
-            ! the liquid.  The useful bound is the all-water-as-vapor gas state: if that state
-            ! is stable/superheated, no condensation is needed.
-            rhoV0=rho0-rhoA0
-            if (rhoV0.le.0.0_WP) exit pure_phase_bounds
-
-            Yv_gas=rhoV0/rho0
-            Yv_gas=max(Yvmin,min(Yvmax,Yv_gas))
-            y=0.0_WP
-            y(this%indV)=Yv_gas
-            y(this%indA)=1.0_WP-Yv_gas
-
-            pG_pure=this%gas%get_p_from_rho_e(rho0,rhoe0/rho0,y)
-            TG_pure=this%gas%get_T_from_p_rho(pG_pure,rho0,y)
-
-            if (pG_pure.gt.p_eps.and.TG_pure.gt.0.0_WP) then
-               xv_gas=this%get_xv(Yv_gas)
-               pv_gas=xv_gas*pG_pure
-               if (check_pv(pv_gas)) then
-                  call this%get_Tsat(pG_pure,pv_gas,TG_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-
-                  if (conv_pure.and.TG_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
-                     VF=0.0_WP
-                     Q(1)=0.0_WP;   Q(2)=rho0
-                     Q(3)=0.0_WP;   Q(4)=rhoe0
-                     Q(8)=rhoV0
-                     call dealloc()
-                     return
-                  end if
-               end if
+            if (conv_pure.and.TV_pure.gt.Tsat_pure*(1.0_WP+this%Tsat_tol)) then
+               VF=0.0_WP
+               Q(1)=0.0_WP;   Q(2)=rho0
+               Q(3)=0.0_WP;   Q(4)=rhoe0
+               Q(8)=rho0
+               call dealloc()
+               return
             end if
          end if
       end block pure_phase_bounds

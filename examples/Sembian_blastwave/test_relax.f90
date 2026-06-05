@@ -68,17 +68,17 @@ program test_relax
       call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
 
       ! Single-cell test
-      call make_Q(liq,gas,p=1e5_WP,T=350.0_WP,VF_in=0.5_WP,Yv_in=0.5_WP,VF=VF,Q=Q0)
+      call make_Q(liq,gas,p=1e5_WP,T=310.0_WP,VF_in=0.0_WP,Yv_in=0.5_WP,VF=VF,Q=Q0)
       VF0=VF; VF=VF0; Q=Q0; call rm%relax_pTg(VF=VF,Q=Q,Pjump=0.0_WP)
       call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
       print '(/,A)','── NASG  initial ───────────────────────────────────────────'
-      print '(3(A,ES12.4,3X))','VF=',VF0,'p=',PL,'pG=',PG,'T=',TL,'TG=',TG,'Yv=',Yv
+      print '(3(A,ES12.4,3X))','VF=',VF0,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
       call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
       print '(A)',  '── NASG  post-relax ────────────────────────────────────────'
       print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
       print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
 
-      call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.5_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.0_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block nasg_block
 
    ! ── SG configuration ──────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ program test_relax
       call gas%initialize(ns=2); call gas%set_species(gas_species)
       call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
 
-      call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.5_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.0_WP,Yv0=0.5_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block sg_block
 
 contains
@@ -161,41 +161,148 @@ contains
    end subroutine make_Q
 
    ! ── Extract primitives from (VF,Q) ───────────────────────────────────────
+   ! subroutine get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv,pV,rhoV,hV)
+   !    class(eos), intent(in)  :: liq
+   !    class(mix), intent(in)  :: gas
+   !    real(WP),   intent(in)  :: VF,Q(8)
+   !    real(WP),   intent(out) :: PL,PG,rhoL,rhoG,TL,TG,Yv
+   !    real(WP), optional, intent(out) :: pV,rhoV,hV
+   !    real(WP) :: y(2)
+   !    if (Q(2).gt.0.0_WP) then
+   !       Yv=Q(8)/max(Q(2),tiny(1.0_WP))
+   !    else
+   !       Yv=0.0_WP
+   !    end if
+   !    y=[Yv,1.0_WP-Yv]
+   !    if (VF.gt.0.0_WP.and.Q(1).gt.0.0_WP) then
+   !       rhoL=Q(1)/VF
+   !       PL=liq%get_p_from_rho_e(rhoL,Q(3)/Q(1))
+   !       TL=liq%get_T_from_p_rho(PL,rhoL)
+   !    else
+   !       rhoL=0.0_WP
+   !       PL=0.0_WP
+   !       TL=0.0_WP
+   !    end if
+   !    if (VF.lt.1.0_WP.and.Q(2).gt.0.0_WP) then
+   !       rhoG=Q(2)/(1.0_WP-VF)
+   !       PG=gas%get_p_from_rho_e(rhoG,Q(4)/Q(2),y)
+   !       TG=gas%get_T_from_p_rho(PG,rhoG,y)
+   !    else
+   !       rhoG=0.0_WP
+   !       PG=0.0_WP
+   !       TG=0.0_WP
+   !    end if
+   !    PL=liq%get_p_from_rho_e(rhoL,Q(3)/max(Q(1),tiny(1.0_WP)))
+   !    PG=gas%get_p_from_rho_e(rhoG,Q(4)/max(Q(2),tiny(1.0_WP)),y)
+   !    TL=liq%get_T_from_p_rho(PL,rhoL)
+   !    TG=gas%get_T_from_p_rho(PG,rhoG,y)
+   !    if (present(pV)) then
+   !       pV=Yv*Ma/(Yv*Ma+(1.0_WP-Yv)*Mv)*PG
+   !       if (present(rhoV)) rhoV=gas%get_rho_from_p_T(p=pV,T=TG,y=[1.0_WP,0.0_WP])
+   !       if (present(hV))   hV  =gas%get_h_from_p_T(p=pV,T=TG,y=[1.0_WP,0.0_WP])
+   !    end if
+   ! end subroutine get_thermo
+
+      ! ── Extract primitives from (VF,Q) ───────────────────────────────────────
    subroutine get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv,pV,rhoV,hV)
       class(eos), intent(in)  :: liq
       class(mix), intent(in)  :: gas
       real(WP),   intent(in)  :: VF,Q(8)
       real(WP),   intent(out) :: PL,PG,rhoL,rhoG,TL,TG,Yv
       real(WP), optional, intent(out) :: pV,rhoV,hV
-      real(WP) :: y(2)
+
+      real(WP) :: y(2),Xv
+
+      ! Gas composition
       if (Q(2).gt.0.0_WP) then
-         Yv=Q(8)/max(Q(2),tiny(1.0_WP))
+         Yv=Q(8)/Q(2)
+         Yv=min(max(Yv,0.0_WP),1.0_WP)
       else
          Yv=0.0_WP
       end if
+
       y=[Yv,1.0_WP-Yv]
-      if (VF.gt.0.0_WP) then
+
+      ! Liquid phase
+      if (VF.gt.0.0_WP.and.Q(1).gt.0.0_WP) then
          rhoL=Q(1)/VF
+         PL  =liq%get_p_from_rho_e(rhoL,Q(3)/Q(1))
+         TL  =liq%get_T_from_p_rho(PL,rhoL)
       else
          rhoL=0.0_WP
+         PL  =0.0_WP
+         TL  =0.0_WP
       end if
-      if (VF.gt.0.0_WP) then
+
+      ! Gas phase
+      if (VF.lt.1.0_WP.and.Q(2).gt.0.0_WP) then
          rhoG=Q(2)/(1.0_WP-VF)
+         PG  =gas%get_p_from_rho_e(rhoG,Q(4)/Q(2),y)
+         TG  =gas%get_T_from_p_rho(PG,rhoG,y)
       else
          rhoG=0.0_WP
+         PG  =0.0_WP
+         TG  =0.0_WP
       end if
-      PL=liq%get_p_from_rho_e(rhoL,Q(3)/max(Q(1),tiny(1.0_WP)))
-      PG=gas%get_p_from_rho_e(rhoG,Q(4)/max(Q(2),tiny(1.0_WP)),y)
-      TL=liq%get_T_from_p_rho(PL,rhoL)
-      TG=gas%get_T_from_p_rho(PG,rhoG,y)
+
+      ! Optional vapor partial pressure, vapor density, and vapor enthalpy.
+      ! These are meaningful only when the gas phase exists.
       if (present(pV)) then
-         pV=Yv*Ma/(Yv*Ma+(1.0_WP-Yv)*Mv)*PG
-         if (present(rhoV)) rhoV=gas%get_rho_from_p_T(p=pV,T=TG,y=[1.0_WP,0.0_WP])
-         if (present(hV))   hV  =gas%get_h_from_p_T(p=pV,T=TG,y=[1.0_WP,0.0_WP])
+         if (VF.lt.1.0_WP.and.Q(2).gt.0.0_WP) then
+            Xv=Yv*Ma/(Yv*Ma+(1.0_WP-Yv)*Mv)
+            pV=Xv*PG
+         else
+            pV=0.0_WP
+         end if
       end if
+
+      if (present(rhoV)) then
+         if (VF.lt.1.0_WP.and.Q(2).gt.0.0_WP) then
+            Xv=Yv*Ma/(Yv*Ma+(1.0_WP-Yv)*Mv)
+            rhoV=gas%get_rho_from_p_T(p=Xv*PG,T=TG,y=[1.0_WP,0.0_WP])
+         else
+            rhoV=0.0_WP
+         end if
+      end if
+
+      if (present(hV)) then
+         if (VF.lt.1.0_WP.and.Q(2).gt.0.0_WP) then
+            Xv=Yv*Ma/(Yv*Ma+(1.0_WP-Yv)*Mv)
+            hV=gas%get_h_from_p_T(p=Xv*PG,T=TG,y=[1.0_WP,0.0_WP])
+         else
+            hV=0.0_WP
+         end if
+      end if
+
    end subroutine get_thermo
 
    ! ── Sweep T and write saturation-curve CSV ────────────────────────────────
+   !> Columns: T [K], pv [Pa], Yv [-], VF [-], rhoL [kg/m^3], rhoV [kg/m^3], hV [J/kg]
+   ! subroutine write_PTg_curve(file,liq,gas,rm,p0,VF0,Yv0,Tmin,Tmax,nT)
+   !    character(len=*),  intent(in)    :: file
+   !    class(eos),        intent(in)    :: liq
+   !    class(mix),        intent(in)    :: gas
+   !    class(relax),      intent(inout) :: rm
+   !    real(WP),          intent(in)    :: p0,VF0,Yv0,Tmin,Tmax
+   !    integer,           intent(in)    :: nT
+   !    integer  :: u,it
+   !    real(WP) :: VF,Q(8),PL,PG,rhoL,rhoG,TL,TG,Yv,pV,rhoV,hV
+   !    real(WP), parameter :: VFlo=1e-4_WP,VFhi=1.0_WP-1e-4_WP
+
+   !    open(newunit=u,file=file,status='replace',action='write')
+   !    write(u,'(A)') 'T,pV,Yv,VF,rhoL,rhoV,hV'
+   !    do it=1,nT
+   !       call make_Q(liq,gas,p0,Tmin+real(it-1,WP)*(Tmax-Tmin)/real(max(nT-1,1),WP),VF0,Yv0,VF,Q)
+   !       call rm%relax_pTg(VF=VF,Q=Q,Pjump=0.0_WP)
+   !       if (VF.le.VFlo.or.VF.ge.VFhi.or.Q(1).le.0.0_WP.or.Q(2).le.0.0_WP) cycle
+   !       call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv,pV=pV,rhoV=rhoV,hV=hV)
+   !       write(u,'(*(G0.15,:,","))') TL,pV,Yv,VF,rhoL,rhoV,hV
+   !    end do
+   !    close(u)
+   !    print '(A,A)','Written: ',file
+   ! end subroutine write_PTg_curve
+
+      ! ── Sweep T and write saturation-curve CSV ────────────────────────────────
    !> Columns: T [K], pv [Pa], Yv [-], VF [-], rhoL [kg/m^3], rhoV [kg/m^3], hV [J/kg]
    subroutine write_PTg_curve(file,liq,gas,rm,p0,VF0,Yv0,Tmin,Tmax,nT)
       character(len=*),  intent(in)    :: file
@@ -204,21 +311,44 @@ contains
       class(relax),      intent(inout) :: rm
       real(WP),          intent(in)    :: p0,VF0,Yv0,Tmin,Tmax
       integer,           intent(in)    :: nT
-      integer  :: u,it
-      real(WP) :: VF,Q(8),PL,PG,rhoL,rhoG,TL,TG,Yv,pV,rhoV,hV
-      real(WP), parameter :: VFlo=1e-4_WP,VFhi=1.0_WP-1e-4_WP
+
+      integer  :: u,it,nwrite
+      real(WP) :: T0,VF,Q(8)
+      real(WP) :: PL,PG,rhoL,rhoG,TL,TG,Yv,pV,rhoV,hV
 
       open(newunit=u,file=file,status='replace',action='write')
       write(u,'(A)') 'T,pV,Yv,VF,rhoL,rhoV,hV'
+
+      nwrite=0
+
       do it=1,nT
-         call make_Q(liq,gas,p0,Tmin+real(it-1,WP)*(Tmax-Tmin)/real(max(nT-1,1),WP),VF0,Yv0,VF,Q)
+
+         T0=Tmin+real(it-1,WP)*(Tmax-Tmin)/real(max(nT-1,1),WP)
+
+         call make_Q(liq,gas,p0,T0,VF0,Yv0,VF,Q)
          call rm%relax_pTg(VF=VF,Q=Q,Pjump=0.0_WP)
-         if (VF.le.VFlo.or.VF.ge.VFhi.or.Q(1).le.0.0_WP.or.Q(2).le.0.0_WP) cycle
+
+         ! Keep any genuine two-phase state.
+         ! Do not reject small liquid volume fractions: condensation can easily
+         ! produce VF ~ 1e-5 while still being physically meaningful.
+         if (VF.le.0.0_WP.or.VF.ge.1.0_WP) cycle
+         if (Q(1).le.0.0_WP.or.Q(2).le.0.0_WP) cycle
+
          call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv,pV=pV,rhoV=rhoV,hV=hV)
+
+         ! Basic sanity filter for plotting.
+         if (TL.le.0.0_WP.or.pV.le.0.0_WP) cycle
+         if (rhoL.le.0.0_WP.or.rhoV.le.0.0_WP) cycle
+
          write(u,'(*(G0.15,:,","))') TL,pV,Yv,VF,rhoL,rhoV,hV
+         nwrite=nwrite+1
+
       end do
+
       close(u)
-      print '(A,A)','Written: ',file
+
+      print '(A,A,A,I0,A)','Written: ',file,'  (',nwrite,' rows)'
+
    end subroutine write_PTg_curve
 
 end program test_relax
