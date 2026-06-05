@@ -22,13 +22,14 @@ module relax_sg_ig_class
       !> Saturation curve coefficients
       real(WP) :: AS=0.0_WP,BS=0.0_WP,CS=0.0_WP,DS=0.0_WP,ES=0.0_WP
       !> Convergence tolerances
-      real(WP) :: p_tol   =1.0e-5_WP
-      real(WP) :: Yv_tol  =1.0e-5_WP
-      real(WP) :: Tsat_tol=1.0e-5_WP
-      real(WP) :: rho_tol =1.0e-5_WP
-      real(WP) :: rhoe_tol=1.0e-5_WP
-      real(WP) :: F1_tol  =1.0e-5_WP
-      real(WP) :: F2_tol  =1.0e-5_WP
+      real(WP) :: p_tol     =1.0e-5_WP
+      real(WP) :: Yv_tol    =1.0e-5_WP
+      real(WP) :: Yv_tol_abs=1.0e-8_WP
+      real(WP) :: Tsat_tol  =1.0e-5_WP
+      real(WP) :: rho_tol   =1.0e-5_WP
+      real(WP) :: rhoe_tol  =1.0e-5_WP
+      real(WP) :: F1_tol    =1.0e-5_WP
+      real(WP) :: F2_tol    =1.0e-5_WP
       !> Iteration limits
       integer :: Tsat_itmax=40
       integer :: NR_itmax  =40
@@ -42,7 +43,9 @@ module relax_sg_ig_class
       procedure :: pTsat        =>relax_sg_ig_pTsat
       procedure :: dpTsatdT     =>relax_sg_ig_dpTsatdT
       procedure :: dpTsatdp_lv  =>relax_sg_ig_dpTsatdp_lv
+      procedure :: dpTsatdlnp   =>relax_sg_ig_dpTsatdlnp
       procedure :: get_Tsat     =>relax_sg_ig_get_Tsat
+      procedure :: get_pvsat    =>relax_sg_ig_get_pvsat
       procedure :: get_xv       =>relax_sg_ig_get_xv
    end type relax_sg_ig
 
@@ -193,44 +196,20 @@ contains
       real(WP),                intent(inout) :: VF
       real(WP), dimension(1:), intent(inout) :: Q
       real(WP),                intent(in)    :: Pjump
-      real(WP), dimension(:),  allocatable   :: Q0,y
-      real(WP) :: VF0,p,T,Yv
+      real(WP), dimension(:),  allocatable   :: Q0,Qin,y
+      real(WP) :: VF0,VFin,p,T,Yv
       real(WP) :: rho0,rhoe0,rhoA0
       real(WP) :: RHOL,RHOG
       real(WP) :: cvG,cpG,qG,gammaG
       real(WP), parameter :: p_eps=1.0e-10_WP,VFmin=1.0e-5_WP,Yvmin=0.0_WP,Yvmax=1.0_WP
       real(WP), parameter :: Yv_dry=1.0e-5_WP,pv_dry=1.0_WP,Yv_pure=0.999_WP
       real(WP), parameter :: fd_eps=1.0e-7_WP,F_line_search_tol=0.3_WP
-      logical :: chem_relax
-      ! Cavitation nucleation: Conservatively move a little mass and energy from liquid to vapor so the chemical relaxation starts
-      ! from a non-stiff initial condition.
-      ! nucleation: block
-      !    real(WP), parameter :: VF_cav_seed=1.0e-7_WP
-      !    real(WP) :: rhoL_cav,pL_cav,TL_cav,pv_sat,rhoV_cav,eV_cav,drho,de
-      !    real(WP) :: y_nuc(this%gas%ns)
-      !    if (VF.ge.1.0_WP-VF_cav_seed) then
-      !       rhoL_cav=Q(1)/VF
-      !       pL_cav=this%liq%get_p_from_rho_e(rhoL_cav,Q(3)/Q(1))
-      !       TL_cav=this%liq%get_T_from_p_rho(pL_cav,rhoL_cav)
-      !       if (pL_cav.le.-this%liq%pinf.or.TL_cav.le.0.0_WP) exit nucleation
-      !       ! Saturation vapor pressure at current liquid state
-      !       pv_sat=exp(this%AS+(this%BS+this%ES*pL_cav)/TL_cav)*TL_cav**this%CS*(pL_cav+this%liq%pinf)**this%DS
-      !       if (pv_sat.le.pL_cav) exit nucleation
-      !       ! Superheated liquid: seed a tiny vapor phase.
-      !       ! Transfer volumetric mass drho and its energy de from the liquid to the vapor; total rho and rhoe conserved.
-      !       y_nuc           =0.0_WP
-      !       y_nuc(this%indV)=1.0_WP
-      !       rhoV_cav=this%gas%get_rho_from_p_T(pL_cav,TL_cav,y_nuc)
-      !       eV_cav=this%gas%get_e_from_p_T(pL_cav,TL_cav,y_nuc)
-      !       drho=VF_cav_seed*rhoV_cav
-      !       de=drho*eV_cav
-      !       Q(1)=Q(1)-drho; Q(2)=drho
-      !       Q(3)=Q(3)-de;   Q(4)=de
-      !       Q(8)=drho
-      !       VF=1.0_WP-VF_cav_seed
-      !    end if
-      ! end block nucleation
-            ! Nucleation: Conservatively move a little mass and energy so the chemical relaxation starts
+      logical :: chem_relax,nucleated
+      allocate(Qin(size(Q)))
+      Qin=Q
+      VFin=VF
+      nucleated=.false.
+      ! Nucleation: Conservatively move a little mass and energy so the chemical relaxation starts
       ! from a non-stiff initial condition. This handles both cavitation and condensation.
       nucleation: block
          real(WP), parameter :: VF_nuc=1.0e-7_WP
@@ -240,74 +219,59 @@ contains
          real(WP) :: y_nuc(this%gas%ns)
          logical  :: conv_nuc
          integer  :: Tsat_it_nuc
-
          ! Almost pure liquid: check if liquid is metastable and needs vapor nucleation.
          if (VF.ge.1.0_WP-VF_nuc) then
             rhoL_nuc=Q(1)/VF
             pL_nuc=this%liq%get_p_from_rho_e(rhoL_nuc,Q(3)/Q(1))
             TL_nuc=this%liq%get_T_from_p_rho(pL_nuc,rhoL_nuc)
             if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) return
-
             ! Saturation vapor pressure at current liquid state.
-            pv_sat=exp(this%AS+(this%BS+this%ES*pL_nuc)/TL_nuc)*TL_nuc**this%CS*(pL_nuc+this%liq%pinf)**this%DS
-
+            pv_sat=this%get_pvsat(pL_nuc,TL_nuc)
             ! Stable pure liquid: no chemical relaxation needed.
             if (pv_sat.le.pL_nuc) return
-
             ! Superheated liquid / cavitation: nucleate a tiny vapor phase.
             y_nuc           =0.0_WP
             y_nuc(this%indV)=1.0_WP
             rhoV_nuc=this%gas%get_rho_from_p_T(pL_nuc,TL_nuc,y_nuc)
             eV_nuc=this%gas%get_e_from_p_T(pL_nuc,TL_nuc,y_nuc)
-
             drho=VF_nuc*rhoV_nuc
             de=drho*eV_nuc
-
             Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
             Q(3)=Q(3)-de;   Q(4)=Q(4)+de
             Q(8)=Q(8)+drho
             VF=1.0_WP-VF_nuc
-
+            nucleated=.true.
          ! Almost pure gas/vapor: check if vapor is metastable and needs liquid nucleation.
          else if (VF.le.VF_nuc) then
             if (Q(2).le.0.0_WP) return
-
             Yv_nuc=Q(8)/Q(2)
             Yv_nuc=max(Yvmin,min(Yvmax,Yv_nuc))
             if (Yv_nuc.le.Yv_dry) return
-
             y_nuc(this%indV)=Yv_nuc
             y_nuc(this%indA)=1.0_WP-Yv_nuc
-
             rhoG_nuc=Q(2)/max(1.0_WP-VF,tiny(1.0_WP))
             pG_nuc=this%gas%get_p_from_rho_e(rhoG_nuc,Q(4)/Q(2),y_nuc)
             TG_nuc=this%gas%get_T_from_p_rho(pG_nuc,rhoG_nuc,y_nuc)
             if (pG_nuc.le.0.0_WP.or.TG_nuc.le.0.0_WP) return
-
             xv_nuc=this%get_xv(Yv_nuc)
             pv_nuc=xv_nuc*pG_nuc
             if (.not.check_pv(pv_nuc)) return
-
             call this%get_Tsat(pG_nuc,pv_nuc,TG_nuc,Tsat_nuc,conv_nuc,Tsat_it_nuc)
             if (.not.conv_nuc) return
-
             ! Stable pure vapor/gas: no chemical relaxation needed.
             if (TG_nuc.ge.Tsat_nuc) return
-
             ! Supersaturated vapor/gas: nucleate a tiny liquid phase.
             rhoL_new=this%liq%get_rho_from_p_T(pG_nuc,TG_nuc)
             eL_new=this%liq%get_e_from_p_T(pG_nuc,TG_nuc)
-
             drho=VF_nuc*rhoL_new
             drho=min(drho,0.5_WP*Q(8),0.5_WP*Q(2))
             if (drho.le.0.0_WP) return
-
             de=drho*eL_new
-
             Q(1)=Q(1)+drho; Q(2)=Q(2)-drho
             Q(3)=Q(3)+de;   Q(4)=Q(4)-de
             Q(8)=Q(8)-drho
             VF=drho/rhoL_new
+            nucleated=.true.
          end if
       end block nucleation
       ! ================ First and second steps for mechanical and thermal relaxation ================
@@ -337,11 +301,6 @@ contains
       rho0 =sum(Q0(1:2))
       rhoe0=sum(Q0(3:4))
       rhoA0=(1.0_WP-Yv)*Q0(2)
-      ! print '(A)',       '============ PT_relax ============='
-      ! print '(A,ES15.7)','p   =',p
-      ! print '(A,ES15.7)','VF  =',VF
-      ! print '(A,ES15.7)','T   =',T
-      ! print '(A)',       '==================================='
       ! Check whether a stable pure phase state exists.  This is the phase-change trigger from
       ! Caze et al.: use the conserved rho and rhoe of the cell and ask whether they admit a
       ! stable pure-liquid or pure-vapor state.  Only if no such state exists do we solve the
@@ -353,19 +312,15 @@ contains
          real(WP) :: rhoV0,Yv_gas,pG_pure,TG_pure,xv_gas,pv_gas
          integer  :: Tsat_it_pure
          logical  :: conv_pure
-
          if (rho0.le.0.0_WP.or.rhoe0.le.0.0_WP) exit pure_phase_bounds
-
          if (rhoA0/rho0.le.rhoA_pure) then
             ! Try pure liquid: rho_l = rho0, e_l = rhoe0/rho0.
             rhoL_pure=rho0
             eL_pure=rhoe0/rho0
             pL_pure=this%liq%get_p_from_rho_e(rhoL_pure,eL_pure)
             TL_pure=this%liq%get_T_from_p_rho(pL_pure,rhoL_pure)
-
             if (pL_pure.gt.p_eps.and.TL_pure.gt.0.0_WP) then
                call this%get_Tsat(pL_pure,pL_pure,TL_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-
                if (conv_pure.and.TL_pure.le.Tsat_pure*(1.0_WP+this%Tsat_tol)) then
                   VF=1.0_WP
                   Q(1)=rho0;     Q(2)=0.0_WP
@@ -375,7 +330,6 @@ contains
                   return
                end if
             end if
-
             ! Try pure vapor: rho_v = rho0, e_v = rhoe0/rho0.
             rhoV_pure=rho0
             eV_pure=rhoe0/rho0
@@ -383,10 +337,8 @@ contains
             y(this%indV)=1.0_WP
             pV_pure=this%gas%get_p_from_rho_e(rhoV_pure,eV_pure,y)
             TV_pure=this%gas%get_T_from_p_rho(pV_pure,rhoV_pure,y)
-
             if (pV_pure.gt.p_eps.and.TV_pure.gt.0.0_WP) then
                call this%get_Tsat(pV_pure,pV_pure,TV_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-
                if (conv_pure.and.TV_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
                   VF=0.0_WP
                   Q(1)=0.0_WP;   Q(2)=rho0
@@ -403,22 +355,18 @@ contains
             ! is stable/superheated, no condensation is needed.
             rhoV0=rho0-rhoA0
             if (rhoV0.le.0.0_WP) exit pure_phase_bounds
-
             Yv_gas=rhoV0/rho0
             Yv_gas=max(Yvmin,min(Yvmax,Yv_gas))
             y=0.0_WP
             y(this%indV)=Yv_gas
             y(this%indA)=1.0_WP-Yv_gas
-
             pG_pure=this%gas%get_p_from_rho_e(rho0,rhoe0/rho0,y)
             TG_pure=this%gas%get_T_from_p_rho(pG_pure,rho0,y)
-
             if (pG_pure.gt.p_eps.and.TG_pure.gt.0.0_WP) then
                xv_gas=this%get_xv(Yv_gas)
                pv_gas=xv_gas*pG_pure
                if (check_pv(pv_gas)) then
                   call this%get_Tsat(pG_pure,pv_gas,TG_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-
                   if (conv_pure.and.TG_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
                      VF=0.0_WP
                      Q(1)=0.0_WP;   Q(2)=rho0
@@ -442,7 +390,6 @@ contains
       ! If the inert gas content is only a numerical trace, the LVG equations
       ! become ill-conditioned; use the pure liquid-vapor branch instead.
       if (Yv.gt.Yv_pure) then
-         ! print*,'****************** Using pure LV chemical relaxation!'
          Yv=Yvmax
          y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
          call this%gas%get_mix_coeffs(y=y,cv=cvG,cp=cpG,q=qG,gamma=gammaG)
@@ -452,16 +399,15 @@ contains
       end if
       ! Skip if not converged
       if (.not.chem_relax) then
-         call restore()
+         if (nucleated) then
+            VF=VFin
+            Q=Qin
+         else
+            call restore()
+         end if
          call dealloc()
          return
       end if
-      ! print '(A)',       '=========== PTg_relax ============'
-      ! print '(A,ES15.7)','p   =',p
-      ! print '(A,ES15.7)','T   =',T
-      ! print '(A,ES15.7)','Yv  =',Yv
-      ! print '(A,ES15.7)','VF  =',VF
-      ! print '(A)',       '=================================='
       ! Adjust vapor mass fraction and update gas EOS parameters
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       call this%gas%get_mix_coeffs(y=y,cv=cvG,cp=cpG,q=qG,gamma=gammaG)
@@ -489,7 +435,6 @@ contains
       if (.not.check_cons()) then
          call restore()
          call dealloc()
-         ! print*,"****************** Conservation is violated. Skipping the cell!!"
          return
       end if
       ! Release memory
@@ -531,7 +476,6 @@ contains
             ! Seed Yv from saturation at the current thermally-relaxed state and then continue with the ordinary LVG Newton solve.
             pv_=exp(this%AS+(this%BS+this%ES*p_)/T_)*T_**this%CS*(p_+this%liq%pinf)**this%DS
             if (.not.check_pv(pv_)) then
-               ! print*,"****************** Vapor partial pressure too low. Skipping the cell!"
                return
             end if
             if (pv_.ge.p_) then
@@ -542,7 +486,6 @@ contains
                Yv_=xv*Mv/(xv*Mv+(1.0_WP-xv)*Ma)
             end if
             Yv_=max(Yvmin,min(Yvmax,Yv_))
-            ! print '(A,ES15.7)','Seeded Yv from saturation at Teq=',Yv_
          else
             ! Direct saturation residual. No Tsat solve needed.
             Fsat=this%pTsat(p_,pv_,T_)
@@ -564,7 +507,7 @@ contains
       real(WP) function rhoe_res_lvg(p_,T_,Yv_)
          real(WP), intent(in) :: p_,T_,Yv_
          rhoe_res_lvg=(rho0*(1.0_WP-Yv_)-rhoA0)*this%liq%get_e_from_p_T(p_,T_)+&
-         &             rhoA0*this%gas%get_e_from_p_T(p_,T_,[Yv_,1.0_WP-Yv_])-  &
+         &             rhoA0*this%gas%get_e_from_p_T(p_,T_,[Yv_,1.0_WP-Yv_])  -&
          &             rhoe0*(1.0_WP-Yv_)
       end function rhoe_res_lvg
       !> Energy residual for LV
@@ -573,161 +516,578 @@ contains
          real(WP) :: rho_l,rho_g
          rho_l=this%liq%get_rho_from_p_T(p=p_,T=T_)
          rho_g=this%gas%get_rho_from_p_T(p=p_,T=T_,y=[1.0_WP,0.0_WP])
-         rhoe_res_lv=(rho0-rho_g)/(rho_l-rho_g)*this%liq%get_e_from_p_T(p=p_,T=T_)+                    &
+         rhoe_res_lv=(rho0-rho_g)/(rho_l-rho_g)*this%liq%get_e_from_p_T(p=p_,T=T_)+                  &
          &           (rho_l-rho0)/(rho_l-rho_g)*this%gas%get_e_from_p_T(p=p_,T=T_,y=[1.0_WP,0.0_WP])-&
          &            rhoe0
       end function rhoe_res_lv
-      !> Pure liquid and vapor chemical relaxation
+      !> d(ln(xv))/dYv
+      real(WP) function dlnxvdYv(Yv_)
+         real(WP), intent(in) :: Yv_
+         real(WP) :: Ys,den
+         Ys=max(Yv_,Yvmin+fd_eps)
+         den=Ys*Ma+(1.0_WP-Ys)*Mv
+         dlnxvdYv=1.0_WP/Ys-(Ma-Mv)/den
+      end function dlnxvdYv
+      !> Pure liquid and vapor chemical relaxation (Solves for p)
+      ! subroutine solve_lv(p_eq,T_eq,conv)
+      !    real(WP), intent(inout) :: p_eq,T_eq
+      !    logical,  intent(out)   :: conv
+      !    real(WP) :: pOld,ap,bp,dp,dapdp,dbpdp,ddpdp
+      !    real(WP) :: dTdp
+      !    integer  :: it
+      !    ! Iteratively solve for the equilibrium pressure in pure vapor case
+      !    conv=.false.
+      !    do it=1,this%NR_itmax
+      !       ! Get the coefficients
+      !       call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !       ! Get temperature
+      !       T_eq=get_T_lv(ap,bp,dp)
+      !       dTdp=get_dTdp_lv(ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !       ! Newton-Raphson iteration: Pure-vapor branch: Y_v=1 so the vapor mole fraction x_v=1.
+      !       pOld=p_eq
+      !       p_eq=pOld-this%pTsat(pOld,pOld,T_eq)/this%dpTsatdp_lv(pOld,T_eq,dTdp)
+      !       ! Evaluate the error
+      !       if (abs((p_eq-pOld)/pOld).lt.this%p_tol) then
+      !          conv=.true.
+      !          exit
+      !       end if
+      !    end do
+      !    ! Check convergence
+      !    if (.not.conv) then
+      !       return
+      !    end if
+      !    ! Update equilibrium temperature
+      !    call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !    T_eq=get_T_lv(ap,bp,dp)
+      ! end subroutine solve_lv
+      !> Pure liquid and vapor chemical relaxation (Solves for ln(p))
       subroutine solve_lv(p_eq,T_eq,conv)
          real(WP), intent(inout) :: p_eq,T_eq
          logical,  intent(out)   :: conv
-         real(WP) :: pOld,ap,bp,dp,dapdp,dbpdp,ddpdp
-         real(WP) :: dTdp
+         real(WP) :: pOld,lnpOld,p_try,T_try
+         real(WP) :: ap,bp,dp,dapdp,dbpdp,ddpdp
+         real(WP) :: dTdp,dTdlnp,dF1dlnp
+         real(WP) :: F1,F1_try,dlnp_nr,p_err,alpha
          integer  :: it
-         ! Iteratively solve for the equilibrium pressure in pure vapor case
+         logical  :: accepted
+         ! Iteratively solve for the equilibrium log-pressure
          conv=.false.
+         p_err=10.0_WP*this%p_tol
          do it=1,this%NR_itmax
             ! Get the coefficients
             call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
-            ! Get temperature
+            ! Get temperature and dT/dlnp
             T_eq=get_T_lv(ap,bp,dp)
+            if (T_eq.le.0.0_WP) return
             dTdp=get_dTdp_lv(ap,bp,dp,dapdp,dbpdp,ddpdp)
-            ! Newton-Raphson iteration: Pure-vapor branch: Y_v=1 so the vapor mole fraction x_v=1.
+            dTdlnp=p_eq*dTdp
+            ! Get residual and derivative with respect to lnp
+            F1=this%pTsat(p_eq,p_eq,T_eq)
+            dF1dlnp=this%dpTsatdlnp(p_eq,T_eq,dTdlnp)
+            if (abs(dF1dlnp).lt.1.0e-30_WP) exit
+            ! Newton-Raphson update in lnp
+            dlnp_nr=-F1/dF1dlnp
+            ! Limit pressure change in one step
+            dlnp_nr=max(log(0.5_WP),min(log(1.5_WP),dlnp_nr))
+            ! Damped Newton-Raphson update
             pOld=p_eq
-            p_eq=pOld-this%pTsat(pOld,pOld,T_eq)/this%dpTsatdp_lv(pOld,T_eq,dTdp)
+            lnpOld=log(pOld)
+            alpha=1.0_WP
+            accepted=.false.
+            do while (alpha.gt.1.0e-8_WP)
+               p_try=exp(lnpOld+alpha*dlnp_nr)
+               if (p_try.le.p_eps) then
+                  alpha=0.5_WP*alpha
+                  cycle
+               end if
+               call this%get_coeffs_lv(p_try,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+               T_try=get_T_lv(ap,bp,dp)
+               if (T_try.le.0.0_WP) then
+                  alpha=0.5_WP*alpha
+                  cycle
+               end if
+               F1_try=this%pTsat(p_try,p_try,T_try)
+               if (abs(F1_try).lt.abs(F1)) then
+                  p_eq=p_try
+                  T_eq=T_try
+                  accepted=.true.
+                  exit
+               end if
+               alpha=0.5_WP*alpha
+            end do
+            if (.not.accepted) then
+               exit
+            end if
             ! Evaluate the error
-            if (abs((p_eq-pOld)/pOld).lt.this%p_tol) then
+            p_err=abs(log(p_eq/pOld))
+            ! Refresh temperature and residual from the accepted pressure
+            call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+            T_eq=get_T_lv(ap,bp,dp)
+            if (T_eq.le.0.0_WP) return
+            F1=this%pTsat(p_eq,p_eq,T_eq)
+            if ((p_err.lt.this%p_tol).and.(abs(F1).lt.this%F1_tol)) then
                conv=.true.
                exit
             end if
          end do
          ! Check convergence
          if (.not.conv) then
-            ! print*,"****************** p iterations blew up. Skipping the cell!!"
             return
          end if
          ! Update equilibrium temperature
          call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
          T_eq=get_T_lv(ap,bp,dp)
       end subroutine solve_lv
-      !> Pure liquid and vapor-gas mixture chemical relaxation
+      !> Pure liquid and vapor chemical relaxation (solves for ln(p)) safe guarded
+      ! subroutine solve_lv(p_eq,T_eq,conv)
+      !    real(WP), intent(inout) :: p_eq,T_eq
+      !    logical,  intent(out)   :: conv
+      !    real(WP) :: pOld,p_try,T_try
+      !    real(WP) :: ap,bp,dp,dapdp,dbpdp,ddpdp
+      !    real(WP) :: dTdp,dTdlnp,dF1dlnp
+      !    real(WP) :: F1,F1_try,Flo,Fhi,Tlo,Thi
+      !    real(WP) :: lnp,lnpOld,lnp_try,lnp_lo,lnp_hi,lnp_step,dlnp_nr,p_err
+      !    integer  :: it,expand_it
+      !    logical  :: bracketed,valid_lo,valid_hi
+      !    ! Iteratively solve for the equilibrium log-pressure
+      !    conv=.false.
+      !    p_err=10.0_WP*this%p_tol
+      !    ! Initial state
+      !    p_eq=max(p_eq,p_eps)
+      !    lnp=log(p_eq)
+      !    call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !    T_eq=get_T_lv(ap,bp,dp)
+      !    if (T_eq.le.0.0_WP) return
+      !    F1=this%pTsat(p_eq,p_eq,T_eq)
+      !    if (abs(F1).lt.this%F1_tol) then
+      !       conv=.true.
+      !       return
+      !    end if
+      !    ! Bracket the root in lnp
+      !    bracketed=.false.
+      !    lnp_step=log(2.0_WP)
+      !    do expand_it=1,60
+      !       lnp_lo=lnp-real(expand_it,WP)*lnp_step
+      !       lnp_hi=lnp+real(expand_it,WP)*lnp_step
+      !       lnp_lo=max(lnp_lo,log(p_eps))
+      !       valid_lo=.false.
+      !       valid_hi=.false.
+      !       p_try=exp(lnp_lo)
+      !       if (p_try.gt.p_eps) then
+      !          call this%get_coeffs_lv(p_try,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !          Tlo=get_T_lv(ap,bp,dp)
+      !          if (Tlo.gt.0.0_WP) then
+      !             Flo=this%pTsat(p_try,p_try,Tlo)
+      !             valid_lo=.true.
+      !          end if
+      !       end if
+      !       p_try=exp(lnp_hi)
+      !       if (p_try.gt.p_eps) then
+      !          call this%get_coeffs_lv(p_try,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !          Thi=get_T_lv(ap,bp,dp)
+      !          if (Thi.gt.0.0_WP) then
+      !             Fhi=this%pTsat(p_try,p_try,Thi)
+      !             valid_hi=.true.
+      !          end if
+      !       end if
+      !       if (valid_lo.and.valid_hi) then
+      !          if (Flo*Fhi.le.0.0_WP) then
+      !             bracketed=.true.
+      !             exit
+      !          end if
+      !       end if
+      !    end do
+      !    if (.not.bracketed) then
+      !       return
+      !    end if
+      !    ! Start from the original pressure if it is inside the bracket
+      !    lnp=max(lnp_lo,min(lnp_hi,lnp))
+      !    do it=1,this%NR_itmax
+      !       p_eq=exp(lnp)
+      !       ! Get the coefficients
+      !       call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !       ! Get temperature and dT/dlnp
+      !       T_eq=get_T_lv(ap,bp,dp)
+      !       if (T_eq.le.0.0_WP) return
+      !       dTdp=get_dTdp_lv(ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !       dTdlnp=p_eq*dTdp
+      !       ! Get residual and derivative with respect to lnp
+      !       F1=this%pTsat(p_eq,p_eq,T_eq)
+      !       dF1dlnp=this%dpTsatdlnp(p_eq,T_eq,dTdlnp)
+      !       if (abs(F1).lt.this%F1_tol) then
+      !          conv=.true.
+      !          exit
+      !       end if
+      !       pOld=p_eq
+      !       lnpOld=lnp
+      !       ! Newton step in lnp. If the Newton step leaves the bracket,
+      !       ! fall back to bisection.
+      !       if (abs(dF1dlnp).gt.1.0e-30_WP) then
+      !          dlnp_nr=-F1/dF1dlnp
+      !          lnp_try=lnp+dlnp_nr
+      !       else
+      !          lnp_try=0.5_WP*(lnp_lo+lnp_hi)
+      !       end if
+
+      !       if ((lnp_try.le.lnp_lo).or.(lnp_try.ge.lnp_hi)) then
+      !          lnp_try=0.5_WP*(lnp_lo+lnp_hi)
+      !       end if
+      !       ! Try the proposed pressure
+      !       p_try=exp(lnp_try)
+      !       if (p_try.le.p_eps) then
+      !          lnp_try=0.5_WP*(lnp_lo+lnp_hi)
+      !          p_try=exp(lnp_try)
+      !       end if
+      !       call this%get_coeffs_lv(p_try,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !       T_try=get_T_lv(ap,bp,dp)
+      !       if (T_try.le.0.0_WP) then
+      !          lnp_try=0.5_WP*(lnp_lo+lnp_hi)
+      !          p_try=exp(lnp_try)
+      !          call this%get_coeffs_lv(p_try,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !          T_try=get_T_lv(ap,bp,dp)
+      !          if (T_try.le.0.0_WP) return
+      !       end if
+      !       F1_try=this%pTsat(p_try,p_try,T_try)
+      !       ! Update the bracket
+      !       if (Flo*F1_try.le.0.0_WP) then
+      !          lnp_hi=lnp_try
+      !          Fhi=F1_try
+      !       else
+      !          lnp_lo=lnp_try
+      !          Flo=F1_try
+      !       end if
+      !       ! Accept the trial state
+      !       lnp=lnp_try
+      !       p_eq=p_try
+      !       T_eq=T_try
+      !       F1=F1_try
+      !       ! Evaluate the pressure change only as a diagnostic/stagnation measure.
+      !       ! Do not use p_err alone for convergence.
+      !       p_err=abs(log(p_eq/pOld))
+      !       if (abs(F1).lt.this%F1_tol) then
+      !          conv=.true.
+      !          exit
+      !       end if
+      !    end do
+      !    ! Check convergence
+      !    if (.not.conv) then
+      !       return
+      !    end if
+      !    ! Update equilibrium temperature
+      !    call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !    T_eq=get_T_lv(ap,bp,dp)
+      ! end subroutine solve_lv
+      !> Pure liquid and vapor-gas mixture chemical relaxation (Solves for p and Yv)
+      ! subroutine solve_lvg(p_eq,T_eq,Yv_eq,conv)
+      !    real(WP), intent(inout) :: p_eq,T_eq,Yv_eq
+      !    logical,  intent(out)   :: conv
+      !    real(WP) :: xv,pv
+      !    real(WP) :: F1,F2,dF1dp,dF1dYv,dF2dp,dF2dYv,detJ
+      !    real(WP) :: p_pert,Yv_pert,T_pert,xv_pert,pv_pert,F1p,F2p,F1Y,F2Y,dp_nr,dYv_nr
+      !    real(WP) :: pOld,YvOld,p_err,Yv_err
+      !    real(WP) :: alpha,res0,res_try
+      !    real(WP) :: p_try,Yv_try,T_try,xv_try,ppv_try,F1_try,F2_try
+      !    real(WP) :: Yv_max_phys
+      !    integer  :: it,lsit
+      !    logical  :: accepted
+      !    ! Calculate the absolute physical ceiling for Yv based on available liquid
+      !    Yv_max_phys=1.0_WP-(rhoA0/rho0)
+      !    ! Iteratively solve for the equilibrium pressure and vapor mass fraction
+      !    conv=.false.
+      !    p_err=10.0_WP*this%p_tol
+      !    Yv_err=10.0_WP*this%Yv_tol
+      !    do it=1,this%NR_itmax
+      !       ! Get temperature
+      !       T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
+      !       ! Get vapor partial pressure and mole fraction
+      !       xv=this%get_xv(Yv_eq)
+      !       pv=xv*p_eq
+      !       if (.not.check_pv(pv)) return
+      !       ! Get residuals at current state
+      !       F1=this%pTsat(p_eq,pv,T_eq)
+      !       F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
+      !       res0=sqrt(F1**2+F2**2)
+      !       ! Perturbation in p
+      !       p_pert=p_eq*(1.0_WP+fd_eps)
+      !       pv_pert=xv*p_pert
+      !       if (.not.check_pv(pv_pert)) return
+      !       ! Get the corresponding T
+      !       T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0)
+      !       ! Get residuals
+      !       F1p=this%pTsat(p_pert,pv_pert,T_pert)
+      !       F2p=rhoe_res_lvg(p_pert,T_pert,Yv_eq)/rhoe0
+      !       dF1dp=(F1p-F1)/(p_pert-p_eq)
+      !       dF2dp=(F2p-F2)/(p_pert-p_eq)
+      !       ! Perturbation in Yv
+      !       Yv_pert=Yv_eq+fd_eps
+      !       if (Yv_pert.gt.Yvmax-fd_eps) Yv_pert=Yv_eq-fd_eps
+      !       if (Yv_pert.lt.Yvmin+fd_eps) Yv_pert=Yv_eq+fd_eps
+      !       xv_pert=this%get_xv(Yv_pert)
+      !       pv_pert=xv_pert*p_eq
+      !       if (.not.check_pv(pv_pert)) return
+      !       ! Get the corresponding T
+      !       T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0)
+      !       ! Get residuals
+      !       F1Y=this%pTsat(p_eq,pv_pert,T_pert)
+      !       F2Y=rhoe_res_lvg(p_eq,T_pert,Yv_pert)/rhoe0
+      !       dF1dYv=(F1Y-F1)/(Yv_pert-Yv_eq)
+      !       dF2dYv=(F2Y-F2)/(Yv_pert-Yv_eq)
+      !       ! Solve 2x2 system: J*[dp; dYv]=-[F1; F2]
+      !       detJ=dF1dp*dF2dYv-dF1dYv*dF2dp
+      !       if (abs(detJ).lt.1.0e-30_WP) exit
+      !       dp_nr =-(dF2dYv*F1-dF1dYv*F2)/detJ
+      !       dYv_nr=-(dF1dp *F2-dF2dp *F1)/detJ
+      !       ! Direction preserving step limiter
+      !       step_limit: block
+      !          real(WP) :: ms
+      !          ms=1.0_WP
+      !          ! 1. Prevent pressure from changing by more than 50% in a single step
+      !          if (abs(dp_nr).gt.0.5_WP*p_eq) ms=min(ms,0.5_WP*p_eq/abs(dp_nr))
+      !          ! 2. Prevent Yv from crossing physical boundaries
+      !          if (dYv_nr.gt.0.0_WP) then
+      !             if (Yv_eq+dYv_nr.ge.Yv_max_phys)  ms=min(ms,0.9_WP*(Yv_max_phys-Yv_eq)/dYv_nr)
+      !             if (Yv_eq+dYv_nr.ge.Yvmax-fd_eps) ms=min(ms,0.9_WP*(Yvmax-fd_eps-Yv_eq)/dYv_nr)
+      !          else if (dYv_nr.lt.0.0_WP) then
+      !             if (Yv_eq+dYv_nr.le.Yvmin+fd_eps) ms=min(ms,0.9_WP*(Yv_eq-Yvmin-fd_eps)/abs(dYv_nr))
+      !          end if
+      !          ! Scale the Newton-Raphson step uniformly to keep pointing directly at the root
+      !          dp_nr=dp_nr*ms
+      !          dYv_nr=dYv_nr*ms
+      !       end block step_limit
+      !       ! Damped Newton-Raphson update
+      !       pOld=p_eq
+      !       YvOld=Yv_eq
+      !       alpha=1.0_WP
+      !       lsit=0
+      !       if ((abs(F1).lt.F_line_search_tol).and.(abs(F2).lt.F_line_search_tol)) then
+      !          p_eq=pOld+dp_nr
+      !          Yv_eq=YvOld+dYv_nr
+      !       else
+      !          accepted=.false.
+      !          do while (alpha.gt.1.0e-8_WP)
+      !             lsit=lsit+1
+      !             p_try=p_eq+alpha*dp_nr
+      !             Yv_try=Yv_eq+alpha*dYv_nr
+      !             ! Keep the trial state inside the physical/log-safe domain
+      !             if (p_try.le.p_eps) then
+      !                alpha=0.5_WP*alpha
+      !                cycle
+      !             end if
+      !             if ((Yv_try.le.Yvmin+fd_eps).or.(Yv_try.ge.Yvmax-fd_eps)) then
+      !                alpha=0.5_WP*alpha
+      !                cycle
+      !             end if
+      !             if ((rho0*(1.0_WP-Yv_try)-rhoA0).le.0.0_WP) then
+      !                alpha=0.5_WP*alpha
+      !                cycle
+      !             end if
+      !             T_try=this%get_T_lvg(p_try,Yv_try,rho0,rhoA0)
+      !             if (T_try.le.0.0_WP) then
+      !                alpha=0.5_WP*alpha
+      !                cycle
+      !             end if
+      !             xv_try=this%get_xv(Yv_try)
+      !             ppv_try=xv_try*p_try
+      !             if (.not.check_pv(ppv_try)) then
+      !                alpha=0.5_WP*alpha
+      !                cycle
+      !             end if
+      !             F1_try=this%pTsat(p_try,ppv_try,T_try)
+      !             F2_try=rhoe_res_lvg(p_try,T_try,Yv_try)/rhoe0
+      !             res_try=sqrt(F1_try**2+F2_try**2)
+      !             if (res_try.lt.res0) then
+      !                p_eq=p_try
+      !                Yv_eq=Yv_try
+      !                T_eq=T_try
+      !                accepted=.true.
+      !                exit
+      !             end if
+      !             alpha=0.5_WP*alpha
+      !          end do
+      !          if (.not.accepted) then
+      !             exit
+      !          end if
+      !       end if
+      !       ! Evaluate errors
+      !       p_err=abs((p_eq-pOld)/pOld)
+      !       Yv_err=abs(Yv_eq-YvOld)
+      !       ! Refresh xv and pv from the accepted solution
+      !       xv=this%get_xv(Yv_eq)
+      !       pv=xv*p_eq
+      !       ! Get temperature
+      !       T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
+      !       ! Evaluate residuals
+      !       F1=this%pTsat(p_eq,pv,T_eq)
+      !       F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
+      !       if ((p_err.lt.this%p_tol).and.Yv_err.lt.this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq)).and.(abs(F1).lt.this%F1_tol).and.(abs(F2).lt.this%F2_tol)) then
+      !          conv=.true.
+      !          exit
+      !       end if
+      !    end do
+      !    ! Check convergence
+      !    if (.not.conv) then
+      !       return
+      !    end if
+      ! end subroutine solve_lvg
+      !> Pure liquid and vapor-gas mixture chemical relaxation (Solves for ln(p) and Yv)
       subroutine solve_lvg(p_eq,T_eq,Yv_eq,conv)
          real(WP), intent(inout) :: p_eq,T_eq,Yv_eq
          logical,  intent(out)   :: conv
          real(WP) :: xv,pv
-         real(WP) :: F1,F2,dF1dp,dF1dYv,dF2dp,dF2dYv,detJ
-         real(WP) :: p_pert,Yv_pert,T_pert,xv_pert,ppv_pert,F1p,F2p,F1Y,F2Y,dp_nr,dYv_nr
-         real(WP) :: pOld,YvOld,p_err,Yv_err
+         real(WP) :: F1,F2,F2p,F2Y,dF1dlnp,dF1dYv,dF2dlnp,dF2dYv,detJ
+         real(WP) :: lnp_pert,p_pert,Yv_pert,T_pert,xv_pert,pv_pert,dTdlnp,dTdYv,dlnp_nr,dYv_nr
+         real(WP) :: pOld,YvOld,lnpOld,p_err,Yv_err
          real(WP) :: alpha,res0,res_try
-         real(WP) :: p_try,Yv_try,T_try,xv_try,ppv_try,F1_try,F2_try
-         real(WP) :: Yv_max_phys
+         real(WP) :: p_try,Yv_try,T_try,xv_try,pv_try,F1_try,F2_try
+         real(WP) :: Yv_max_phys,Yv_hi
          integer  :: it,lsit
          logical  :: accepted
+
          ! Calculate the absolute physical ceiling for Yv based on available liquid
          Yv_max_phys=1.0_WP-(rhoA0/rho0)
-         ! Iteratively solve for the equilibrium pressure and vapor mass fraction
+         Yv_hi=min(Yvmax,Yv_max_phys)
+
+         ! Iteratively solve for the equilibrium log-pressure and vapor mass fraction
          conv=.false.
          p_err=10.0_WP*this%p_tol
          Yv_err=10.0_WP*this%Yv_tol
+
          do it=1,this%NR_itmax
+
             ! Get temperature
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
+            if (T_eq.le.0.0_WP) return
+
             ! Get vapor partial pressure and mole fraction
             xv=this%get_xv(Yv_eq)
             pv=xv*p_eq
             if (.not.check_pv(pv)) return
+
             ! Get residuals at current state
             F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
             res0=sqrt(F1**2+F2**2)
-            ! Perturbation in p
-            p_pert=p_eq*(1.0_WP+fd_eps)
-            ppv_pert=xv*p_pert
-            if (.not.check_pv(ppv_pert)) return
+
+            ! Perturbation in lnp
+            lnp_pert=log(p_eq)+fd_eps
+            p_pert=exp(lnp_pert)
+            pv_pert=xv*p_pert
+            if (.not.check_pv(pv_pert)) return
+
             ! Get the corresponding T
             T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0)
-            ! Get residuals
-            F1p=this%pTsat(p_pert,ppv_pert,T_pert)
+            if (T_pert.le.0.0_WP) return
+
+            ! Get residuals and derivatives with respect to lnp
             F2p=rhoe_res_lvg(p_pert,T_pert,Yv_eq)/rhoe0
-            dF1dp=(F1p-F1)/(p_pert-p_eq)
-            dF2dp=(F2p-F2)/(p_pert-p_eq)
+            dTdlnp=(T_pert-T_eq)/fd_eps
+            dF1dlnp=this%dpTsatdlnp(p_eq,T_eq,dTdlnp)
+            dF2dlnp=(F2p-F2)/fd_eps
+
             ! Perturbation in Yv
             Yv_pert=Yv_eq+fd_eps
-            if (Yv_pert.gt.Yvmax-fd_eps) Yv_pert=Yv_eq-fd_eps
+            if (Yv_pert.gt.Yv_hi-fd_eps) Yv_pert=Yv_eq-fd_eps
             if (Yv_pert.lt.Yvmin+fd_eps) Yv_pert=Yv_eq+fd_eps
+            if ((Yv_pert.le.Yvmin+fd_eps).or.(Yv_pert.ge.Yv_hi-fd_eps)) return
+
             xv_pert=this%get_xv(Yv_pert)
-            ppv_pert=xv_pert*p_eq
-            if (.not.check_pv(ppv_pert)) return
+            pv_pert=xv_pert*p_eq
+            if (.not.check_pv(pv_pert)) return
+
             ! Get the corresponding T
             T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0)
-            ! Get residuals
-            F1Y=this%pTsat(p_eq,ppv_pert,T_pert)
+            if (T_pert.le.0.0_WP) return
+
+            ! Get residuals and derivatives with respect to Yv
             F2Y=rhoe_res_lvg(p_eq,T_pert,Yv_pert)/rhoe0
-            dF1dYv=(F1Y-F1)/(Yv_pert-Yv_eq)
+            dTdYv=(T_pert-T_eq)/(Yv_pert-Yv_eq)
+            dF1dYv=this%dpTsatdT(p_eq,T_eq)*dTdYv-dlnxvdYv(Yv_eq)
             dF2dYv=(F2Y-F2)/(Yv_pert-Yv_eq)
-            ! Solve 2x2 system: J*[dp; dYv]=-[F1; F2]
-            detJ=dF1dp*dF2dYv-dF1dYv*dF2dp
+
+            ! Solve 2x2 system: J*[dlnp; dYv]=-[F1; F2]
+            detJ=dF1dlnp*dF2dYv-dF1dYv*dF2dlnp
             if (abs(detJ).lt.1.0e-30_WP) exit
-            dp_nr =-(dF2dYv*F1-dF1dYv*F2)/detJ
-            dYv_nr=-(dF1dp *F2-dF2dp *F1)/detJ
+
+            dlnp_nr=-( dF2dYv *F1-dF1dYv  *F2)/detJ
+            dYv_nr =-(-dF2dlnp*F1+dF1dlnp*F2)/detJ
+
             ! Direction preserving step limiter
             step_limit: block
-               real(WP) :: ms
+               real(WP) :: ms,lnp_up,lnp_dn
                ms=1.0_WP
+
                ! 1. Prevent pressure from changing by more than 50% in a single step
-               if (abs(dp_nr).gt.0.5_WP*p_eq) ms=min(ms,0.5_WP*p_eq/abs(dp_nr))
+               lnp_up=log(1.5_WP)
+               lnp_dn=log(0.5_WP)
+               if (dlnp_nr.gt.lnp_up) ms=min(ms,lnp_up/dlnp_nr)
+               if (dlnp_nr.lt.lnp_dn) ms=min(ms,lnp_dn/dlnp_nr)
+
                ! 2. Prevent Yv from crossing physical boundaries
                if (dYv_nr.gt.0.0_WP) then
-                  if (Yv_eq+dYv_nr.ge.Yv_max_phys)  ms=min(ms,0.9_WP*(Yv_max_phys-Yv_eq)/dYv_nr)
-                  if (Yv_eq+dYv_nr.ge.Yvmax-fd_eps) ms=min(ms,0.9_WP*(Yvmax-fd_eps-Yv_eq)/dYv_nr)
+                  if (Yv_eq+dYv_nr.ge.Yv_hi-fd_eps) ms=min(ms,0.9_WP*(Yv_hi-fd_eps-Yv_eq)/dYv_nr)
                else if (dYv_nr.lt.0.0_WP) then
                   if (Yv_eq+dYv_nr.le.Yvmin+fd_eps) ms=min(ms,0.9_WP*(Yv_eq-Yvmin-fd_eps)/abs(dYv_nr))
                end if
+
                ! Scale the Newton-Raphson step uniformly to keep pointing directly at the root
-               dp_nr=dp_nr*ms
+               ms=max(0.0_WP,min(1.0_WP,ms))
+               dlnp_nr=dlnp_nr*ms
                dYv_nr=dYv_nr*ms
             end block step_limit
+
             ! Damped Newton-Raphson update
             pOld=p_eq
             YvOld=Yv_eq
+            lnpOld=log(pOld)
             alpha=1.0_WP
             lsit=0
+
             if ((abs(F1).lt.F_line_search_tol).and.(abs(F2).lt.F_line_search_tol)) then
-               p_eq=pOld+dp_nr
+               p_eq=exp(lnpOld+dlnp_nr)
                Yv_eq=YvOld+dYv_nr
             else
                accepted=.false.
                do while (alpha.gt.1.0e-8_WP)
                   lsit=lsit+1
-                  p_try=p_eq+alpha*dp_nr
-                  Yv_try=Yv_eq+alpha*dYv_nr
+
+                  p_try=exp(lnpOld+alpha*dlnp_nr)
+                  Yv_try=YvOld+alpha*dYv_nr
+
                   ! Keep the trial state inside the physical/log-safe domain
                   if (p_try.le.p_eps) then
                      alpha=0.5_WP*alpha
                      cycle
                   end if
-                  if ((Yv_try.le.Yvmin+fd_eps).or.(Yv_try.ge.Yvmax-fd_eps)) then
+
+                  if ((Yv_try.le.Yvmin+fd_eps).or.(Yv_try.ge.Yv_hi-fd_eps)) then
                      alpha=0.5_WP*alpha
                      cycle
                   end if
+
                   if ((rho0*(1.0_WP-Yv_try)-rhoA0).le.0.0_WP) then
                      alpha=0.5_WP*alpha
                      cycle
                   end if
+
                   T_try=this%get_T_lvg(p_try,Yv_try,rho0,rhoA0)
+
                   if (T_try.le.0.0_WP) then
                      alpha=0.5_WP*alpha
                      cycle
                   end if
+
                   xv_try=this%get_xv(Yv_try)
-                  ppv_try=xv_try*p_try
-                  if (.not.check_pv(ppv_try)) then
+                  pv_try=xv_try*p_try
+
+                  if (.not.check_pv(pv_try)) then
                      alpha=0.5_WP*alpha
                      cycle
                   end if
-                  F1_try=this%pTsat(p_try,ppv_try,T_try)
+
+                  F1_try=this%pTsat(p_try,pv_try,T_try)
                   F2_try=rhoe_res_lvg(p_try,T_try,Yv_try)/rhoe0
                   res_try=sqrt(F1_try**2+F2_try**2)
+
                   if (res_try.lt.res0) then
                      p_eq=p_try
                      Yv_eq=Yv_try
@@ -735,34 +1095,43 @@ contains
                      accepted=.true.
                      exit
                   end if
+
                   alpha=0.5_WP*alpha
                end do
+
                if (.not.accepted) then
-                  ! print*,"****************** Line search failed at it=",it," with alpha=",alpha
                   exit
                end if
             end if
+
             ! Evaluate errors
-            p_err=abs((p_eq-pOld)/pOld)
-            Yv_err=abs((Yv_eq-YvOld)/(YvOld+1.0e-30_WP))
+            p_err=abs(log(p_eq/pOld))
+            Yv_err=abs(Yv_eq-YvOld)
+
             ! Refresh xv and pv from the accepted solution
             xv=this%get_xv(Yv_eq)
             pv=xv*p_eq
+            if (.not.check_pv(pv)) return
+
             ! Get temperature
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
+            if (T_eq.le.0.0_WP) return
+
             ! Evaluate residuals
             F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
-            if ((p_err.lt.this%p_tol).and.(Yv_err.lt.this%Yv_tol).and.(abs(F1).lt.this%F1_tol).and.(abs(F2).lt.this%F2_tol)) then
+
+            if ((p_err.lt.this%p_tol).and.Yv_err.lt.this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq)).and.(abs(F1).lt.this%F1_tol).and.(abs(F2).lt.this%F2_tol)) then
                conv=.true.
                exit
             end if
+
          end do
          ! Check convergence
          if (.not.conv) then
-            ! print*,"****************** p-Yv iterations blew up. Skipping the cell!!"
             return
          end if
+
       end subroutine solve_lvg
    end subroutine relax_sg_ig_relax_pTg
 
@@ -781,11 +1150,18 @@ contains
    end function relax_sg_ig_dpTsatdT
 
    !> d(pTsat)/dp for the LV solve (pv_ = pl_)
-   real(WP) function relax_sg_ig_dpTsatdp_lv(this,p_,T_,dTdp)
+   real(WP) function relax_sg_ig_dpTsatdp_lv(this,p_,T_,dTdp_)
       class(relax_sg_ig), intent(in) :: this
-      real(WP), intent(in) :: p_,T_,dTdp
-      relax_sg_ig_dpTsatdp_lv=this%dpTsatdT(p_,T_)*dTdp+this%ES/T_+this%DS/(p_+this%liq%pinf)-1.0_WP/p_
+      real(WP), intent(in) :: p_,T_,dTdp_
+      relax_sg_ig_dpTsatdp_lv=this%dpTsatdT(p_,T_)*dTdp_+this%ES/T_+this%DS/(p_+this%liq%pinf)-1.0_WP/p_
    end function relax_sg_ig_dpTsatdp_lv
+
+   !> d(pTsat)/dlnp at fixed Yv, with T=T(p,Yv)
+   real(WP) function relax_sg_ig_dpTsatdlnp(this,p_,T_,dTdlnp_)
+      class(relax_sg_ig), intent(in) :: this
+      real(WP), intent(in) :: p_,T_,dTdlnp_
+      relax_sg_ig_dpTsatdlnp=this%dpTsatdT(p_,T_)*dTdlnp_+this%ES*p_/T_+this%DS*p_/(p_+this%liq%pinf)-1.0_WP
+   end function relax_sg_ig_dpTsatdlnp
 
    !> Safeguarded Newton-Raphson for saturation temperature at fixed (pl_, pv_)
    subroutine relax_sg_ig_get_Tsat(this,pl_,pv_,Tguess,Tsat,conv,Tsat_it)
@@ -819,7 +1195,6 @@ contains
          expand_it=expand_it+1
       end do
       if (Flo*Fhi.gt.0.0_WP) then
-         ! print*,'****************** Could not bracket Tsat!',pl_,pv_,Flo,Fhi,Tlo,Thi
          return
       end if
       ! Use the caller's guess only after clamping it to the safe bracket.
@@ -858,6 +1233,13 @@ contains
          end if
       end do
    end subroutine relax_sg_ig_get_Tsat
+
+   !> Get saturated vapor pressure at given T and p_l
+   real(WP) function relax_sg_ig_get_pvsat(this,pl_,T_)
+      class(relax_sg_ig), intent(inout) :: this
+      real(WP), intent(in)  :: pl_,T_
+      relax_sg_ig_get_pvsat=exp(this%AS+(this%BS+this%ES*pl_)/T_)*T_**this%CS*(pl_+this%liq%pinf)**this%DS
+   end function relax_sg_ig_get_pvsat
 
    !> Vapor mole fraction from mass fraction
    real(WP) function relax_sg_ig_get_xv(this,Yv_)
