@@ -54,7 +54,7 @@ program test_relax
       call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
 
       ! Single-cell test
-      call make_Q(liq,gas,p=1e5_WP,T=340.0_WP,VF_in=0.0_WP,Yv_in=1.0_WP,VF=VF,Q=Q0)
+      call make_Q(liq,gas,p=-3e5_WP,T=340.0_WP,VF_in=1.0_WP,Yv_in=0.0_WP,VF=VF,Q=Q0)
       VF0=VF; VF=VF0; Q=Q0; call rm%relax_pTg(VF=VF,Q=Q,Pjump=0.0_WP)
       call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
       print '(/,A)','── NASG  initial ───────────────────────────────────────────'

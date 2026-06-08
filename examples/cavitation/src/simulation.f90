@@ -67,8 +67,8 @@ module simulation
    !> Case parameters
    real(WP) :: dcyl               !< Cylinder diameter [m]
    real(WP) :: xcyl               !< Cylinder center x location [m]
-   real(WP) :: Thi,Tlo            !< Initial temperature
-   real(WP) :: Tdec               !< Initial temperature decay parameter
+   real(WP) :: Thi,Tlo,Tdec       !< Initial temperature
+   real(WP) :: phi,plo,pdec       !< Initial pressure
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG,ScV        !< Prandtle and Schmidt numbers
 
@@ -78,6 +78,10 @@ module simulation
    !> Tagging parameters
    real(WP) :: vorticity_tag=huge(1.0_WP)
    real(WP) :: rho_ratio_tag=huge(1.0_WP)
+
+   !> Vapor mass fraction integral within a fixed radius of the droplet center
+   real(WP), parameter :: Yv_int_radius=0.01_WP
+   real(WP) :: Yv_int_r=0.0_WP
 
    !> Time stepping
    real(WP) :: dt_init
@@ -187,6 +191,57 @@ contains
       end do
    end subroutine get_viscosities
 
+   !> Integrate vapor mass fraction Yv over a fixed-radius region centered on the droplet
+   subroutine get_Yv_int_r()
+      use amrex_amr_module, only: amrex_mfiter,amrex_box,amrex_imultifab,amrex_imultifab_build,amrex_imultifab_destroy
+      use amrex_interface,  only: amrmask_make_fine
+      use parallel,         only: MPI_REAL_WP
+      use mpi_f08,          only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
+      implicit none
+      integer :: lvl,i,j,k,ierr
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      type(amrex_imultifab) :: mask
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pYg
+      integer,  dimension(:,:,:,:), contiguous, pointer :: pMask
+      real(WP) :: dx,dy,dz,x_cc,y_cc,z_cc,rad
+      ! Composite integration with fine masking to avoid double-counting
+      Yv_int_r=0.0_WP
+      do lvl=0,amr%clvl()
+         dx=amr%dx(lvl); dy=amr%dy(lvl); dz=amr%dz(lvl)
+         ! Build fine mask for this level (if not finest)
+         if (lvl.lt.amr%clvl()) then
+            call amrex_imultifab_build(mask,amr%ba(lvl),amr%dm(lvl),1,0)
+            call amrmask_make_fine(mask,amr%ba(lvl+1),[amr%rrefx(lvl),amr%rrefy(lvl),amr%rrefz(lvl)],0,1)
+         end if
+         call amr%mfiter_build(lvl,mfi)
+         do while (mfi%next())
+            ! Get pointer to vapor mass fraction
+            pYg=>fs%Yg%mf(lvl)%dataptr(mfi)
+            if (lvl.lt.amr%clvl()) pMask=>mask%dataptr(mfi)
+            ! Loop over tile
+            bx=mfi%tilebox()
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               ! Skip cells covered by finer level
+               if (lvl.lt.amr%clvl()) then
+                  if (pMask(i,j,k,1).eq.0) cycle
+               end if
+               ! Cell-center distance from the droplet center (xcyl,0,0)
+               x_cc=amr%xlo+(real(i,WP)+0.5_WP)*dx
+               y_cc=amr%ylo+(real(j,WP)+0.5_WP)*dy
+               z_cc=amr%zlo+(real(k,WP)+0.5_WP)*dz
+               rad=sqrt((x_cc-xcyl)**2+y_cc**2+z_cc**2)
+               if (amr%nz.eq.1) rad=sqrt((x_cc-xcyl)**2+y_cc**2)
+               ! Accumulate Yv integral over cells within the fixed radius
+               if (rad.le.Yv_int_radius) Yv_int_r=Yv_int_r+pYg(i,j,k,1)*amr%cell_vol(lvl)
+            end do; end do; end do
+         end do
+         call amr%mfiter_destroy(mfi)
+         if (lvl.lt.amr%clvl()) call amrex_imultifab_destroy(mask)
+      end do
+      call MPI_ALLREDUCE(MPI_IN_PLACE,Yv_int_r,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+   end subroutine get_Yv_int_r
+
    !> User init callback – set Q and VF/barycenters for blastwave + cylinder
    subroutine blastwave_init(solver,lvl,time,ba,dm)
       use amrex_amr_module, only: amrex_boxarray,amrex_distromap,amrex_mfiter,amrex_box
@@ -242,10 +297,14 @@ contains
             y_cc=solver%amr%ylo+(real(j,WP)+0.5_WP)*dy
             ! Determine temperature
             rad=sqrt(x_cc**2+y_cc**2)
+            T0=Tlo
+            p0=plo
             if (rad.le.0.5_WP*dcyl) then
-               T0=Tlo+(Thi-Tlo)*(exp(-Tdec*(rad/(0.5_WP*dcyl))**2)-exp(-Tdec))/(1.0_WP-exp(-Tdec))
-            else
-               T0=Tlo
+               ! T0=Tlo+(Thi-Tlo)*(exp(-Tdec*(rad/(0.5_WP*dcyl))**2)-exp(-Tdec))/(1.0_WP-exp(-Tdec))
+               p0=plo+(phi-plo)*(exp(-pdec*(rad/(0.5_WP*dcyl))**2)-exp(-pdec))/(1.0_WP-exp(-pdec))
+            end if
+            if (rad.le.0.15_WP*dcyl) then
+               p0=phi
             end if
             ! Get density and internal energy
             eL_local  =eosL%get_e_from_p_T(p=p0,T=T0)
@@ -271,6 +330,7 @@ contains
       use iso_c_binding,    only: c_ptr,c_char
       use amrex_amr_module, only: amrex_mfiter,amrex_box,amrex_tagboxarray
       use amrgrid_class,    only: SETtag
+      use amrmpcomp_class,  only: VFlo
       class(amrmpcomp), intent(inout) :: solver
       integer, intent(in) :: lvl
       real(WP), intent(in) :: time
@@ -280,6 +340,7 @@ contains
       type(amrex_box) :: bx
       character(kind=c_char), dimension(:,:,:,:), contiguous, pointer :: tagarr
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF
       real(WP) :: dx,dy,dz,dxi,dyi,dzi
       real(WP) :: irho_cc,irho_xp,irho_xm,irho_yp,irho_ym,irho_zp,irho_zm
       real(WP) :: vort_x,vort_y,vort_z,vort_mag
@@ -297,6 +358,7 @@ contains
          ! Get pointers to data
          tagarr=>tags%dataPtr(mfi)
          pQ=>solver%Q%mf(lvl)%dataptr(mfi)
+         pVF=>solver%VF%mf(lvl)%dataptr(mfi)
          ! Loop over tile
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
@@ -323,6 +385,11 @@ contains
             end do; end do; end do
             rho_ratio=rho_max/rho_min
             if (rho_ratio.gt.rho_ratio_tag) tagarr(i,j,k,1)=SETtag
+            ! Always keep any liquid-containing cell at the finest level, so that
+            ! apply_relax (which only processes lvl=maxlvl) sees every droplet cell
+            ! every step -- bulk interior cells in tension must never be stranded
+            ! on a coarser level where cavitation nucleation can never trigger
+            if (pVF(i,j,k,1).gt.VFlo) tagarr(i,j,k,1)=SETtag
          end do; end do; end do
       end do
       call solver%amr%mfiter_destroy(mfi)
@@ -371,6 +438,9 @@ contains
          call param_read('High liquid temperature',Thi)
          call param_read('Low liquid temperature',Tlo)
          call param_read('Temperature decay parameter',Tdec)
+         call param_read('High liquid pressure',phi)
+         call param_read('Low liquid pressure',plo)
+         call param_read('Pressure decay parameter',pdec)
          ! Domain dimensions
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
@@ -603,6 +673,8 @@ contains
          ! Get solver info and cfl
          call fs%get_info()
          call fs%get_cfl(dt=time%dt,cfl=time%cfl)
+         ! Compute Yv integral within fixed radius
+         call get_Yv_int_r()
          ! Create simulation monitor
          mfile=monitor(amRoot=amr%amRoot,name='simulation')
          call mfile%add_column(time%n,'Timestep number')
@@ -626,6 +698,7 @@ contains
          call mfile%add_column(fs%Yvmin,'Yvmin')
          call mfile%add_column(fs%Yvmax,'Yvmax')
          call mfile%add_column(fs%Qint(8),'Vapor mass')
+         call mfile%add_column(Yv_int_r,'Yv_int_r01')
          call mfile%write()
          ! Create CFL monitor
          cflfile=monitor(amRoot=amr%amRoot,name='cfl')
@@ -778,6 +851,7 @@ contains
 
          ! Perform and output monitoring
          call fs%get_info()
+         call get_Yv_int_r()
          call mfile%write()
          call consfile%write()
          call cflfile%write()

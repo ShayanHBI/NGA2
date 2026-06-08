@@ -184,6 +184,14 @@ contains
       else
          Peq=this%gas%get_p_from_rho_e(rho=RHOG,e=Q(4)/Q(2),y=y)
       end if
+      ! Peq is about to be imposed on BOTH phases to derive TL/TG. An ideal-gas-like
+      ! vapor cannot exist at p<=0 (its EOS would force a nonphysical T at positive
+      ! density), so reject the thermal relaxation step here -- mirroring the Peq
+      ! check already performed in relax_p -- instead of computing a negative TG.
+      if (Peq.le.max(0.0_WP,-this%liq%pinf)) then
+         deallocate(Q0,y)
+         return
+      end if
       ! Update phasic thermodynamic quantities
       IL=Q(3)/Q(1)
       IG=Q(4)/Q(2)

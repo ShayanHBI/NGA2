@@ -230,10 +230,11 @@ contains
             ! Stable pure liquid: no chemical relaxation needed.
             if (pv_sat.le.pL_nuc) return
             ! Superheated liquid / cavitation: nucleate a tiny vapor phase.
+            ! Use pv_sat (not pL_nuc) for density: when pL<0, pL_nuc gives negative rhoV.
             y_nuc           =0.0_WP
             y_nuc(this%indV)=1.0_WP
-            rhoV_nuc=this%gas%get_rho_from_p_T(pL_nuc,TL_nuc,y_nuc)
-            eV_nuc=this%gas%get_e_from_p_T(pL_nuc,TL_nuc,y_nuc)
+            rhoV_nuc=this%gas%get_rho_from_p_T(pv_sat,TL_nuc,y_nuc)
+            eV_nuc=this%gas%get_e_from_p_T(pv_sat,TL_nuc,y_nuc)
             drho=VF_nuc*rhoV_nuc
             de=drho*eV_nuc
             Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
@@ -471,7 +472,8 @@ contains
          ! Get vapor mole fraction and partial pressure
          xv=this%get_xv(Yv_)
          pv_=xv*p_
-         if ((Yv_.le.Yv_dry).or.(pv_.le.pv_dry).or.(.not.check_pv(pv_))) then
+         ! if ((Yv_.le.Yv_dry).or.(pv_.le.pv_dry).or.(.not.check_pv(pv_))) then
+         if (Yv_.le.Yv_dry) then
             ! Dry/nearly-dry air edge case: pv_ is zero or so tiny that solving Tsat(pv_) is log-singular/ill-conditioned.
             ! Seed Yv from saturation at the current thermally-relaxed state and then continue with the ordinary LVG Newton solve.
             pv_=exp(this%AS+(this%BS+this%ES*p_)/T_)*T_**this%CS*(p_+this%liq%pinf)**this%DS
@@ -486,6 +488,16 @@ contains
                Yv_=xv*Mv/(xv*Mv+(1.0_WP-xv)*Ma)
             end if
             Yv_=max(Yvmin,min(Yvmax,Yv_))
+         else if ((pv_.le.pv_dry).or.(.not.check_pv(pv_))) then
+            ! Yv_ is already known and is NOT dry (e.g. Yv_=1, no inert gas at all),
+            ! yet pv_=xv*p_ comes out tiny/negative -- this happens when the *total*
+            ! pressure p_ itself is small or negative (a liquid-dominated cell in
+            ! tension/cavitation), not because the vapor content is small. The
+            ! log-based saturation residual pTsat(p_,pv_,T_) is ill-conditioned or
+            ! undefined for pv_<=0, but a physical saturation pressure pv_sat(T_) is
+            ! always positive while p_<=0 here, so the mixture cannot possibly be at
+            ! equilibrium: flag relaxation as needed without overwriting Yv_, which
+            ! is already correct.
          else
             ! Direct saturation residual. No Tsat solve needed.
             Fsat=this%pTsat(p_,pv_,T_)
@@ -503,6 +515,35 @@ contains
          real(WP), intent(in) :: ap,bp,dp,dapdp,dbpdp,ddpdp
          get_dTdp_lv=(ap*(-dbpdp+(bp*dbpdp-2.0_WP*(dapdp*dp+ap*ddpdp))/sqrt(bp**2-4.0_WP*ap*dp))-dapdp*(-bp+sqrt(bp**2-4.0_WP*ap*dp)))/(2.0_WP*ap**2)
       end function get_dTdp_lv
+
+      ! The following two consider the other root for temperature and make the decision between the two roots:
+      !> Equilibrium T for LV
+      ! real(WP) function get_T_lv(ap,bp,dp)
+      !    real(WP), intent(in) :: ap,bp,dp
+      !    real(WP) :: T1, T2
+      !    T1=(-bp-sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+      !    T2=(-bp+sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+      !    ! Pick the root closest to the initial mixture temperature T
+      !    if (abs(T1 - T) .lt. abs(T2 - T)) then
+      !       get_T_lv = T1
+      !    else
+      !       get_T_lv = T2
+      !    end if
+      ! end function get_T_lv
+      ! !> dT/dp from the quadratic coefficients for LV
+      ! real(WP) function get_dTdp_lv(ap,bp,dp,dapdp,dbpdp,ddpdp)
+      !    real(WP), intent(in) :: ap,bp,dp,dapdp,dbpdp,ddpdp
+      !    real(WP) :: T1, T2, sgn
+      !    T1=(-bp-sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+      !    T2=(-bp+sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+      !    if (abs(T1 - T) .lt. abs(T2 - T)) then
+      !       sgn = -1.0_WP
+      !    else
+      !       sgn =  1.0_WP
+      !    end if
+      !    get_dTdp_lv=(ap*(-dbpdp+sgn*(bp*dbpdp-2.0_WP*(dapdp*dp+ap*ddpdp))/sqrt(bp**2-4.0_WP*ap*dp))-dapdp*(-bp+sgn*sqrt(bp**2-4.0_WP*ap*dp)))/(2.0_WP*ap**2)
+      ! end function get_dTdp_lv
+
       !> Energy residual for LVG
       real(WP) function rhoe_res_lvg(p_,T_,Yv_)
          real(WP), intent(in) :: p_,T_,Yv_
@@ -572,6 +613,16 @@ contains
          logical  :: accepted
          ! Iteratively solve for the equilibrium log-pressure
          conv=.false.
+         ! DEBUG: For a pure liquid-vapor mixture, chemical equilibrium requires
+         ! pv=p>0 (an ideal-gas-like vapor cannot exist at p<=0), and the iteration
+         ! below works in lnp so it needs a strictly positive starting guess. The
+         ! incoming p_eq can be non-positive here -- e.g. a liquid-dominated cell in
+         ! tension/cavitation, where the mechanically/thermally relaxed p is really
+         ! the *liquid*'s tensile pressure, not a valid vapor pressure. Reseed p_eq
+         ! from the (always-positive) saturation curve at the current liquid
+         ! pressure/temperature so the Newton-Raphson iterate starts close to the
+         ! true equilibrium instead of producing NaNs in pTsat's ln(pv) term.
+         if (p_eq.le.p_eps) p_eq=this%get_pvsat(p_eq,T_eq)
          p_err=10.0_WP*this%p_tol
          do it=1,this%NR_itmax
             ! Get the coefficients
@@ -1252,9 +1303,9 @@ contains
    real(WP) function relax_sg_ig_get_T_lvg(this,p_,Yv_,rho0,rhoA0)
       class(relax_sg_ig), intent(in) :: this
       real(WP), intent(in) :: p_,Yv_,rho0,rhoA0
-      relax_sg_ig_get_T_lvg=(1.0_WP-Yv_)/                                                                                                      &
-      &         ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)+                                             &
-      &           rhoA0*((this%gas%get_species_gamma(this%indV)-1.0_WP)*this%gas%get_species_cv(this%indV)*Yv_+                                  &
+      relax_sg_ig_get_T_lvg=(1.0_WP-Yv_)/                                                                                   &
+      &         ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)+                          &
+      &           rhoA0*((this%gas%get_species_gamma(this%indV)-1.0_WP)*this%gas%get_species_cv(this%indV)*Yv_+             &
       &                  (this%gas%get_species_gamma(this%indA)-1.0_WP)*this%gas%get_species_cv(this%indA)*(1.0_WP-Yv_))/p_)
    end function relax_sg_ig_get_T_lvg
 
