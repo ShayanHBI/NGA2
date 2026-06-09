@@ -184,10 +184,7 @@ contains
       else
          Peq=this%gas%get_p_from_rho_e(rho=RHOG,e=Q(4)/Q(2),y=y)
       end if
-      ! Peq is about to be imposed on BOTH phases to derive TL/TG. An ideal-gas-like
-      ! vapor cannot exist at p<=0 (its EOS would force a nonphysical T at positive
-      ! density), so reject the thermal relaxation step here -- mirroring the Peq
-      ! check already performed in relax_p -- instead of computing a negative TG.
+      ! Return if unphysical pressure
       if (Peq.le.max(0.0_WP,-this%liq%pinf)) then
          deallocate(Q0,y)
          return
@@ -201,12 +198,6 @@ contains
       GG=this%gas%get_gruneisen_from_rho_e(rho=RHOG,e=IG,y=y)
       CL=this%liq%get_c_from_p_rho(p=Peq,rho=RHOL)
       CG=this%gas%get_c_from_p_rho(p=Peq,rho=RHOG,y=y)
-      ! print '(A)',       '============ P_relax ============='
-      ! print '(A,ES15.7)','p   =',Peq
-      ! print '(A,ES15.7)','VF  =',VF
-      ! print '(A,ES15.7)','TL  =',TL
-      ! print '(A,ES15.7)','TG  =',TG
-      ! print '(A)',       '==================================='
       ! Setup ODE coefficients
       Z=(1.0_WP-VF)*GL+VF*GG
       D=VF*RHOG*CG**2+(1.0_WP-VF)*RHOL*CL**2

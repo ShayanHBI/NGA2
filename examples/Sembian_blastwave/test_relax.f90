@@ -54,7 +54,7 @@ program test_relax
       call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
 
       ! Single-cell test
-      call make_Q(liq,gas,p=-3e5_WP,T=340.0_WP,VF_in=1.0_WP,Yv_in=0.0_WP,VF=VF,Q=Q0)
+      call make_Q(liq,gas,p=1e6_WP,T=350.0_WP,VF_in=0.0_WP,Yv_in=1.0_WP,VF=VF,Q=Q0)
       VF0=VF; VF=VF0; Q=Q0; call rm%relax_pTg(VF=VF,Q=Q,Pjump=0.0_WP)
       call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
       print '(/,A)','── NASG  initial ───────────────────────────────────────────'
@@ -95,6 +95,17 @@ program test_relax
       call gas_species(2)%initialize(gamma=GammaA,cv=CvA,q=qA,qp=qpA)
       call gas%initialize(ns=2); call gas%set_species(gas_species)
       call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
+
+      ! Single-cell test: pure vapor condensation (same as NASG test above)
+      call make_Q(liq,gas,p=1e5_WP,T=300.0_WP,VF_in=0.0_WP,Yv_in=1.0_WP,VF=VF,Q=Q0)
+      VF0=VF; VF=VF0; Q=Q0; call rm%relax_pTg(VF=VF,Q=Q,Pjump=0.0_WP)
+      call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
+      print '(/,A)','── SG  initial ─────────────────────────────────────────────'
+      print '(3(A,ES12.4,3X))','VF=',VF0,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
+      call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
+      print '(A)',  '── SG  post-relax ──────────────────────────────────────────'
+      print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
+      print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
 
       ! call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.3_WP,Yv0=0.6_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block sg_block

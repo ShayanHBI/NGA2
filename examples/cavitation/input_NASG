@@ -57,6 +57,6 @@ Max CFL    : 0.5
 Max time   : 4e-5
 
 # Output
-Output period     : 5e-6 ! 1e-7
+Output period     : 1e-7
 !Checkpoint period : 2e-4
 !Restart from      : 2.00100E-05
