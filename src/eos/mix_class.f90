@@ -23,6 +23,8 @@ module mix_class
       procedure(mix_p_rho_iface), deferred :: get_rhoe_from_p_rho
       procedure(mix_p_T_iface  ), deferred :: get_rhoe_from_p_T
       procedure(mix_p_T_iface  ), deferred :: get_g_from_p_T
+      procedure(mix_rho_T_iface), deferred :: get_drhodT_const_p_from_rho_T
+      procedure(mix_rho_T_iface), deferred :: get_drhodp_const_T_from_rho_T
    end type mix
 
    abstract interface

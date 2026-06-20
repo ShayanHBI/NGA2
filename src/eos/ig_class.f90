@@ -16,20 +16,23 @@ module ig_class
       real(WP) :: qp   =0.0_WP
    contains
       procedure, private :: ig_initialize
-      generic   :: initialize              =>ig_initialize
-      procedure :: get_p_from_rho_e        =>ig_get_p_from_rho_e
-      procedure :: get_T_from_p_rho        =>ig_get_T_from_p_rho
-      procedure :: get_c_from_p_rho        =>ig_get_c_from_p_rho
-      procedure :: get_e_from_p_rho        =>ig_get_e_from_p_rho
-      procedure :: get_e_from_p_T          =>ig_get_e_from_p_T
-      procedure :: get_p_from_rho_T        =>ig_get_p_from_rho_T
-      procedure :: get_rho_from_p_T        =>ig_get_rho_from_p_T
-      procedure :: get_h_from_p_T          =>ig_get_h_from_p_T
-      procedure :: get_s_from_p_T          =>ig_get_s_from_p_T
-      procedure :: get_g_from_p_T          =>ig_get_g_from_p_T
-      procedure :: get_gruneisen_from_rho_e=>ig_get_gruneisen_from_rho_e
-      procedure :: get_rhoe_from_p_rho     =>ig_get_rhoe_from_p_rho
-      procedure :: get_rhoe_from_p_T       =>ig_get_rhoe_from_p_T
+      generic   :: initialize                   =>ig_initialize
+      procedure :: get_p_from_rho_e             =>ig_get_p_from_rho_e
+      procedure :: get_T_from_p_rho             =>ig_get_T_from_p_rho
+      procedure :: get_T_from_p_v               =>ig_get_T_from_p_v
+      procedure :: get_c_from_p_rho             =>ig_get_c_from_p_rho
+      procedure :: get_e_from_p_rho             =>ig_get_e_from_p_rho
+      procedure :: get_e_from_p_T               =>ig_get_e_from_p_T
+      procedure :: get_p_from_rho_T             =>ig_get_p_from_rho_T
+      procedure :: get_rho_from_p_T             =>ig_get_rho_from_p_T
+      procedure :: get_h_from_p_T               =>ig_get_h_from_p_T
+      procedure :: get_s_from_p_T               =>ig_get_s_from_p_T
+      procedure :: get_g_from_p_T               =>ig_get_g_from_p_T
+      procedure :: get_gruneisen_from_rho_e     =>ig_get_gruneisen_from_rho_e
+      procedure :: get_rhoe_from_p_rho          =>ig_get_rhoe_from_p_rho
+      procedure :: get_rhoe_from_p_T            =>ig_get_rhoe_from_p_T
+      procedure :: get_drhodT_const_p_from_rho_T=>ig_get_drhodT_const_p_from_rho_T
+      procedure :: get_drhodp_const_T_from_rho_T=>ig_get_drhodp_const_T_from_rho_T
    end type ig
 
 contains
@@ -56,6 +59,12 @@ contains
       real(WP), intent(in) :: p,rho
       T=p/(this%R*rho)
    end function ig_get_T_from_p_rho
+
+   real(WP) function ig_get_T_from_p_v(this,p,v) result(T)
+      class(ig), intent(in) :: this
+      real(WP), intent(in) :: p,v
+      T=p*v/this%R
+   end function ig_get_T_from_p_v
 
    real(WP) function ig_get_c_from_p_rho(this,p,rho) result(c)
       class(ig), intent(in) :: this
@@ -122,5 +131,17 @@ contains
       real(WP), intent(in) :: p,T
       rhoe=p*(this%cv*T+this%q)/(this%R*T)
    end function ig_get_rhoe_from_p_T
+
+   real(WP) function ig_get_drhodT_const_p_from_rho_T(this,rho,T) result(drhodT)
+      class(ig), intent(in) :: this
+      real(WP), intent(in) :: rho,T
+      drhodT=-rho/T
+   end function ig_get_drhodT_const_p_from_rho_T
+
+   real(WP) function ig_get_drhodp_const_T_from_rho_T(this,rho,T) result(drhodp)
+      class(ig), intent(in) :: this
+      real(WP), intent(in) :: rho,T
+      drhodp=1.0_WP/(this%R*T)
+   end function ig_get_drhodp_const_T_from_rho_T
 
 end module ig_class

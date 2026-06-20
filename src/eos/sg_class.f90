@@ -11,18 +11,19 @@ module sg_class
       real(WP) :: pinf=0.0_WP
    contains
       procedure, private :: sg_initialize
-      generic   :: initialize         =>sg_initialize
-      procedure :: get_p_from_rho_e   =>sg_get_p_from_rho_e
-      procedure :: get_T_from_p_rho   =>sg_get_T_from_p_rho
-      procedure :: get_c_from_p_rho   =>sg_get_c_from_p_rho
-      procedure :: get_e_from_p_rho   =>sg_get_e_from_p_rho
-      procedure :: get_e_from_p_T     =>sg_get_e_from_p_T
-      procedure :: get_p_from_rho_T   =>sg_get_p_from_rho_T
-      procedure :: get_rho_from_p_T   =>sg_get_rho_from_p_T
-      procedure :: get_s_from_p_T     =>sg_get_s_from_p_T
-      procedure :: get_rhoe_from_p_rho=>sg_get_rhoe_from_p_rho
-      procedure :: get_rhoe_from_p_T  =>sg_get_rhoe_from_p_T
-      procedure :: get_g_from_p_T     =>sg_get_g_from_p_T
+      generic   :: initialize                   =>sg_initialize
+      procedure :: get_p_from_rho_e             =>sg_get_p_from_rho_e
+      procedure :: get_T_from_p_rho             =>sg_get_T_from_p_rho
+      procedure :: get_T_from_p_v               =>sg_get_T_from_p_v
+      procedure :: get_c_from_p_rho             =>sg_get_c_from_p_rho
+      procedure :: get_e_from_p_rho             =>sg_get_e_from_p_rho
+      procedure :: get_e_from_p_T               =>sg_get_e_from_p_T
+      procedure :: get_p_from_rho_T             =>sg_get_p_from_rho_T
+      procedure :: get_rho_from_p_T             =>sg_get_rho_from_p_T
+      procedure :: get_s_from_p_T               =>sg_get_s_from_p_T
+      procedure :: get_rhoe_from_p_rho          =>sg_get_rhoe_from_p_rho
+      procedure :: get_rhoe_from_p_T            =>sg_get_rhoe_from_p_T
+      procedure :: get_g_from_p_T               =>sg_get_g_from_p_T
    end type sg
 
 contains
@@ -45,6 +46,12 @@ contains
       real(WP), intent(in) :: p,rho
       T=(p+this%pinf)/(this%R*rho)
    end function sg_get_T_from_p_rho
+
+   real(WP) function sg_get_T_from_p_v(this,p,v) result(T)
+      class(sg), intent(in) :: this
+      real(WP), intent(in) :: p,v
+      T=(p+this%pinf)*v/this%R
+   end function sg_get_T_from_p_v
 
    real(WP) function sg_get_c_from_p_rho(this,p,rho) result(c)
       class(sg), intent(in) :: this

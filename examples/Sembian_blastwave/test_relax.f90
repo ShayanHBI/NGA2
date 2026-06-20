@@ -15,8 +15,10 @@ program test_relax
    use igmix_class,         only: igmix
    use sg_class,            only: sg
    use nasg_class,          only: nasg
+   use enasg_class,         only: enasg
    use relax_sg_ig_class,   only: relax_sg_ig
    use relax_nasg_ig_class, only: relax_nasg_ig
+   use relax_enasg_ig_class,only: relax_enasg_ig
    implicit none
 
    real(WP), parameter :: Mv=0.0180153_WP, Ma=0.02897_WP   ! molar masses [kg/mol]
@@ -64,7 +66,7 @@ program test_relax
       print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
       print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
 
-      ! call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.3_WP,Yv0=0.6_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      call write_PTg_curve('test_relax_NASG.csv',liq,gas,rm,p0=1.0e6_WP,VF0=0.3_WP,Yv0=0.6_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block nasg_block
 
    ! ── SG configuration ──────────────────────────────────────────────────────
@@ -107,8 +109,54 @@ program test_relax
       print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
       print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
 
-      ! call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e5_WP,VF0=0.3_WP,Yv0=0.6_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+      call write_PTg_curve('test_relax_SG.csv',liq,gas,rm,p0=1.0e6_WP,VF0=0.3_WP,Yv0=0.6_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
    end block sg_block
+
+   ! ── ENASG configuration ───────────────────────────────────────────────────
+   enasg_block: block
+      type(enasg),       target :: liq
+      type(ig),          target :: gas_species(2)
+      type(igmix),       target :: gas
+      type(relax_enasg_ig),target :: rm
+      real(WP) :: CvL,GammaL,PinfL0,PinfL1,bL0,bL1,qL,qpL
+      real(WP) :: CvV,GammaV,      qV,qpV
+      real(WP) :: CvA,GammaA,      qA,qpA
+
+      call read_real('input_ENASG','Liquid specific heat capacity at constant volume',CvL,    3610.0_WP)
+      call read_real('input_ENASG','Liquid specific heat capacity ratio',             GammaL,  1.19_WP)
+      call read_real('input_ENASG','Liquid reference energy shift',                   qL,     -1177788.0_WP)
+      call read_real('input_ENASG','Liquid reference entropy shift',                  qpL,    0.0_WP)
+      call read_real('input_ENASG','Liquid stiffening pressure',                      PinfL0, 7.028e8_WP)
+      call read_real('input_ENASG','Liquid stiffening pressure linear coefficient',   PinfL1, 0.0_WP)
+      call read_real('input_ENASG','Liquid co-volume',                                bL0,    6.61e-4_WP)
+      call read_real('input_ENASG','Liquid co-volume linear coefficient',             bL1,    0.0_WP)
+      call read_real('input_ENASG','Vapor specific heat capacity at constant volume', CvV,    955.0_WP)
+      call read_real('input_ENASG','Vapor specific heat capacity ratio',              GammaV,  1.47_WP)
+      call read_real('input_ENASG','Vapor reference energy shift',                    qV,     2077616.0_WP)
+      call read_real('input_ENASG','Vapor reference entropy shift',                   qpV,    14317.0_WP)
+      call read_real('input_ENASG','Air specific heat capacity at constant volume',   CvA,    718.0_WP)
+      call read_real('input_ENASG','Air specific heat capacity ratio',                GammaA,  1.40_WP)
+      call read_real('input_ENASG','Air reference energy shift',                      qA,     0.0_WP)
+      call read_real('input_ENASG','Air reference entropy shift',                     qpA,    0.0_WP)
+      call liq%initialize(gamma=GammaL,cv=CvL,pinf0=PinfL0,pinf1=PinfL1,b0=bL0,b1=bL1,q=qL,qp=qpL)
+      call gas_species(1)%initialize(gamma=GammaV,cv=CvV,q=qV,qp=qpV)
+      call gas_species(2)%initialize(gamma=GammaA,cv=CvA,q=qA,qp=qpA)
+      call gas%initialize(ns=2); call gas%set_species(gas_species)
+      call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
+
+      ! Single-cell test
+      call make_Q(liq,gas,p=1e6_WP,T=350.0_WP,VF_in=0.0_WP,Yv_in=1.0_WP,VF=VF,Q=Q0)
+      VF0=VF; VF=VF0; Q=Q0; call rm%relax_pTg(VF=VF,Q=Q,Pjump=0.0_WP)
+      call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
+      print '(/,A)','── ENASG initial ───────────────────────────────────────────'
+      print '(3(A,ES12.4,3X))','VF=',VF0,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
+      call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv,hG)
+      print '(A)',  '── ENASG post-relax ────────────────────────────────────────'
+      print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
+      print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
+
+      call write_PTg_curve('test_relax_ENASG.csv',liq,gas,rm,p0=1.0e6_WP,VF0=0.3_WP,Yv0=0.6_WP,Tmin=300.0_WP,Tmax=500.0_WP,nT=200)
+   end block enasg_block
 
 contains
 

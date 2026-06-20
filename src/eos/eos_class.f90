@@ -12,6 +12,7 @@ module eos_class
    contains
       procedure(eos_rho_e_iface), deferred :: get_p_from_rho_e
       procedure(eos_p_rho_iface), deferred :: get_T_from_p_rho
+      procedure(eos_p_v_iface  ), deferred :: get_T_from_p_v
       procedure(eos_p_rho_iface), deferred :: get_c_from_p_rho
       procedure(eos_p_rho_iface), deferred :: get_e_from_p_rho
       procedure(eos_p_T_iface  ), deferred :: get_e_from_p_T
@@ -23,6 +24,8 @@ module eos_class
       procedure(eos_rho_e_iface), deferred :: get_gruneisen_from_rho_e
       procedure(eos_p_rho_iface), deferred :: get_rhoe_from_p_rho
       procedure(eos_p_T_iface  ), deferred :: get_rhoe_from_p_T
+      procedure(eos_rho_T_iface), deferred :: get_drhodT_const_p_from_rho_T
+      procedure(eos_rho_T_iface), deferred :: get_drhodp_const_T_from_rho_T
    end type eos
 
    abstract interface
@@ -43,6 +46,12 @@ module eos_class
          class(eos), intent(in) :: this
          real(WP), intent(in) :: p,T
       end function eos_p_T_iface
+
+      real(WP) function eos_p_v_iface(this,p,v)
+         import :: WP,eos
+         class(eos), intent(in) :: this
+         real(WP), intent(in) :: p,v
+      end function eos_p_v_iface
 
       real(WP) function eos_rho_T_iface(this,rho,T)
          import :: WP,eos

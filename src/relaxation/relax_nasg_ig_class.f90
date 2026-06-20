@@ -58,6 +58,7 @@ contains
       real(WP) :: VFeq,VF0,Peq
       real(WP) :: cvG,cpG,qG,gammaG
       real(WP) :: Yv
+      if ((VF.eq.0.0_WP).or.(VF.eq.1.0_WP)) return
       ! Store the input state
       allocate(Q0(size(Q)))
       VF0=VF
@@ -157,9 +158,10 @@ contains
       real(WP) :: RHOL,RHOG,CL,CG,GL,GG,TL,TG,IL,IG
       real(WP) :: PHIL,PHIG,zetaL,zetaG,Z,D,COF
       real(WP) :: xiTL,xiTG,xiTLinv,xiTGinv
-      real(WP) :: VFeq,Peq,Teq
+      real(WP) :: VFeq,Peq!,Teq
       real(WP) :: cvG,cpG,qG,gammaG
       real(WP) :: Yv
+      if ((VF.eq.0.0_WP).or.(VF.eq.1.0_WP)) return
       ! Store initial Q before relax_p so get_p_eq sees the same Q0 as the original monolithic code
       allocate(Q0(size(Q)))
       Q0=Q
@@ -201,10 +203,10 @@ contains
       ! Setup ODE coefficients
       Z=(1.0_WP-VF)*GL+VF*GG
       D=VF*RHOG*CG**2+(1.0_WP-VF)*RHOL*CL**2
-      PHIL=-(this%liq%gamma-1.0_WP)*this%liq%cv*RHOL**2/(Peq+this%liq%pinf)
-      PHIG=-(gammaG-1.0_WP)*cvG*RHOG**2/Peq
-      zetaL=RHOL*(1.0_WP-this%liq_nasg%b*RHOL)/(Peq+this%liq%pinf)
-      zetaG=RHOG/Peq
+      PHIL=this%liq%get_drhodT_const_p_from_rho_T(rho=RHOL,T=TL)
+      PHIG=this%gas%get_drhodT_const_p_from_rho_T(rho=RHOG,T=TG,y=y)
+      zetaL=this%liq%get_drhodp_const_T_from_rho_T(rho=RHOL,T=TL)
+      zetaG=this%gas%get_drhodp_const_T_from_rho_T(rho=RHOG,T=TG,y=y)
       COF=GL*RHOG*CG**2-GG*RHOL*CL**2
       xiTL=-PHIL*D/(RHOL/(       VF)*Z+zetaL*COF)
       xiTG=-PHIG*D/(RHOG/(1.0_WP-VF)*Z-zetaG*COF)
@@ -212,21 +214,32 @@ contains
       xiTGinv=1.0_WP/xiTG
       ! Get equilibrium VF, T ,and p
       VFeq=VF+Z/D*(TG-TL)/(xiTLinv+xiTGinv)
-      Teq=(xiTL*TL+xiTG*TG)/(xiTL+xiTG)
+      ! Teq=(xiTL*TL+xiTG*TG)/(xiTL+xiTG)
       Peq=this%get_p_eq(VFeq,Q0,qG,gammaG)
       ! Check if pressure is sound
       if (Peq.le.max(0.0_WP,-this%liq%pinf)) then
          deallocate(y)
+         deallocate(Q0)
          return
       end if
       ! Clean up solution
       if (VFeq.lt.0.0_WP) then
          VFeq=0.0_WP
+         VF=VFeq
          Peq=max(Peq,-this%liq%pinf)
+         Q(2)=sum(Q(1:2)); Q(8)=Q(8)+Q(1); Q(1)=0.0_WP
+         Q(4)=sum(Q(3:4)); Q(3)=0.0_WP
+         deallocate(Q0,y)
+         return
       end if
       if (VFeq.gt.1.0_WP) then
          VFeq=1.0_WP
+         VF=VFeq
          Peq=max(Peq,0.0_WP)
+         Q(1)=sum(Q(1:2)); Q(8)=0.0_WP; Q(2)=0.0_WP
+         Q(3)=sum(Q(3:4)); Q(4)=0.0_WP
+         deallocate(Q0,y)
+         return
       end if
       ! Adjust densities
       RHOL=Q(1)/(       VFeq)

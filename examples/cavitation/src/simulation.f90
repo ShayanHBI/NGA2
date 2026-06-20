@@ -67,8 +67,10 @@ module simulation
    !> Case parameters
    real(WP) :: dcyl               !< Cylinder diameter [m]
    real(WP) :: xcyl               !< Cylinder center x location [m]
-   real(WP) :: Thi,Tlo,Tdec       !< Initial temperature
-   real(WP) :: phi,plo,pdec       !< Initial pressure
+   real(WP) :: Tinner,Touter,Tdec !< Initial temperature
+   real(WP) :: pinner,pouter,pdec !< Initial pressure
+   real(WP) :: rho_l_inner,e_l_inner
+   real(WP) :: pTarget
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG,ScV        !< Prandtle and Schmidt numbers
 
@@ -243,12 +245,12 @@ contains
    end subroutine get_Yv_int_r
 
    !> User init callback – set Q and VF/barycenters for blastwave + cylinder
-   subroutine blastwave_init(solver,lvl,time,ba,dm)
+   subroutine cavitation_init(solver,lvl,time,ba,dm)
       use amrex_amr_module, only: amrex_boxarray,amrex_distromap,amrex_mfiter,amrex_box
       use amrex_amr_module, only: amrex_mfiter_build,amrex_mfiter_destroy
-      use mms_geom, only: initialize_volume_moments
-      use amrmpcomp_class, only: VFlo
-      use param, only: param_read
+      use mms_geom,         only: initialize_volume_moments
+      use amrmpcomp_class,  only: VFlo
+      use param,            only: param_read
       class(amrmpcomp), intent(inout) :: solver
       integer, intent(in) :: lvl
       real(WP), intent(in) :: time
@@ -258,7 +260,7 @@ contains
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pCL,pCG
       real(WP), dimension(3) :: BL,BG
-      real(WP) :: dx,dy,dz,myVF,IEL,x_cc,y_cc,rad,T0,rhoG_local,eG_local,rhoL_local,eL_local,Yv0,p0,y(1:2)
+      real(WP) :: dx,dy,dz,myVF,IEL,x_cc,y_cc,rad,T0,p0,rhoG_local,eG_local,rhoL_local,eL_local,Yv0,y(1:2)
       integer :: i,j,k
       integer, parameter :: nref=3
       ! Get mesh size
@@ -266,8 +268,6 @@ contains
       ! Get initial vapor mass fraction
       call param_read('Initial vapor mass fraction',Yv0)
       y=[Yv0,1.0_WP-Yv0]
-      ! Get initial pressure
-      call param_read('Initial pressure',p0)
       ! Use passed ba/dm since grid is being constructed
       call amrex_mfiter_build(mfi,ba,dm,tiling=.false.)
       do while (mfi%next())
@@ -297,19 +297,28 @@ contains
             y_cc=solver%amr%ylo+(real(j,WP)+0.5_WP)*dy
             ! Determine temperature
             rad=sqrt(x_cc**2+y_cc**2)
-            T0=Tlo
-            p0=plo
+            T0=Touter
+            p0=pouter
             if (rad.le.0.5_WP*dcyl) then
-               ! T0=Tlo+(Thi-Tlo)*(exp(-Tdec*(rad/(0.5_WP*dcyl))**2)-exp(-Tdec))/(1.0_WP-exp(-Tdec))
-               p0=plo+(phi-plo)*(exp(-pdec*(rad/(0.5_WP*dcyl))**2)-exp(-pdec))/(1.0_WP-exp(-pdec))
+               T0=Touter+(Tinner-Touter)*(exp(-Tdec*(rad/(0.5_WP*dcyl))**2)-exp(-Tdec))/(1.0_WP-exp(-Tdec))
+               p0=pouter+(pinner-pouter)*(exp(-pdec*(rad/(0.5_WP*dcyl))**2)-exp(-pdec))/(1.0_WP-exp(-pdec))
             end if
-            if (rad.le.0.15_WP*dcyl) then
-               p0=phi
+            if (rad.le.0.05_WP*dcyl) then
+               p0=pinner
+               T0=Tinner
+               ! Get liquid density and internal energy
+               eL_local  =e_l_inner
+               rhoL_local=rho_l_inner
+            else
+               ! Get liquid density and internal energy from p and T
+               eL_local  =eosL%get_e_from_p_T(p=p0,T=T0)
+               rhoL_local=eosL%get_rho_from_p_T(p=p0,T=T0)
             end if
-            ! Get density and internal energy
-            eL_local  =eosL%get_e_from_p_T(p=p0,T=T0)
+            ! Get liquid density and internal energy from p and T
+            ! eL_local  =eosL%get_e_from_p_T(p=p0,T=T0)
+            ! rhoL_local=eosL%get_rho_from_p_T(p=p0,T=T0)
+            ! Get gas density and internal energy from p and T
             eG_local  =mixG%get_e_from_p_T(p=p0,T=T0,y=y)
-            rhoL_local=eosL%get_rho_from_p_T(p=p0,T=T0)
             rhoG_local=mixG%get_rho_from_p_T(p=p0,T=T0,y=y)
             ! Set conserved variables
             pQ(i,j,k,1)=(       myVF)*rhoL_local
@@ -323,7 +332,7 @@ contains
          end do; end do; end do
       end do
       call amrex_mfiter_destroy(mfi)
-   end subroutine blastwave_init
+   end subroutine cavitation_init
 
    !> Tagger based on vorticity and density ratio (from amrcomp_drop)
    subroutine my_tagger(solver,lvl,time,tags_ptr)
@@ -435,11 +444,11 @@ contains
          ! Liquid cylinder setup
          call param_read('Cylinder diameter',dcyl)
          call param_read('Cylinder location',xcyl)
-         call param_read('High liquid temperature',Thi)
-         call param_read('Low liquid temperature',Tlo)
+         call param_read('Inner liquid temperature',Tinner)
+         call param_read('Outer liquid temperature',Touter)
          call param_read('Temperature decay parameter',Tdec)
-         call param_read('High liquid pressure',phi)
-         call param_read('Low liquid pressure',plo)
+         call param_read('Inner liquid pressure',pinner)
+         call param_read('Outer liquid pressure',pouter)
          call param_read('Pressure decay parameter',pdec)
          ! Domain dimensions
          call param_read('Lx',Lx)
@@ -542,6 +551,10 @@ contains
          use amrex_amr_module, only: amrex_bc_foextrap, amrex_bc_reflect_even, amrex_bc_reflect_odd
          use amrmpcomp_class,  only: BC_REFLECT
          use amrdata_class,    only: interp_face_lin
+         use messager,         only: die
+         real(WP) :: rho_v,rho_l,e_v,e_l,VF_target,p_l_inner
+         integer :: Tsat_it
+         logical :: Tsat_conv
          ! Use piecewise-linear face interpolation — FaceDivFree requires ratio==2 in all dirs
          ! but this case is quasi-2D with ref_ratio_z=1
          fs%interp_vel=interp_face_lin
@@ -557,8 +570,49 @@ contains
          case('pTg')
             fs%relax=>relax_pTg
          end select
+         ! Get initial pressure
+         call param_read('Target pressure',pTarget)
+         call param_read('Target VOF',VF_target)
+         ! Get the corresponding saturation temperature
+         select type (rm=>relax_model)
+         class is (relax_sg_ig)
+            call rm%get_Tsat(pl_=pTarget,pv_=pTarget,Tguess=350.0_WP,Tsat=Tinner,conv=Tsat_conv,Tsat_it=Tsat_it)
+            ! Tsat_conv=.true.
+            if (amr%amRoot) then
+               print*,'Target pressure = ',pTarget
+               print*,'Convergence = ',Tsat_conv
+               print*,'Iterations = ',Tsat_it
+               print*,'Corresponding Tsat = ',Tinner
+            end if
+            if (Tsat_conv) then
+               rho_v=fs%gas%get_rho_from_p_T(p=pTarget,T=Tinner,y=[1.0_WP,0.0_WP])
+               e_v  =fs%gas%get_e_from_p_T  (p=pTarget,T=Tinner,y=[1.0_WP,0.0_WP])
+               rho_l=fs%liq%get_rho_from_p_T(p=pTarget,T=Tinner)
+               e_l  =fs%liq%get_e_from_p_T  (p=pTarget,T=Tinner)
+               if (amr%amRoot) then
+                  print*,'Target VOF = ',VF_target
+                  print*,'Vapor and liquid density and energy at saturation would be:'
+                  print*,'rho_v = ',rho_v
+                  print*,'e_v = ',e_v
+                  print*,'rho_l = ',rho_l
+                  print*,'e_l = ',e_l
+               end if
+               rho_l_inner=VF_target*rho_l+(1.0_WP-VF_target)*rho_v
+               e_l_inner=(VF_target*rho_l*e_l+(1.0_WP-VF_target)*rho_v*e_v)/rho_l_inner
+               if (amr%amRoot) then
+                  print*,'Initial pure liquid should be at:'
+                  print*,'rho_l_inner = ',rho_l_inner
+                  print*,'e_l_inner = ',e_l_inner
+                  p_l_inner=fs%liq%get_p_from_rho_e(rho=rho_l_inner,e=e_l_inner)
+                  print*,'p_l_inner = ',p_l_inner
+                  print*,'T_l_inner = ',fs%liq%get_T_from_p_rho(p=p_l_inner,rho=rho_l_inner)
+               end if
+            end if
+         class default
+            call die('get_Tsat is not available for this relaxation model')
+         end select
          ! Set initial conditions via blastwave callback
-         fs%user_init=>blastwave_init
+         fs%user_init=>cavitation_init
          ! Set BCs
          if (.not.amr%xper) then
             ! x-lo and x-hi is extrapolation
@@ -851,7 +905,6 @@ contains
 
          ! Perform and output monitoring
          call fs%get_info()
-         call get_Yv_int_r()
          call mfile%write()
          call consfile%write()
          call cflfile%write()

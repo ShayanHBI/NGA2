@@ -29,7 +29,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
-from scipy.optimize import brentq, least_squares as _ls
+from scipy.optimize import brentq, minimize_scalar, least_squares as _ls
 from iapws import IAPWS97
 
 plt.rcParams.update({
@@ -114,29 +114,18 @@ FIT_CONFIG = {
     "n_hugoniot": 200,             # EOS curve points for Hugoniot plot
 }
 
-# Hugoniot isobar fit configuration, shared by the SG/NASG/ENASG implicit
-# Hugoniot constraint (see _gather_iapws_isobar_liquid): fitting the EOS to
-# this wide-pressure mechanical data reproduces the Rice & Walsh (1957)
-# principal Hugoniot as a side effect, without ever fitting Rice & Walsh
-# data directly.
+# NASG hugoniot isobar fit configuration.
 NASG_HUGONIOT_CONFIG = {
     "T_pre":        [274., 290., 305., 320., 335., 348.],  # K, pre-shock isotherms
     "p_isobar_min": 1.0e5,                                 # Pa
-    "p_isobar_max": 1000.0e5,                              # Pa, ~ IAPWS97 (IF-97) validity limit
-    "n_isobar":     30,                                    # pressure points per isotherm
+    "p_isobar_max": 300.0e5,                               # Pa
+    "n_isobar":     20,                                    # pressure points per isotherm
     "rho2_max":     2000.0,                                # kg/m^3, maximum post-shock density (caps b)
-    "x0":           [1.4, 8.0e8, 4.0e-4, 3500.0],          # initial guess [gamma, p_inf, b, cv]
+    "x0":           [1.4, 8.0e8, 4.0e-4, 3500.0],         # initial guess [gamma, p_inf, b, cv]
     "gamma_bounds": (1.01, 8.0),
     "p_inf_bounds": (1.0e5, 5.0e10),
     "cv_bounds":    (50.0, 1.0e4),
 }
-
-# ENASG's isobar Hugoniot fit (_fit_enasg_hugoniot_isobar) shares everything in
-# NASG_HUGONIOT_CONFIG except rho2_max, which is tuned independently: ENASG's
-# extra (b0, b1) freedom moves the saturation/Hugoniot trade-off point
-# differently than NASG/SG's single covolume b, so the two caps need not match.
-# 1056.2 reproduced ENASG reference paper results
-ENASG_HUGONIOT_RHO2_MAX = 2000.0   # kg/m^3
 
 
 def iapws_saturation_table(T_min, T_max, n_points=101):
@@ -258,45 +247,6 @@ def _fit_liquid_nasg_for_given_pinf(T, p, hl, vl, p_inf_l):
     return cp_l, cp_l - r_l, q_l, b_l
 
 
-def _gather_iapws_isobar_liquid(config=None):
-    """
-    Build a liquid-phase (T, p, rho, c, e) dataset from IAPWS97 over a grid of
-    pre-shock isotherms x isobar pressures (config["T_pre"] x
-    [p_isobar_min, p_isobar_max]).
-
-    Shared by the SG/NASG/ENASG implicit Hugoniot constraint: fitting the EOS
-    to this wide-pressure mechanical data reproduces the Rice & Walsh (1957)
-    principal Hugoniot as a side effect, without ever fitting Rice & Walsh
-    data directly.
-    """
-    if config is None:
-        config = NASG_HUGONIOT_CONFIG
-
-    T_pre = np.array(config["T_pre"])
-    p_arr = np.linspace(config["p_isobar_min"], config["p_isobar_max"],
-                        config["n_isobar"])
-
-    t_list, p_list, rho_list, c_list, e_list = [], [], [], [], []
-    for Ti in T_pre:
-        for pi in p_arr:
-            try:
-                st = IAPWS97(P=pi * 1e-6, T=Ti)
-                if (np.isfinite(st.rho) and np.isfinite(st.w)
-                        and st.rho > 800.0 and st.w > 100.0):
-                    t_list.append(Ti);     p_list.append(pi)
-                    rho_list.append(st.rho);  c_list.append(st.w)
-                    e_list.append(st.u * 1e3)
-            except Exception:
-                pass
-
-    T_d   = np.array(t_list);    p_d   = np.array(p_list)
-    rho_d = np.array(rho_list);  c_d   = np.array(c_list)
-    e_d   = np.array(e_list)
-    if len(T_d) == 0:
-        raise RuntimeError("No valid IAPWS97 isobar data")
-    return T_d, p_d, rho_d, c_d, e_d
-
-
 def _fit_nasg_hugoniot_isobar(T_sat, p_sat, hl_sat, hg_sat=None, vapor=None,
                                config=None):
     """
@@ -310,8 +260,27 @@ def _fit_nasg_hugoniot_isobar(T_sat, p_sat, hl_sat, hg_sat=None, vapor=None,
     if config is None:
         config = NASG_HUGONIOT_CONFIG
 
+    T_pre = np.array(config["T_pre"])
+    p_arr = np.linspace(config["p_isobar_min"], config["p_isobar_max"],
+                        config["n_isobar"])
     b_max = 1.0 / config["rho2_max"]
-    T_d, p_d, rho_d, c_d, _ = _gather_iapws_isobar_liquid(config)
+
+    t_list, p_list, rho_list, c_list = [], [], [], []
+    for Ti in T_pre:
+        for pi in p_arr:
+            try:
+                st = IAPWS97(P=pi * 1e-6, T=Ti)
+                if (np.isfinite(st.rho) and np.isfinite(st.w)
+                        and st.rho > 800.0 and st.w > 100.0):
+                    t_list.append(Ti);     p_list.append(pi)
+                    rho_list.append(st.rho);  c_list.append(st.w)
+            except Exception:
+                pass
+
+    T_d   = np.array(t_list);    p_d   = np.array(p_list)
+    rho_d = np.array(rho_list);  c_d   = np.array(c_list)
+    if len(T_d) == 0:
+        raise RuntimeError("No valid IAPWS97 isobar data")
 
     L_iapws = None
     if vapor is not None and hg_sat is not None:
@@ -480,98 +449,8 @@ def _fit_liquid_sg_for_given_pinf(T, p, hl, vl, p_inf_l):
     return cp_l, cv_l, q_l, 0.0
 
 
-def _fit_sg_hugoniot_isobar(T_sat, p_sat, hl_sat, hg_sat=None, vapor=None,
-                            config=None):
-    """
-    Fit SG liquid (gamma, p_inf, cv) jointly against IAPWS97 isobar data for
-    rho(T,p) and c(T,p) (b_l = 0 forced) plus, if vapor is provided,
-    saturation p_sat shape and latent heat residuals.  Same implicit-Hugoniot
-    method as _fit_nasg_hugoniot_isobar: the Rice & Walsh data are never used
-    in the fit itself, only for the after-the-fact RMS check.
-
-    q is derived from saturation enthalpy LS with the isobar-fitted cp.
-    """
-    if config is None:
-        config = NASG_HUGONIOT_CONFIG
-
-    T_d, p_d, rho_d, c_d, _ = _gather_iapws_isobar_liquid(config)
-
-    L_iapws = None
-    if vapor is not None and hg_sat is not None:
-        L_arr = hg_sat - hl_sat
-        ok_L  = np.isfinite(L_arr) & (L_arr > 0.0)
-        if ok_L.any():
-            L_iapws  = L_arr[ok_L]
-            T_sat_L  = T_sat[ok_L]
-            p_sat_L  = p_sat[ok_L]
-
-    def _rho(p, T, g, pi, cv):
-        return (p + pi) / ((g - 1.0)*cv*T)
-
-    def _c(p, T, g, pi, cv):
-        rho = _rho(p, T, g, pi, cv)
-        return np.sqrt(np.maximum(0.0, g*(p + pi) / rho))
-
-    def _q_ls(g, cv):
-        cp_l = g * cv
-        return hl_sat.mean() - cp_l * T_sat.mean()
-
-    def res(x):
-        g, pi, cv = x
-        rr = (_rho(p_d, T_d, g, pi, cv) - rho_d) / rho_d
-        rc = (_c(p_d,   T_d, g, pi, cv) - c_d  ) / c_d
-        blocks = [rr, rc]
-
-        if vapor is not None and L_iapws is not None:
-            cp_v = vapor["cp"];  cv_v = vapor["cv"]
-            q_v  = vapor["q"];   r_v  = cp_v - cv_v
-            cp_l = g * cv
-            q_l  = _q_ls(g, cv)
-            # Latent heat: L = (cp_v - cp_l)*T + q_v - q_l  (b=0, no -b*p_sat term)
-            L_model = (cp_v - cp_l)*T_sat_L + q_v - q_l
-            rl = (L_model - L_iapws) / np.abs(L_iapws)
-            # Saturation curve shape (E=0 since b_l=b_g=0)
-            ds  = (cp_l - cv) / r_v
-            bs  = (q_l - q_v) / r_v
-            cs  = (cp_v - cp_l) / r_v
-            lhs = (np.log(p_sat_L) - bs/T_sat_L
-                   - cs*np.log(T_sat_L) - ds*np.log(p_sat_L + pi))
-            rp = lhs - lhs.mean()
-            blocks.extend([rl, rp])
-
-        return np.concatenate(blocks)
-
-    g_lo,  g_hi  = config["gamma_bounds"]
-    pi_lo, pi_hi = config["p_inf_bounds"]
-    cv_lo, cv_hi = config["cv_bounds"]
-    x0 = [config["x0"][0], config["x0"][1], config["x0"][3]]
-    lo = [g_lo,  pi_lo, cv_lo]
-    hi = [g_hi,  pi_hi, cv_hi]
-    fit = _ls(res, x0, bounds=(lo, hi),
-              x_scale=[0.5, 1.0e9, 1000.0],
-              xtol=1.0e-12, ftol=1.0e-12, max_nfev=30000)
-    g, pi, cv = fit.x
-    cp_l = g * cv
-    q    = _q_ls(g, cv)
-
-    return {
-        "eos":     "SG",
-        "cp":      cp_l,
-        "cv":      cv,
-        "gamma":   g,
-        "q":       q,
-        "q_prime": np.nan,
-        "b":       0.0,
-        "b0":      0.0,
-        "b1":      0.0,
-        "p_inf":   pi,
-        "p_inf0":  pi,
-        "p_inf1":  0.0,
-    }
-
-
 def fit_liquid_phase_sg(T, p, hl, vl, ref_state, p_inf_bounds=(1.0e7, 5.0e9),
-                        constraint="soundspeed", hg=None, vapor=None):
+                        constraint="soundspeed"):
     """
     Close the SG liquid-phase system by fixing p_inf,l with one of:
 
@@ -579,12 +458,8 @@ def fit_liquid_phase_sg(T, p, hl, vl, ref_state, p_inf_bounds=(1.0e7, 5.0e9),
     b_l = 0 the closure (Eq. 68) simplifies to, solved by Brent's method:
         p0 + p_inf,l - (cv_l / cp_l) * rho0 * c0^2 = 0
 
-    constraint="hugoniot": implicit isobar fit of (gamma, p_inf, cv) -- b_l=0
-    forced -- against IAPWS97 mechanical (rho, c) data over a wide isobar
-    pressure range plus saturation/latent-heat residuals, mirroring NASG's
-    _fit_nasg_hugoniot_isobar.  The Rice & Walsh principal Hugoniot is never
-    fit directly; matching the EOS over that wide P-T window reproduces it
-    as a side effect.
+    constraint="hugoniot": least-squares match of the SG principal Hugoniot
+    (NASG with b_l = 0) to the Rice & Walsh (1957) shock data.
     """
     rho0 = ref_state["rho0"]
     p0   = ref_state["p0"]
@@ -628,13 +503,15 @@ def fit_liquid_phase_sg(T, p, hl, vl, ref_state, p_inf_bounds=(1.0e7, 5.0e9),
         return brentq(residual, a, b, xtol=1.0, rtol=1e-10)
 
     if constraint == "hugoniot":
-        try:
-            return _fit_sg_hugoniot_isobar(T, p, hl, hg_sat=hg, vapor=vapor)
-        except Exception as exc:
-            print(f"  [SG] Hugoniot (isobar) fit failed ({exc}); "
-                  "falling back to soundspeed closure.")
+        p_inf_l, feasible = _minimize_hugoniot(lambda pi: hugoniot_objective(build_eos(pi)),
+                                                p_inf_bounds, xatol=1.0)
+        if not feasible:
+            print("  [SG] Hugoniot constraint infeasible (EOS admits no Rice & Walsh "
+                  "shock states for any p_inf,l in bounds); falling back to soundspeed closure.")
+            p_inf_l = solve_soundspeed()
+    else:
+        p_inf_l = solve_soundspeed()
 
-    p_inf_l = solve_soundspeed()
     return build_eos(p_inf_l)
 
 
@@ -768,97 +645,6 @@ def enasg_c2_from_p_v(p, v, eos):
     )
 
 
-def _fit_enasg_hugoniot_isobar(T_sat, p_sat, vl_sat, hl_sat, ref_state, config=None,
-                               B_bounds=None, b1_bounds=(-3.0, 0.95),
-                               p_inf1_bounds=(-5.0e6, 0.0)):
-    """
-    Fit ENASG liquid (gamma, cv, b0, b1, p_inf0, p_inf1) jointly against
-    IAPWS97 isobar data for rho(T,p) and c(T,p) (via _gather_iapws_isobar_liquid,
-    the same off-saturation-curve mechanical data NASG's hugoniot fit uses)
-    plus the saturation-curve v_l(T) and h_l(T) shape, mirroring
-    _fit_nasg_hugoniot_isobar.  The Rice & Walsh principal Hugoniot is never
-    fit directly; reproducing it is a side effect of getting the EOS's
-    wide-pressure mechanical behaviour right.
-
-    B = b0/(1-b1) is bounded by 1/rho2_max (NASG_HUGONIOT_CONFIG, same cap
-    NASG uses) so the EOS's density ceiling can be pushed above the Rice &
-    Walsh range; b1 is otherwise free, breaking the rigid b_ref-derived
-    coupling between b0 and b1 used by the saturation-only LS.
-    """
-    if config is None:
-        config = NASG_HUGONIOT_CONFIG
-    if B_bounds is None:
-        B_bounds = (1.0e-5, 1.0 / config["rho2_max"])
-
-    T_d, p_d, rho_d, c_d, _ = _gather_iapws_isobar_liquid(config)
-
-    def _phase(gamma, cv, B, b1, p_inf0, p_inf1, q=0.0):
-        b0 = B * (1.0 - b1)
-        return {"eos": "ENASG", "cv": cv, "gamma": gamma, "b0": b0, "b1": b1,
-                "p_inf0": p_inf0, "p_inf1": p_inf1, "q": q, "q_prime": np.nan,
-                "cp": np.nan, "b": np.nan, "p_inf": np.nan}
-
-    def _q_ls(phase0):
-        return (hl_sat - eos_h(T_sat, p_sat, phase0)).mean()
-
-    def res(x):
-        gamma, cv, B, b1, p_inf0, p_inf1 = x
-        phase0 = _phase(gamma, cv, B, b1, p_inf0, p_inf1, q=0.0)
-
-        rho_model = 1.0 / eos_v(T_d, p_d, phase0)
-        c_model   = eos_c(T_d, p_d, phase0)
-        rr = (rho_model - rho_d) / rho_d
-        rc = (c_model   - c_d  ) / c_d
-
-        vl_model = eos_v(T_sat, p_sat, phase0)
-        rv = (vl_model - vl_sat) / vl_sat
-
-        q_l    = _q_ls(phase0)
-        phase  = _phase(gamma, cv, B, b1, p_inf0, p_inf1, q=q_l)
-        hl_model = eos_h(T_sat, p_sat, phase)
-        rh = (hl_model - hl_sat) / np.abs(hl_sat).mean()
-
-        return np.concatenate([rr, rc, rv, rh])
-
-    g_lo,  g_hi  = config["gamma_bounds"]
-    cv_lo, cv_hi = config["cv_bounds"]
-    pi0_lo, pi0_hi = config["p_inf_bounds"]
-    B_lo,  B_hi  = B_bounds
-    b1_lo, b1_hi = b1_bounds
-    pi1_lo, pi1_hi = p_inf1_bounds
-
-    b1_guess = ref_state["b1"] if "b1" in ref_state else (
-        (ref_state["bc"] - ref_state["b_ref"]) / (ref_state["vc"] - ref_state["v_ref"])
-    )
-    x0 = [1.1, 3000.0, 0.9 * B_hi, b1_guess, 4.0e8, -6.0e5]
-    lo = [g_lo,  cv_lo, B_lo, b1_lo, pi0_lo, pi1_lo]
-    hi = [g_hi,  cv_hi, B_hi, b1_hi, pi0_hi, pi1_hi]
-    x0 = [min(max(xi, loi), hii) for xi, loi, hii in zip(x0, lo, hi)]
-
-    fit = _ls(res, x0, bounds=(lo, hi),
-              x_scale=[0.5, 1000.0, 1.0e-4, 0.5, 1.0e9, 1.0e5],
-              xtol=1.0e-12, ftol=1.0e-12, max_nfev=30000)
-    gamma, cv, B, b1, p_inf0, p_inf1 = fit.x
-    b0 = B * (1.0 - b1)
-    phase0 = _phase(gamma, cv, B, b1, p_inf0, p_inf1, q=0.0)
-    q = _q_ls(phase0)
-
-    return {
-        "eos":     "ENASG",
-        "cp":      np.nan,
-        "cv":      cv,
-        "gamma":   gamma,
-        "q":       q,
-        "q_prime": np.nan,
-        "b":       np.nan,
-        "b0":      b0,
-        "b1":      b1,
-        "p_inf":   np.nan,
-        "p_inf0":  p_inf0,
-        "p_inf1":  p_inf1,
-    }
-
-
 def fit_liquid_phase_enasg(T, p, e, v, s, ref_state, C_bounds=(1.0e7, 1.0e9),
                            constraint="soundspeed"):
     """
@@ -870,23 +656,20 @@ def fit_liquid_phase_enasg(T, p, e, v, s, ref_state, C_bounds=(1.0e7, 1.0e9),
     b0 and b1 are treated as free parameters:
       - b1 is fixed from the prescribed critical-point slope
         (b_ref + b1*(vc - v_ref) = bc).
-      - B = b0/(1-b1) is fitted jointly with K = (gamma-1)*cv from the
-        two-parameter volume LS (v = K*phi + B); see _enasg_gamma_cv_for_given_C.
+      - For soundspeed closure, B = b0/(1-b1) is fitted jointly with
+        K = (gamma-1)*cv from the two-parameter volume LS (v = K*phi + B).
+      - For hugoniot closure, B is optimized over a 1-D search; for each
+        candidate B the sound-speed condition determines C, and the best B
+        is the one minimising the Rice & Walsh Hugoniot residual.
 
     The unknown C is closed with one of:
 
     constraint="soundspeed" (default): the reference sound-speed condition,
-    Eq. (42), solved by Brent's method, with (gamma, cv, B) fit to the
-    saturation-curve (T, p, v, e) data.
+    Eq. (42), solved by Brent's method (B from two-parameter LS).
 
-    constraint="hugoniot": all six liquid parameters (gamma, cv, b0, b1,
-    p_inf0, p_inf1) are jointly re-fit by _fit_enasg_hugoniot_isobar against
-    IAPWS97 isobar (rho, c) data plus the saturation (v, h) shape, the same
-    isobar-based approach _fit_nasg_hugoniot_isobar uses for NASG/SG.
-    B = b0/(1-b1) is bounded by NASG_HUGONIOT_CONFIG["rho2_max"] so the
-    density ceiling can move above the Rice & Walsh range; the Rice & Walsh
-    (1957) data themselves are never fit directly.  Falls back to soundspeed
-    closure if the isobar fit fails.
+    constraint="hugoniot": 1-D search over B with C tied to the sound-speed
+    condition for each B.  Minimises the Rice & Walsh (1957) Hugoniot residual.
+    Falls back to soundspeed closure if no admissible B is found.
     """
     ref_state = dict(ref_state)
     ref_state["b1"] = (ref_state["bc"] - ref_state["b_ref"]) / (ref_state["vc"] - ref_state["v_ref"])
@@ -955,13 +738,29 @@ def fit_liquid_phase_enasg(T, p, e, v, s, ref_state, C_bounds=(1.0e7, 1.0e9),
         return brentq(residual, a, b, xtol=1.0e-2, rtol=1.0e-11)
 
     if constraint == "hugoniot":
-        hl_sat = e + p * v
-        enasg_config = dict(NASG_HUGONIOT_CONFIG)
-        enasg_config["rho2_max"] = ENASG_HUGONIOT_RHO2_MAX
-        try:
-            liquid = _fit_enasg_hugoniot_isobar(T, p, v, hl_sat, ref_state, config=enasg_config)
-        except Exception as exc:
-            print(f"  [ENASG] Isobar Hugoniot fit failed ({exc}); "
+        # Optimise B (and hence rho_max = 1/B) with C tied to the sound-speed
+        # condition.  This keeps the thermal EOS consistent with the reference
+        # sound speed at every B trial while letting the density ceiling move.
+        # Upper bound: B must be below the value that makes the softest
+        # Rice & Walsh point admissible (rho_max = 1/B > rho2_min).
+        rho2_rw = RICE_WALSH["rho0"] * RICE_WALSH["us"] / (RICE_WALSH["us"] - RICE_WALSH["up"])
+        rho2_min_rw = rho2_rw.min()
+        B_hi = (1.0 / rho2_min_rw) * 0.9999   # just under the threshold
+        B_lo = 1.0e-5
+
+        def objective_B(B_val):
+            try:
+                C_val = solve_soundspeed(B_fixed=B_val)
+                return hugoniot_objective(build_eos_for_C(C_val, B_fixed=B_val))
+            except Exception:
+                return np.inf, 0
+
+        B_opt, feasible = _minimize_hugoniot(objective_B, (B_lo, B_hi), xatol=1.0e-8)
+        if feasible:
+            C = solve_soundspeed(B_fixed=B_opt)
+            liquid = build_eos_for_C(C, B_fixed=B_opt)
+        else:
+            print("  [ENASG] Hugoniot constraint infeasible (no admissible B found); "
                   "falling back to soundspeed closure.")
             C = solve_soundspeed()
             liquid = build_eos_for_C(C)
@@ -982,84 +781,6 @@ def fit_liquid_phase_enasg(T, p, e, v, s, ref_state, C_bounds=(1.0e7, 1.0e9),
     )
 
     return liquid
-
-
-def enasg_hugoniot_b_sweep(T, p, e, v, s, ref_state, vapor, B_values):
-    """
-    Diagnostic only -- does not change any fit.  For each candidate covolume
-    B (= b0/(1-b1), with rho* = 1/B the exact density ceiling), refit
-    (gamma, cv, q) from the saturation curve and close C via the soundspeed
-    condition -- same procedure as fit_liquid_phase_enasg's "hugoniot"
-    constraint, just holding B fixed at each value instead of at one cap --
-    and report:
-      psat RMS%  -- p_sat(T) vs IAPWS97 over the T_fit window (saturation fit)
-      Hug RMS%   -- principal Hugoniot vs Rice & Walsh (1957)
-    so a B can be picked by eye.  Smaller B (higher rho* = 1/B) extends the
-    Hugoniot-admissible range at the cost of saturation accuracy.
-    """
-    ref_state = dict(ref_state)
-    ref_state["b1"] = (ref_state["bc"] - ref_state["b_ref"]) / (ref_state["vc"] - ref_state["v_ref"])
-    b1 = ref_state["b1"]
-
-    def build_eos_for_C(C, B_fixed):
-        gamma, cv, A, B = _enasg_gamma_cv_for_given_C(T, p, v, e, ref_state, C, B_fixed=B_fixed)
-        b0     = B * (1.0 - b1)
-        p_inf1 = A / gamma
-        p_inf0 = C * (gamma - b1) / (gamma * (1.0 - b1))
-        D_ref, E_ref, F_ref = _enasg_auxiliary(A, C, b1, ref_state["p_ref"], ref_state["T_ref"])
-        q = ref_state["e_ref"] - cv * (ref_state["p_ref"] + gamma * D_ref + E_ref) / F_ref
-        return {"eos": "ENASG", "cp": np.nan, "cv": cv, "gamma": gamma, "q": q,
-                "q_prime": np.nan, "b": np.nan, "b0": b0, "b1": b1,
-                "p_inf": np.nan, "p_inf0": p_inf0, "p_inf1": p_inf1}
-
-    def solve_soundspeed(B_fixed):
-        def residual(C):
-            eos = build_eos_for_C(C, B_fixed)
-            return enasg_c2_from_p_v(ref_state["p0"], ref_state["v0"], eos) - ref_state["c0"]**2
-
-        grid = np.logspace(5, 11, 300)
-        vals = []
-        for Ci in grid:
-            try:
-                vals.append(residual(Ci))
-            except Exception:
-                vals.append(np.nan)
-        vals = np.array(vals)
-        for i in range(len(grid) - 1):
-            if not (np.isfinite(vals[i]) and np.isfinite(vals[i + 1])):
-                continue
-            if vals[i] == 0.0 or vals[i] * vals[i + 1] < 0.0:
-                return brentq(residual, grid[i], grid[i + 1], xtol=1.0e-2, rtol=1.0e-11)
-        raise RuntimeError("could not bracket C from the sound-speed condition")
-
-    header = f"{'B [m3/kg]':>12s}{'rho* [kg/m3]':>14s}{'psat RMS%':>12s}{'Hug RMS%':>12s}{'n_used':>8s}"
-    print(header)
-    print("-" * len(header))
-    for B in B_values:
-        try:
-            C = solve_soundspeed(B)
-            liquid = build_eos_for_C(C, B)
-        except Exception:
-            print(f"{B:12.3e}{1.0/B:14.0f}{'--':>12s}{'--':>12s}{0:8d}")
-            continue
-
-        p0inf = enasg_p0inf(T, liquid)
-        liquid["q_prime"] = np.mean(
-            s
-            - liquid["cv"] * (
-                ((liquid["gamma"] - b1) / (1.0 - b1)) * np.log(T)
-                - ((liquid["gamma"] - 1.0) / (1.0 - b1)) * np.log(p + p0inf)
-            )
-            + liquid["gamma"] * liquid["p_inf1"] * (liquid["gamma"] - 1.0)
-            * liquid["cv"] * T / ((1.0 - b1) * (p + p0inf))
-        )
-
-        psat_model = eos_psat(T, liquid, vapor)
-        ok         = np.isfinite(psat_model)
-        psat_rms   = (100.0 * np.sqrt(np.mean(((psat_model[ok] - p[ok]) / p[ok]) ** 2))
-                      if ok.any() else np.nan)
-        hug_rms, n_used, _ = hugoniot_rms(liquid)
-        print(f"{B:12.3e}{1.0/B:14.0f}{psat_rms:12.2f}{hug_rms:12.2f}{n_used:8d}")
 
 
 def fit_vapor_phase_ideal_isobar(gas_data, gas_ref):
@@ -1181,8 +902,7 @@ def compute_sg_coefficients(sat_data, ref_state, T_range, constraint="soundspeed
     T, p, hl, hg, vl, vg = d[:, 0], d[:, 1], d[:, 2], d[:, 3], d[:, 4], d[:, 5]
 
     vapor  = fit_vapor_phase(T, p, hg, vg)
-    liquid = fit_liquid_phase_sg(T, p, hl, vl, ref_state, constraint=constraint,
-                                 hg=hg, vapor=vapor)
+    liquid = fit_liquid_phase_sg(T, p, hl, vl, ref_state, constraint=constraint)
     qp_l, qp_g = fit_entropy_constants(T, p, liquid, vapor)
     liquid["q_prime"] = qp_l
     vapor["q_prime"]  = qp_g
@@ -1474,6 +1194,68 @@ def hugoniot_rms(phase, rw=RICE_WALSH):
     return 100.0 * np.sqrt(sse / n), n, n_total
 
 
+def hugoniot_objective(phase, rw=RICE_WALSH, penalty=1.0):
+    """
+    Penalized sum of squared relative pressure residuals, for use as a fit
+    objective.  Points outside the EOS's admissible range (hugoniot_p2 -> nan,
+    e.g. rho2 >= 1/b_l for NASG) are assigned a fixed relative residual of
+    `penalty` instead of being dropped, so the objective cannot be minimized
+    merely by shrinking the number of admissible points (hugoniot_sse's n).
+
+    Returns (sse, n_used).
+    """
+    rho0, p0 = rw["rho0"], rw["p0"]
+    v1 = 1.0 / rho0
+    p1 = p0
+    T1 = eos_T_from_vp(v1, p1, phase)
+    e1 = eos_h(T1, p1, phase) - p1 * v1
+
+    rho2  = rho0 * rw["us"] / (rw["us"] - rw["up"])
+    p2_rw = p0 + rho0 * rw["us"] * rw["up"]
+
+    sse, n = 0.0, 0
+    for v2, p2_ref in zip(1.0 / rho2, p2_rw):
+        p2 = hugoniot_p2(v2, v1, p1, e1, phase)
+        if np.isfinite(p2):
+            sse += ((p2 - p2_ref) / p2_ref) ** 2
+            n += 1
+        else:
+            sse += penalty ** 2
+    return sse, n
+
+
+def _minimize_hugoniot(objective, bounds, n_grid=100, xatol=1.0):
+    """
+    Minimize a Hugoniot objective over `bounds`.
+
+    `hugoniot_objective` has jump discontinuities where Rice & Walsh points
+    enter/exit the EOS's admissible range (n_used changes), which can strand
+    a Brent search at an arbitrary, possibly unphysical, bound. A coarse
+    log-spaced grid scan locates the best branch first; Brent then refines
+    within the (locally smooth) bracket around that grid point.
+
+    `objective` must return a (sse, n_used) pair, as hugoniot_objective does.
+
+    Returns (value, feasible). feasible=False means no point in `bounds`
+    admits any Rice & Walsh shock state (n_used==0 at every grid point), so
+    `value` is just the lower bound and should not be trusted as a fit.
+    """
+    grid = np.logspace(np.log10(bounds[0]), np.log10(bounds[1]), n_grid)
+    results = [objective(p) for p in grid]
+    vals   = np.array([r[0] for r in results])
+    n_arr  = np.array([r[1] for r in results], dtype=int)
+    i_best = int(np.argmin(vals))
+    if n_arr[i_best] == 0:
+        return grid[i_best], False
+    lo = grid[max(i_best - 1, 0)]
+    hi = grid[min(i_best + 1, len(grid) - 1)]
+    if lo == hi:
+        return grid[i_best], True
+    result = minimize_scalar(lambda p: objective(p)[0], bounds=(lo, hi),
+                              method="bounded", options={"xatol": xatol})
+    return result.x, True
+
+
 # =============================================================================
 # Output: text table and figure
 # =============================================================================
@@ -1755,13 +1537,6 @@ if __name__ == "__main__":
               "principal Hugoniot to the Rice & Walsh (1957) shock data. "
               "Default: hugoniot."),
     )
-    parser.add_argument(
-        "--sweep-b", action="store_true",
-        help=("ENASG only: instead of fitting, sweep the covolume B over a "
-              "log-spaced range and print the mechanical/saturation/Hugoniot "
-              "RMS trade-off for each, then exit. Use this to pick a B by eye "
-              "(see enasg_hugoniot_b_sweep)."),
-    )
     args = parser.parse_args()
 
     T_fit  = FIT_CONFIG["T_fit"]
@@ -1769,21 +1544,6 @@ if __name__ == "__main__":
 
     sat_ref  = iapws_saturation_table(T_fit[0],  T_fit[1],  n_points=FIT_CONFIG["n_fit"])
     sat_wide = iapws_saturation_table(T_plot[0], T_plot[1], n_points=FIT_CONFIG["n_plot"])
-
-    if args.sweep_b:
-        mask = (sat_ref[:, 0] >= T_fit[0]) & (sat_ref[:, 0] <= T_fit[1])
-        d = sat_ref[mask]
-        T_s, p_s, vl_s, el_s, sl_s = d[:, 0], d[:, 1], d[:, 4], d[:, 6], d[:, 8]
-        gas_data = iapws_isobar_table(
-            WATER_VAPOR_IG_REFERENCE_STATE["p0"],
-            WATER_VAPOR_IG_REFERENCE_STATE["T_range"][0],
-            WATER_VAPOR_IG_REFERENCE_STATE["T_range"][1],
-            n_points=FIT_CONFIG["n_vapor"],
-        )
-        vapor = fit_vapor_phase_ideal_isobar(gas_data, WATER_VAPOR_IG_REFERENCE_STATE)
-        B_values = np.geomspace(1.0e-4, 2.0e-3, 20)
-        enasg_hugoniot_b_sweep(T_s, p_s, el_s, vl_s, sl_s, WATER_ENASG_REFERENCE_STATE, vapor, B_values)
-        raise SystemExit(0)
 
     # Plot/legend order is intentionally kept as:
     #   IAPWS-IF97, SG, NASG, ENASG

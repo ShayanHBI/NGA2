@@ -11,18 +11,21 @@ module nasg_class
       real(WP) :: b=0.0_WP
    contains
       procedure, private :: nasg_initialize
-      generic   :: initialize              =>nasg_initialize
-      procedure :: get_p_from_rho_e        =>nasg_get_p_from_rho_e
-      procedure :: get_T_from_p_rho        =>nasg_get_T_from_p_rho
-      procedure :: get_c_from_p_rho        =>nasg_get_c_from_p_rho
-      procedure :: get_e_from_p_rho        =>nasg_get_e_from_p_rho
-      procedure :: get_p_from_rho_T        =>nasg_get_p_from_rho_T
-      procedure :: get_rho_from_p_T        =>nasg_get_rho_from_p_T
-      procedure :: get_h_from_p_T          =>nasg_get_h_from_p_T
-      procedure :: get_gruneisen_from_rho_e=>nasg_get_gruneisen_from_rho_e
-      procedure :: get_rhoe_from_p_rho     =>nasg_get_rhoe_from_p_rho
-      procedure :: get_rhoe_from_p_T       =>nasg_get_rhoe_from_p_T
-      procedure :: get_g_from_p_T          =>nasg_get_g_from_p_T
+      generic   :: initialize                   =>nasg_initialize
+      procedure :: get_p_from_rho_e             =>nasg_get_p_from_rho_e
+      procedure :: get_T_from_p_rho             =>nasg_get_T_from_p_rho
+      procedure :: get_T_from_p_v               =>nasg_get_T_from_p_v
+      procedure :: get_c_from_p_rho             =>nasg_get_c_from_p_rho
+      procedure :: get_e_from_p_rho             =>nasg_get_e_from_p_rho
+      procedure :: get_p_from_rho_T             =>nasg_get_p_from_rho_T
+      procedure :: get_rho_from_p_T             =>nasg_get_rho_from_p_T
+      procedure :: get_h_from_p_T               =>nasg_get_h_from_p_T
+      procedure :: get_gruneisen_from_rho_e     =>nasg_get_gruneisen_from_rho_e
+      procedure :: get_rhoe_from_p_rho          =>nasg_get_rhoe_from_p_rho
+      procedure :: get_rhoe_from_p_T            =>nasg_get_rhoe_from_p_T
+      procedure :: get_g_from_p_T               =>nasg_get_g_from_p_T
+      procedure :: get_drhodT_const_p_from_rho_T=>nasg_get_drhodT_const_p_from_rho_T
+      procedure :: get_drhodp_const_T_from_rho_T=>nasg_get_drhodp_const_T_from_rho_T
    end type nasg
 
 contains
@@ -45,6 +48,12 @@ contains
       real(WP), intent(in) :: p,rho
       T=(p+this%pinf)*(1.0_WP-this%b*rho)/(this%R*rho)
    end function nasg_get_T_from_p_rho
+
+   real(WP) function nasg_get_T_from_p_v(this,p,v) result(T)
+      class(nasg), intent(in) :: this
+      real(WP), intent(in) :: p,v
+      T=(p+this%pinf)*(v-this%b)/this%R
+   end function nasg_get_T_from_p_v
 
    real(WP) function nasg_get_c_from_p_rho(this,p,rho) result(c)
       class(nasg), intent(in) :: this
@@ -99,5 +108,17 @@ contains
       real(WP), intent(in) :: p,T
       g=this%cp*T+this%b*p+this%q-T*(this%cp*log(T)-this%R*log(p+this%pinf)+this%qp)
    end function nasg_get_g_from_p_T
+
+   real(WP) function nasg_get_drhodT_const_p_from_rho_T(this,rho,T) result(drhodT)
+      class(nasg), intent(in) :: this
+      real(WP), intent(in) :: rho,T
+      drhodT=rho*(this%b*rho-1.0_WP)/T
+   end function nasg_get_drhodT_const_p_from_rho_T
+
+   real(WP) function nasg_get_drhodp_const_T_from_rho_T(this,rho,T) result(drhodp)
+      class(nasg), intent(in) :: this
+      real(WP), intent(in) :: rho,T
+      drhodp=(1.0_WP-this%b*rho)**2/(this%R*T)
+   end function nasg_get_drhodp_const_T_from_rho_T
 
 end module nasg_class

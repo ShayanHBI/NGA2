@@ -16,26 +16,29 @@ module igmix_class
    type, extends(mix) :: igmix
       type(ig_ptr), allocatable :: species(:)
    contains
-      procedure :: initialize              =>igmix_initialize
-      procedure :: set_species             =>igmix_set_species
-      procedure :: get_species_cv          =>igmix_get_species_cv
-      procedure :: get_species_cp          =>igmix_get_species_cp
-      procedure :: get_species_gamma       =>igmix_get_species_gamma
-      procedure :: get_species_q           =>igmix_get_species_q
-      procedure :: get_species_qp          =>igmix_get_species_qp
-      procedure :: get_p_from_rho_e        =>igmix_get_p_from_rho_e
-      procedure :: get_T_from_p_rho        =>igmix_get_T_from_p_rho
-      procedure :: get_c_from_p_rho        =>igmix_get_c_from_p_rho
-      procedure :: get_e_from_p_rho        =>igmix_get_e_from_p_rho
-      procedure :: get_e_from_p_T          =>igmix_get_e_from_p_T
-      procedure :: get_p_from_rho_T        =>igmix_get_p_from_rho_T
-      procedure :: get_rho_from_p_T        =>igmix_get_rho_from_p_T
-      procedure :: get_h_from_p_T          =>igmix_get_h_from_p_T
-      procedure :: get_s_from_p_T          =>igmix_get_s_from_p_T
-      procedure :: get_gruneisen_from_rho_e=>igmix_get_gruneisen_from_rho_e
-      procedure :: get_rhoe_from_p_rho     =>igmix_get_rhoe_from_p_rho
-      procedure :: get_rhoe_from_p_T       =>igmix_get_rhoe_from_p_T
-      procedure :: get_g_from_p_T          =>igmix_get_g_from_p_T
+      procedure :: initialize                   =>igmix_initialize
+      procedure :: set_species                  =>igmix_set_species
+      procedure :: get_species_cv               =>igmix_get_species_cv
+      procedure :: get_species_cp               =>igmix_get_species_cp
+      procedure :: get_species_gamma            =>igmix_get_species_gamma
+      procedure :: get_species_q                =>igmix_get_species_q
+      procedure :: get_species_qp               =>igmix_get_species_qp
+      procedure :: get_p_from_rho_e             =>igmix_get_p_from_rho_e
+      procedure :: get_T_from_p_rho             =>igmix_get_T_from_p_rho
+      procedure :: get_T_from_p_v               =>igmix_get_T_from_p_v
+      procedure :: get_c_from_p_rho             =>igmix_get_c_from_p_rho
+      procedure :: get_e_from_p_rho             =>igmix_get_e_from_p_rho
+      procedure :: get_e_from_p_T               =>igmix_get_e_from_p_T
+      procedure :: get_p_from_rho_T             =>igmix_get_p_from_rho_T
+      procedure :: get_rho_from_p_T             =>igmix_get_rho_from_p_T
+      procedure :: get_h_from_p_T               =>igmix_get_h_from_p_T
+      procedure :: get_s_from_p_T               =>igmix_get_s_from_p_T
+      procedure :: get_gruneisen_from_rho_e     =>igmix_get_gruneisen_from_rho_e
+      procedure :: get_rhoe_from_p_rho          =>igmix_get_rhoe_from_p_rho
+      procedure :: get_rhoe_from_p_T            =>igmix_get_rhoe_from_p_T
+      procedure :: get_g_from_p_T               =>igmix_get_g_from_p_T
+      procedure :: get_drhodT_const_p_from_rho_T=>igmix_get_drhodT_const_p_from_rho_T
+      procedure :: get_drhodp_const_T_from_rho_T=>igmix_get_drhodp_const_T_from_rho_T
       procedure :: get_mix_coeffs
    end type igmix
 
@@ -148,6 +151,15 @@ contains
       call this%get_mix_coeffs(y=y,R=R)
       T=p/(rho*R)
    end function igmix_get_T_from_p_rho
+
+   real(WP) function igmix_get_T_from_p_v(this,p,v,y) result(T)
+      class(igmix), intent(in) :: this
+      real(WP), intent(in) :: p,v
+      real(WP), dimension(:), intent(in) :: y
+      real(WP) :: R
+      call this%get_mix_coeffs(y=y,R=R)
+      T=p*v/R
+   end function igmix_get_T_from_p_v
 
    real(WP) function igmix_get_c_from_p_rho(this,p,rho,y) result(c)
       class(igmix), intent(in) :: this
@@ -281,5 +293,21 @@ contains
       integer, intent(in) :: is
       qp=this%species(is)%eos%qp
    end function igmix_get_species_qp
+
+   real(WP) function igmix_get_drhodT_const_p_from_rho_T(this,rho,T,y) result(drhodT)
+      class(igmix), intent(in) :: this
+      real(WP), intent(in) :: rho,T
+      real(WP), dimension(:), intent(in) :: y
+      drhodT=-rho/T
+   end function igmix_get_drhodT_const_p_from_rho_T
+
+   real(WP) function igmix_get_drhodp_const_T_from_rho_T(this,rho,T,y) result(drhodp)
+      class(igmix), intent(in) :: this
+      real(WP), intent(in) :: rho,T
+      real(WP), dimension(:), intent(in) :: y
+      real(WP) :: R
+      call this%get_mix_coeffs(y=y,R=R)
+      drhodp=1.0_WP/(R*T)
+   end function igmix_get_drhodp_const_T_from_rho_T
 
 end module igmix_class

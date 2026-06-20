@@ -1,0 +1,68 @@
+# AMR grid
+Base nx   : 80
+Base ny   : 24
+Base nz   : 1
+Max level : 3 ! 6
+
+# Regridding parameters
+Regrid nsteps     : 10
+Tagging vorticity : 5
+Tagging rho ratio : 1.5
+
+# Mesh definition
+Lx : 0.250
+Ly : 0.074
+
+# Flow setup
+Cylinder diameter           : 0.022
+Cylinder location           : 0.187
+Shock location              : 0.028
+Mach number of shock        : 2.4
+Pre-shock density           : 1.17
+Pre-shock pressure          : 1.01e5
+Initial vapor mass fraction : 0.03
+
+# High pressure region initialization (Sembian Physics of Fluids 2016)
+HP center location  : 0.002
+HP region thickness : 0.001
+HP density          : 580.7
+HP pressure         : 5e7
+
+# Fluid properties
+Liquid density        : 1000
+Liquid viscosity      : 9e-4
+Liquid Prandtl number : 0
+Gas viscosity         : 1.27e-5
+Gas Prandtl number    : 0
+Vapor Schmidt number  : 0
+
+# EOS parameters
+Liquid EOS type                                  : ENASG
+Relaxation type                                  : pTg
+Liquid specific heat capacity at constant volume : 4.0174e+03
+Liquid specific heat capacity ratio              : 1.0146e+00
+Liquid reference energy shift                    : -1.1131e+06
+Liquid reference entropy shift                   : -2.2068e+04
+Liquid stiffening pressure                       : 3.0979e+08
+Liquid stiffening pressure linear coefficient    : -4.7512e+05
+Liquid co-volume                                 : 1.5196e-03
+Liquid co-volume linear coefficient              : -6.0500e-01
+Vapor specific heat capacity at constant volume  : 1.5000e+03
+Vapor specific heat capacity ratio               : 1.3077e+00
+Vapor reference energy shift                     : 1.9476e+06
+Vapor reference entropy shift                    : 1.1342e+03
+Air specific heat capacity at constant volume    : 718
+Air specific heat capacity ratio                 : 1.4
+Air reference energy shift                       : 0
+Air reference entropy shift                      : 0
+
+# Time integration
+Max dt     : 1e-7
+Initial dt : 1e-8
+Max CFL    : 0.5
+Max time   : 0.00019 ! 0.0003
+
+# Output
+Output period     : 2e-5
+!Checkpoint period : 2e-4
+!Restart from      : 1.90071E-04
