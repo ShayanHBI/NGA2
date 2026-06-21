@@ -205,19 +205,20 @@ contains
       real(WP), parameter :: Yv_dry=1.0e-5_WP,pv_dry=1.0_WP,Yv_pure=0.999_WP
       real(WP), parameter :: fd_eps=1.0e-7_WP,F_line_search_tol=0.3_WP
       ! debug
-      logical :: chem_relax,nucleated!,cavitated
+      logical :: chem_relax,nucleated,print_stuff!,cavitated
       allocate(Qin(size(Q)))
       Qin=Q
       VFin=VF
       nucleated=.false.
+      print_stuff=.false.
       ! debug
       ! cavitated=.false.
       ! Nucleation: Conservatively move a little mass and energy so the chemical relaxation starts from a non-stiff initial condition.
       ! This handles both cavitation and condensation.
       nucleation: block
-         ! real(WP), parameter :: VF_nuc=1.0e-7_WP
+         real(WP), parameter :: VF_nuc=1.0e-7_WP
          ! debug
-         real(WP), parameter :: VF_nuc=1.0e-3_WP
+         ! real(WP), parameter :: VF_nuc=1.0e-3_WP
          real(WP) :: rhoL_nuc,pL_nuc,TL_nuc,pv_sat,rhoV_nuc,eV_nuc
          real(WP) :: rhoG_nuc,pG_nuc,TG_nuc,Yv_nuc,xv_nuc,pv_nuc,Tsat_nuc
          real(WP) :: rhoL_new,eL_new,drho,de
@@ -233,11 +234,15 @@ contains
             ! Check if inside EOS validity range
             if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) return
             ! debug
-            if (pL_nuc.gt.-1.0e6_WP) return
+            ! if (pL_nuc.gt.-1.0e6_WP) return
             ! Saturation vapor pressure at current liquid state
-            ! pv_sat=this%get_pvsat(pL_nuc,TL_nuc)
+            pv_sat=this%get_pvsat(pL_nuc,TL_nuc)
+            if (pL_nuc.lt.-1.0e5_WP) then
+               print_stuff=.true.
+               print*,'pL=',pL_nuc,', TL=',TL_nuc,', pv_sat=',pv_sat
+            end if
             ! debug
-            pv_sat=1e3_WP
+            ! pv_sat=1.0e3_WP
             ! Check if metastable
             if (pv_sat.le.pL_nuc) return
             ! Nucleate a tiny vapor phase
@@ -249,11 +254,14 @@ contains
             ! Transfer mass and energy from liquid to vapor
             drho=VF_nuc*rhoV_nuc
             de=drho*eV_nuc
+            ! debug: show what nucleation is about to move, so relax_p's subsequent GAS CLIPPED merge (if any) can be traced back to this
+            if (pL_nuc.lt.-1.0e4_WP) print*,'[nucleation] pL_nuc=',pL_nuc,'pv_sat=',pv_sat,'rhoV_nuc=',rhoV_nuc,'eV_nuc=',eV_nuc,'drho=',drho,'de=',de,'Qbefore=',Q
             Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
             Q(3)=Q(3)-de;   Q(4)=Q(4)+de
             Q(8)=Q(8)+drho
             VF=1.0_WP-VF_nuc
             nucleated=.true.
+            if (pL_nuc.lt.-1.0e4_WP) print*,'[nucleation] Qafter=',Q,'VF=',VF
             ! debug
             ! cavitated=.true.
             ! if (cavitated) then
@@ -323,6 +331,9 @@ contains
       end if
       ! Store input state to the chemical relaxation algorithm
       VF0=VF
+      if (print_stuff) then
+         print*,'after pT relaxation: ',' Yv=',Yv,', p=',p,', T=',T
+      end if
       allocate(Q0(size(Q)))
       Q0=Q
       rho0 =sum(Q0(1:2))

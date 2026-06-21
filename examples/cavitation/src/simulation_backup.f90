@@ -67,7 +67,8 @@ module simulation
    !> Case parameters
    real(WP) :: T0,p0              !< Uniform initial liquid temperature/pressure
    real(WP) :: rhoL0,eL0          !< Liquid density/energy at (p0,T0)
-   real(WP) :: Uc,Rc                 !< Core velocity and radius
+   real(WP) :: Uc                 !< Uniform radial outward velocity magnitude (far from the core)
+   real(WP) :: rc                 !< Core radius smoothing the radial direction vector near r=0
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG,ScV        !< Prandtle and Schmidt numbers
 
@@ -111,18 +112,7 @@ contains
       real(WP), intent(inout) :: VF
       real(WP), dimension(:), intent(inout) :: Q
       real(WP), intent(in) :: Pjump
-      ! debug: flag cells with anomalously negative liquid pressure, before and after relaxation
-      real(WP), parameter :: PL_dbg_thresh=-1.0e4_WP
-      real(WP) :: PL_dbg
-      if (VF.gt.0.0_WP) then
-         PL_dbg=eosL%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
-         if (PL_dbg.lt.PL_dbg_thresh) print*,'[relax_pTg PRE ] VF=',VF,'PL=',PL_dbg,'Q=',Q
-      end if
       call relax_model%relax_pTg(VF=VF,Q=Q,Pjump=Pjump)
-      if (VF.gt.0.0_WP) then
-         PL_dbg=eosL%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
-         if (PL_dbg.lt.PL_dbg_thresh) print*,'[relax_pTg POST] VF=',VF,'PL=',PL_dbg,'Q=',Q
-      end if
    end subroutine relax_pTg
 
    !> Levelset function for a domain that is liquid everywhere
@@ -132,53 +122,6 @@ contains
       real(WP) :: G
       G=1.0_WP
    end function levelset_liquid
-
-   !> Debug: scan the finest level for cells with anomalously negative liquid pressure
-   !> and print their state, tagged with a caller-supplied label for the current pipeline stage
-   subroutine print_anomalous_cells(label)
-      use amrex_amr_module, only: amrex_mfiter,amrex_mfiter_build,amrex_mfiter_destroy,amrex_box
-      character(len=*), intent(in) :: label
-      real(WP), parameter :: PL_dbg_thresh=-1.0e4_WP
-      type(amrex_mfiter) :: mfi
-      type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF
-      real(WP) :: dx,dy,x_cc,y_cc,PL_dbg
-      integer :: lvl,i,j,k
-      lvl=min(amr%maxlvl,amr%clvl())
-      dx=amr%dx(lvl); dy=amr%dy(lvl)
-      call amr%mfiter_build(lvl,mfi)
-      do while (mfi%next())
-         pQ =>fs%Q%mf(lvl)%dataptr(mfi)
-         pVF=>fs%VF%mf(lvl)%dataptr(mfi)
-         bx=mfi%tilebox()
-         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-            if (pVF(i,j,k,1).le.0.0_WP) cycle
-            PL_dbg=eosL%get_p_from_rho_e(rho=pQ(i,j,k,1)/pVF(i,j,k,1),e=pQ(i,j,k,3)/pQ(i,j,k,1))
-            if (PL_dbg.lt.PL_dbg_thresh) then
-               x_cc=amr%xlo+(real(i,WP)+0.5_WP)*dx; y_cc=amr%ylo+(real(j,WP)+0.5_WP)*dy
-               print*,'[',trim(label),'] lvl=',lvl,' i,j=',i,j,' x,y=',x_cc,y_cc,' VF=',pVF(i,j,k,1),' PL=',PL_dbg,' Q=',pQ(i,j,k,:)
-            end if
-         end do; end do; end do
-      end do
-      call amr%mfiter_destroy(mfi)
-   end subroutine print_anomalous_cells
-
-   function get_radial_velocity(r) result(Ur)
-      real(WP), intent(in) :: r
-      real(WP) :: Ur
-      ! Constant speed Uc inside the core, Rc*Uc/r outside: div(U)=Uc/r inside the
-      ! core, which is unbounded as r->0 independent of Rc (only set by how close
-      ! the nearest cell center is to the origin) -- not mesh-convergent.
-      ! if (r.le.Rc) then
-      !    Ur=Uc
-      ! else
-      !    Ur=Rc*Uc/r
-      ! end if
-      ! Smooth core: matches Ur->Uc away from the core (r>>Rc) like above, but
-      ! div(U)->2*Uc/Rc as r->0 (bounded, set by the physical parameter Rc, not
-      ! by grid resolution) -- mesh-convergent.
-      Ur=Uc*r/sqrt(r**2+Rc**2)
-   end function get_radial_velocity
 
    !> Compute viscosity: constant gas and liquid, VF-weighted blend
    !> Contains commented-out Sutherland law for variable gas viscosity (dimensional form)
@@ -248,55 +191,64 @@ contains
    end subroutine get_viscosities
 
    !> Integrate vapor mass fraction Yv over a fixed-radius region centered on the droplet
-   ! subroutine get_Yv_int_r()
-   !    use amrex_amr_module, only: amrex_mfiter,amrex_box,amrex_imultifab,amrex_imultifab_build,amrex_imultifab_destroy
-   !    use amrex_interface,  only: amrmask_make_fine
-   !    use parallel,         only: MPI_REAL_WP
-   !    use mpi_f08,          only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
-   !    implicit none
-   !    integer :: lvl,i,j,k,ierr
-   !    type(amrex_mfiter) :: mfi
-   !    type(amrex_box) :: bx
-   !    type(amrex_imultifab) :: mask
-   !    real(WP), dimension(:,:,:,:), contiguous, pointer :: pYg
-   !    integer,  dimension(:,:,:,:), contiguous, pointer :: pMask
-   !    real(WP) :: dx,dy,dz,x_cc,y_cc,z_cc,rad
-   !    ! Composite integration with fine masking to avoid double-counting
-   !    Yv_int_r=0.0_WP
-   !    do lvl=0,amr%clvl()
-   !       dx=amr%dx(lvl); dy=amr%dy(lvl); dz=amr%dz(lvl)
-   !       ! Build fine mask for this level (if not finest)
-   !       if (lvl.lt.amr%clvl()) then
-   !          call amrex_imultifab_build(mask,amr%ba(lvl),amr%dm(lvl),1,0)
-   !          call amrmask_make_fine(mask,amr%ba(lvl+1),[amr%rrefx(lvl),amr%rrefy(lvl),amr%rrefz(lvl)],0,1)
-   !       end if
-   !       call amr%mfiter_build(lvl,mfi)
-   !       do while (mfi%next())
-   !          ! Get pointer to vapor mass fraction
-   !          pYg=>fs%Yg%mf(lvl)%dataptr(mfi)
-   !          if (lvl.lt.amr%clvl()) pMask=>mask%dataptr(mfi)
-   !          ! Loop over tile
-   !          bx=mfi%tilebox()
-   !          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-   !             ! Skip cells covered by finer level
-   !             if (lvl.lt.amr%clvl()) then
-   !                if (pMask(i,j,k,1).eq.0) cycle
-   !             end if
-   !             ! Cell-center distance from the domain center (0,0,0)
-   !             x_cc=amr%xlo+(real(i,WP)+0.5_WP)*dx
-   !             y_cc=amr%ylo+(real(j,WP)+0.5_WP)*dy
-   !             z_cc=amr%zlo+(real(k,WP)+0.5_WP)*dz
-   !             rad=sqrt(x_cc**2+y_cc**2+z_cc**2)
-   !             if (amr%nz.eq.1) rad=sqrt(x_cc**2+y_cc**2)
-   !             ! Accumulate Yv integral over cells within the fixed radius
-   !             if (rad.le.Yv_int_radius) Yv_int_r=Yv_int_r+pYg(i,j,k,1)*amr%cell_vol(lvl)
-   !          end do; end do; end do
-   !       end do
-   !       call amr%mfiter_destroy(mfi)
-   !       if (lvl.lt.amr%clvl()) call amrex_imultifab_destroy(mask)
-   !    end do
-   !    call MPI_ALLREDUCE(MPI_IN_PLACE,Yv_int_r,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-   ! end subroutine get_Yv_int_r
+   subroutine get_Yv_int_r()
+      use amrex_amr_module, only: amrex_mfiter,amrex_box,amrex_imultifab,amrex_imultifab_build,amrex_imultifab_destroy
+      use amrex_interface,  only: amrmask_make_fine
+      use parallel,         only: MPI_REAL_WP
+      use mpi_f08,          only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
+      implicit none
+      integer :: lvl,i,j,k,ierr
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      type(amrex_imultifab) :: mask
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pYg
+      integer,  dimension(:,:,:,:), contiguous, pointer :: pMask
+      real(WP) :: dx,dy,dz,x_cc,y_cc,z_cc,rad
+      ! Composite integration with fine masking to avoid double-counting
+      Yv_int_r=0.0_WP
+      do lvl=0,amr%clvl()
+         dx=amr%dx(lvl); dy=amr%dy(lvl); dz=amr%dz(lvl)
+         ! Build fine mask for this level (if not finest)
+         if (lvl.lt.amr%clvl()) then
+            call amrex_imultifab_build(mask,amr%ba(lvl),amr%dm(lvl),1,0)
+            call amrmask_make_fine(mask,amr%ba(lvl+1),[amr%rrefx(lvl),amr%rrefy(lvl),amr%rrefz(lvl)],0,1)
+         end if
+         call amr%mfiter_build(lvl,mfi)
+         do while (mfi%next())
+            ! Get pointer to vapor mass fraction
+            pYg=>fs%Yg%mf(lvl)%dataptr(mfi)
+            if (lvl.lt.amr%clvl()) pMask=>mask%dataptr(mfi)
+            ! Loop over tile
+            bx=mfi%tilebox()
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               ! Skip cells covered by finer level
+               if (lvl.lt.amr%clvl()) then
+                  if (pMask(i,j,k,1).eq.0) cycle
+               end if
+               ! Cell-center distance from the domain center (0,0,0)
+               x_cc=amr%xlo+(real(i,WP)+0.5_WP)*dx
+               y_cc=amr%ylo+(real(j,WP)+0.5_WP)*dy
+               z_cc=amr%zlo+(real(k,WP)+0.5_WP)*dz
+               rad=sqrt(x_cc**2+y_cc**2+z_cc**2)
+               if (amr%nz.eq.1) rad=sqrt(x_cc**2+y_cc**2)
+               ! Accumulate Yv integral over cells within the fixed radius
+               if (rad.le.Yv_int_radius) Yv_int_r=Yv_int_r+pYg(i,j,k,1)*amr%cell_vol(lvl)
+            end do; end do; end do
+         end do
+         call amr%mfiter_destroy(mfi)
+         if (lvl.lt.amr%clvl()) call amrex_imultifab_destroy(mask)
+      end do
+      call MPI_ALLREDUCE(MPI_IN_PLACE,Yv_int_r,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+   end subroutine get_Yv_int_r
+
+   !> Radial speed at distance r from the domain center: uniform magnitude Uc
+   !> for r>>rc, smoothly regularized to u(0)=0 so the direction vector
+   !> (umag*x/r, etc.) stays finite at the center
+   function radial_speed(r) result(umag)
+      real(WP), intent(in) :: r
+      real(WP) :: umag
+      umag=Uc*r/sqrt(r**2+rc**2)
+   end function radial_speed
 
    !> User init callback – set Q and VF/barycenters for a uniform liquid domain
    subroutine cavitation_init(solver,lvl,time,ba,dm)
@@ -314,8 +266,8 @@ contains
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pCL,pCG
       real(WP), dimension(3) :: BL,BG
-      real(WP) :: dx,dy,dz,myVF,rhoG_local,eG_local,rhoL_local,eL_local,Yv0,y(1:2)
-      real(WP) :: x_cc,y_cc,r,Ur,rho_mix
+      real(WP) :: dx,dy,dz,myVF,IEL,rhoG_local,eG_local,rhoL_local,eL_local,Yv0,y(1:2)
+      real(WP) :: x_cc,y_cc,z_cc,r,umag,rho_mix
       integer :: i,j,k
       integer, parameter :: nref=3
       ! Get mesh size
@@ -358,14 +310,19 @@ contains
             pQ(i,j,k,2)=(1.0_WP-myVF)*rhoG_local
             pQ(i,j,k,3)=pQ(i,j,k,1)*eL_local
             pQ(i,j,k,4)=pQ(i,j,k,2)*eG_local
+            ! Initialize velocity to the same radial profile as the boundary condition,
+            ! so there is no velocity discontinuity at t=0 and the singularity sits at
+            ! the domain center (r=0) rather than launching a wave in from the boundary
             x_cc=solver%amr%xlo+(real(i,WP)+0.5_WP)*dx
             y_cc=solver%amr%ylo+(real(j,WP)+0.5_WP)*dy
-            r=sqrt(x_cc**2+y_cc**2)
-            Ur=get_radial_velocity(r)
+            z_cc=0.0_WP
+            if (solver%amr%nz.ne.1) z_cc=solver%amr%zlo+(real(k,WP)+0.5_WP)*dz
+            r=sqrt(x_cc**2+y_cc**2+z_cc**2)
+            umag=radial_speed(r)
             rho_mix=pQ(i,j,k,1)+pQ(i,j,k,2)
-            pQ(i,j,k,5)=rho_mix*Ur*x_cc/r
-            pQ(i,j,k,6)=rho_mix*Ur*y_cc/r
-            pQ(i,j,k,7)=0.0_WP
+            pQ(i,j,k,5)=rho_mix*umag*x_cc/r
+            pQ(i,j,k,6)=rho_mix*umag*y_cc/r
+            pQ(i,j,k,7)=rho_mix*umag*z_cc/r
             pQ(i,j,k,8)=pQ(i,j,k,2)*Yv0
          end do; end do; end do
       end do
@@ -452,7 +409,7 @@ contains
       type(amrex_box), intent(in) :: bx
       character(len=1), intent(in) :: comp
       real(WP), dimension(:,:,:,:), contiguous, pointer :: p
-      real(WP) :: dx,dy,dz,x,y,z,r,U_r,ur,vr
+      real(WP) :: dx,dy,dz,x,y,z,r,umag,ur,vr,wr
       integer :: i,j,k
       dx=amr%dx(lvl); dy=amr%dy(lvl); dz=amr%dz(lvl)
       do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
@@ -467,20 +424,27 @@ contains
          else
             y=amr%ylo+(real(j,WP)+0.5_WP)*dy
          end if
-         r=sqrt(x**2+y**2)
-         U_r=get_radial_velocity(r)
-         ur=U_r*x/r; vr=U_r*y/r
+         if (amr%nz.eq.1) then
+            z=0.0_WP ! Enable quasi-2D runs
+         else if (comp.eq.'W') then
+            z=amr%zlo+real(k,WP)*dz
+         else
+            z=amr%zlo+(real(k,WP)+0.5_WP)*dz
+         end if
+         r=sqrt(x**2+y**2+z**2)
+         umag=radial_speed(r)
+         ur=umag*x/r; vr=umag*y/r; wr=umag*z/r
          select case (comp)
          case ('U')
             p(i,j,k,1)=ur
          case ('V')
             p(i,j,k,1)=vr
          case ('W')
-            p(i,j,k,1)=0.0_WP
+            p(i,j,k,1)=wr
          case ('Q')
             p(i,j,k,1)=rhoL0; p(i,j,k,2)=0.0_WP
             p(i,j,k,3)=rhoL0*eL0; p(i,j,k,4)=0.0_WP
-            p(i,j,k,5)=rhoL0*ur; p(i,j,k,6)=rhoL0*vr; p(i,j,k,7)=0.0_WP
+            p(i,j,k,5)=rhoL0*ur; p(i,j,k,6)=rhoL0*vr; p(i,j,k,7)=rhoL0*wr
             p(i,j,k,8)=0.0_WP
          end select
       end do; end do; end do
@@ -527,7 +491,7 @@ contains
          call param_read('Liquid temperature',T0)
          call param_read('Liquid pressure',p0)
          call param_read('Core velocity',Uc)
-         call param_read('Core radius',Rc)
+         call param_read('Core radius',rc)
          ! Domain dimensions
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
@@ -769,7 +733,7 @@ contains
          call fs%get_info()
          call fs%get_cfl(dt=time%dt,cfl=time%cfl)
          ! Compute Yv integral within fixed radius
-         ! call get_Yv_int_r()
+         call get_Yv_int_r()
          ! Create simulation monitor
          mfile=monitor(amRoot=amr%amRoot,name='simulation')
          call mfile%add_column(time%n,'Timestep number')
@@ -793,7 +757,7 @@ contains
          call mfile%add_column(fs%Yvmin,'Yvmin')
          call mfile%add_column(fs%Yvmax,'Yvmax')
          call mfile%add_column(fs%Qint(8),'Vapor mass')
-         ! call mfile%add_column(Yv_int_r,'Yv_int_r01')
+         call mfile%add_column(Yv_int_r,'Yv_int_r01')
          call mfile%write()
          ! Create CFL monitor
          cflfile=monitor(amRoot=amr%amRoot,name='cfl')
@@ -888,11 +852,9 @@ contains
          ! ===== RK2 Stage 1: advective flux at t =====
          call fs%get_dQdt(dQdt=dQdt,dt=0.5_WP*time%dt,time=time%t)
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=0.5_WP*time%dt,src=dQdt)
-         call print_anomalous_cells('RK1 post-advection')
          call fs%Q%average_down(); call fs%Q%fill(time=time%t+0.5_WP*time%dt)
          call fs%build_plic(time%t)
          call fs%apply_relax(time=time%t+0.5_WP*time%dt)
-         call print_anomalous_cells('RK1 post-relax')
          call fs%clean_Q()
          call fs%get_primitive(fs%Q)
          call fs%build_subVF()
@@ -905,11 +867,9 @@ contains
          ! ===== RK2 Stage 2: advective flux at midpoint =====
          call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t+0.5_WP*time%dt)
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=time%dt,src=dQdt)
-         call print_anomalous_cells('RK2 post-advection')
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          call fs%build_plic(time%t)
          call fs%apply_relax(time=time%t)
-         call print_anomalous_cells('RK2 post-relax')
          call fs%clean_Q()
          call fs%get_primitive(fs%Q)
          call fs%build_subVF()

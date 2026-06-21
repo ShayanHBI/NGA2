@@ -93,10 +93,18 @@ contains
       end if
       if (PG.le.0.0_WP) then
          print*,"*** GAS CLIPPED!",PG,VF,Q
-         VF=1.0_WP
-         Q(1)=sum(Q(1:2)); Q(2)=0.0_WP
-         Q(3)=sum(Q(3:4)); Q(4)=0.0_WP
-         Q(8)=0.0_WP
+         ! debug: show liquid pressure before/after the merge, since dumping the nucleated vapor's
+         ! mass+energy back into the liquid EOS is not pressure-neutral and can make PL worse
+         block
+            real(WP) :: PL_before,PL_after
+            PL_before=PL
+            VF=1.0_WP
+            Q(1)=sum(Q(1:2)); Q(2)=0.0_WP
+            Q(3)=sum(Q(3:4)); Q(4)=0.0_WP
+            Q(8)=0.0_WP
+            PL_after=this%liq%get_p_from_rho_e(rho=Q(1),e=Q(3)/Q(1))
+            print*,'[GAS CLIP merge] PG=',PG,'RHOG=',RHOG,'IG=',IG,'PL_before=',PL_before,'PL_after=',PL_after
+         end block
          call dealloc()
          return
       end if
