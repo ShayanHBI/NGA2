@@ -14,11 +14,13 @@ Lx : 0.1
 Ly : 0.1
 
 # Flow setup
-Liquid temperature          : 350
-Liquid pressure             : 1e5
-Core velocity               : 1.0e-1
-Core radius                 : 3.0e-3
-Initial vapor mass fraction : 0
+Liquid temperature            : 350
+Liquid pressure               : 1e5
+Exit velocity                 : 50
+Core radius                   : 3.0e-3
+Cavitation pressure threshold : -1e8
+Cavitation seed VF            : 0.1
+Initial vapor mass fraction   : 0
 
 # Fluid properties
 Liquid viscosity            : 9e-4
@@ -46,12 +48,12 @@ Air reference energy shift                       : 0
 Air reference entropy shift                      : 0
 
 # Time integration
-Max dt     : 1e-7
+Max dt     : 5e-8
 ! Initial dt : 1e-8
 Max CFL    : 0.5
-Max time   : 5e-6
+Max time   : 3.05e-5
 
 # Output
-Output period     : 1e-7
-!Checkpoint period : 2e-4
-!Restart from      : 
+Output period     : 2e-7
+!Checkpoint period : 4.10000E-06
+!Restart from      : 5.00000E-06

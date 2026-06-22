@@ -14,7 +14,7 @@ module simulation
    use sg_class,            only: sg
    use ig_class,            only: ig
    use igmix_class,         only: igmix
-   use relax_class,         only: relax
+   use relax_class,         only: relax,dbg_i,dbg_j
    use relax_sg_ig_class,   only: relax_sg_ig
    use relax_nasg_ig_class, only: relax_nasg_ig
    implicit none
@@ -67,7 +67,8 @@ module simulation
    !> Case parameters
    real(WP) :: T0,p0              !< Uniform initial liquid temperature/pressure
    real(WP) :: rhoL0,eL0          !< Liquid density/energy at (p0,T0)
-   real(WP) :: Uc,Rc                 !< Core velocity and radius
+   real(WP) :: U_ext,Rc                 !< Core velocity and radius
+   real(WP) :: p_cav,VF_nuc       !< Cavitation onset pressure threshold and nucleation seed VF
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG,ScV        !< Prandtle and Schmidt numbers
 
@@ -111,18 +112,25 @@ contains
       real(WP), intent(inout) :: VF
       real(WP), dimension(:), intent(inout) :: Q
       real(WP), intent(in) :: Pjump
-      ! debug: flag cells with anomalously negative liquid pressure, before and after relaxation
-      real(WP), parameter :: PL_dbg_thresh=-1.0e4_WP
+      ! debug: print cell (64,64) unconditionally, before and after relaxation
       real(WP) :: PL_dbg
-      if (VF.gt.0.0_WP) then
-         PL_dbg=eosL%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
-         if (PL_dbg.lt.PL_dbg_thresh) print*,'[relax_pTg PRE ] VF=',VF,'PL=',PL_dbg,'Q=',Q
-      end if
+      ! if (dbg_i.eq.64.and.dbg_j.eq.64) then
+      !    if (VF.gt.0.0_WP) then
+      !       PL_dbg=eosL%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
+      !       print*,'[relax_pTg PRE ] VF=',VF,'PL=',PL_dbg,'Q=',Q
+      !    else
+      !       print*,'[relax_pTg PRE ] VF=',VF,'PL=N/A','Q=',Q
+      !    end if
+      ! end if
       call relax_model%relax_pTg(VF=VF,Q=Q,Pjump=Pjump)
-      if (VF.gt.0.0_WP) then
-         PL_dbg=eosL%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
-         if (PL_dbg.lt.PL_dbg_thresh) print*,'[relax_pTg POST] VF=',VF,'PL=',PL_dbg,'Q=',Q
-      end if
+      ! if (dbg_i.eq.64.and.dbg_j.eq.64) then
+      !    if (VF.gt.0.0_WP) then
+      !       PL_dbg=eosL%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1))
+      !       print*,'[relax_pTg POST] VF=',VF,'PL=',PL_dbg,'Q=',Q
+      !    else
+      !       print*,'[relax_pTg POST] VF=',VF,'PL=N/A','Q=',Q
+      !    end if
+      ! end if
    end subroutine relax_pTg
 
    !> Levelset function for a domain that is liquid everywhere
@@ -133,12 +141,11 @@ contains
       G=1.0_WP
    end function levelset_liquid
 
-   !> Debug: scan the finest level for cells with anomalously negative liquid pressure
-   !> and print their state, tagged with a caller-supplied label for the current pipeline stage
+   !> Debug: print cell (64,64) unconditionally, tagged with a caller-supplied
+   !> label for the current pipeline stage
    subroutine print_anomalous_cells(label)
       use amrex_amr_module, only: amrex_mfiter,amrex_mfiter_build,amrex_mfiter_destroy,amrex_box
       character(len=*), intent(in) :: label
-      real(WP), parameter :: PL_dbg_thresh=-1.0e4_WP
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF
@@ -152,32 +159,46 @@ contains
          pVF=>fs%VF%mf(lvl)%dataptr(mfi)
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-            if (pVF(i,j,k,1).le.0.0_WP) cycle
-            PL_dbg=eosL%get_p_from_rho_e(rho=pQ(i,j,k,1)/pVF(i,j,k,1),e=pQ(i,j,k,3)/pQ(i,j,k,1))
-            if (PL_dbg.lt.PL_dbg_thresh) then
-               x_cc=amr%xlo+(real(i,WP)+0.5_WP)*dx; y_cc=amr%ylo+(real(j,WP)+0.5_WP)*dy
+            if ((i.ne.64).or.(j.ne.64)) cycle
+            x_cc=amr%xlo+(real(i,WP)+0.5_WP)*dx; y_cc=amr%ylo+(real(j,WP)+0.5_WP)*dy
+            if (pVF(i,j,k,1).gt.0.0_WP) then
+               PL_dbg=eosL%get_p_from_rho_e(rho=pQ(i,j,k,1)/pVF(i,j,k,1),e=pQ(i,j,k,3)/pQ(i,j,k,1))
                print*,'[',trim(label),'] lvl=',lvl,' i,j=',i,j,' x,y=',x_cc,y_cc,' VF=',pVF(i,j,k,1),' PL=',PL_dbg,' Q=',pQ(i,j,k,:)
+            else
+               print*,'[',trim(label),'] lvl=',lvl,' i,j=',i,j,' x,y=',x_cc,y_cc,' VF=',pVF(i,j,k,1),' PL=N/A',' Q=',pQ(i,j,k,:)
             end if
          end do; end do; end do
       end do
       call amr%mfiter_destroy(mfi)
    end subroutine print_anomalous_cells
 
+   !> Debug: print cell (64,64)'s full Q/VF state unconditionally
+   subroutine print_mixture_cells(label)
+      use amrex_amr_module, only: amrex_mfiter,amrex_mfiter_build,amrex_mfiter_destroy,amrex_box
+      character(len=*), intent(in) :: label
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF
+      integer :: lvl,i,j,k
+      lvl=min(amr%maxlvl,amr%clvl())
+      call amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pQ =>fs%Q%mf(lvl)%dataptr(mfi)
+         pVF=>fs%VF%mf(lvl)%dataptr(mfi)
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            if ((i.ne.64).or.(j.ne.64)) cycle
+            print*,'[',trim(label),'] lvl=',lvl,' i,j=',i,j,' VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,:)
+         end do; end do; end do
+      end do
+      call amr%mfiter_destroy(mfi)
+   end subroutine print_mixture_cells
+
    function get_radial_velocity(r) result(Ur)
       real(WP), intent(in) :: r
       real(WP) :: Ur
-      ! Constant speed Uc inside the core, Rc*Uc/r outside: div(U)=Uc/r inside the
-      ! core, which is unbounded as r->0 independent of Rc (only set by how close
-      ! the nearest cell center is to the origin) -- not mesh-convergent.
-      ! if (r.le.Rc) then
-      !    Ur=Uc
-      ! else
-      !    Ur=Rc*Uc/r
-      ! end if
-      ! Smooth core: matches Ur->Uc away from the core (r>>Rc) like above, but
-      ! div(U)->2*Uc/Rc as r->0 (bounded, set by the physical parameter Rc, not
-      ! by grid resolution) -- mesh-convergent.
-      Ur=Uc*r/sqrt(r**2+Rc**2)
+      ! Ur=U_ext*r/sqrt(r**2+Rc**2)
+      Ur=U_ext
    end function get_radial_velocity
 
    !> Compute viscosity: constant gas and liquid, VF-weighted blend
@@ -526,8 +547,11 @@ contains
          ! Uniform liquid state and boundary velocity
          call param_read('Liquid temperature',T0)
          call param_read('Liquid pressure',p0)
-         call param_read('Core velocity',Uc)
+         call param_read('Exit velocity',U_ext)
          call param_read('Core radius',Rc)
+         ! Delayed cavitation onset: nucleate at p_cav (deeper than p_sat) with a VF_nuc-sized seed
+         call param_read('Cavitation pressure threshold',p_cav,default=huge(1.0_WP))
+         call param_read('Cavitation seed VF',VF_nuc,default=1.0e-7_WP)
          ! Domain dimensions
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
@@ -569,12 +593,12 @@ contains
          type is (relax_sg_ig)
             select type (eosL)
             type is (sg)
-               call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
+               call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2,p_cav=p_cav,VF_nuc=VF_nuc)
             end select
          type is (relax_nasg_ig)
             select type (eosL)
             type is (nasg)
-               call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
+               call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2,p_cav=p_cav,VF_nuc=VF_nuc)
             end select
          end select
       end block init_eos_and_flow
@@ -888,36 +912,52 @@ contains
          ! ===== RK2 Stage 1: advective flux at t =====
          call fs%get_dQdt(dQdt=dQdt,dt=0.5_WP*time%dt,time=time%t)
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=0.5_WP*time%dt,src=dQdt)
-         call print_anomalous_cells('RK1 post-advection')
+         ! call print_anomalous_cells('RK1 post-advection')
          call fs%Q%average_down(); call fs%Q%fill(time=time%t+0.5_WP*time%dt)
          call fs%build_plic(time%t)
          call fs%apply_relax(time=time%t+0.5_WP*time%dt)
-         call print_anomalous_cells('RK1 post-relax')
+         ! call print_anomalous_cells('RK1 post-relax')
+         ! call print_mixture_cells('RK1 post-apply_relax')
          call fs%clean_Q()
+         ! call print_mixture_cells('RK1 post-clean_Q')
          call fs%get_primitive(fs%Q)
+         ! call print_mixture_cells('RK1 post-get_primitive#1')
          call fs%build_subVF()
+         ! call print_mixture_cells('RK1 post-build_subVF')
          call fs%get_face_velocity()
+         ! call print_mixture_cells('RK1 post-get_face_velocity')
          call fs%add_phasic_pressure(scale=0.5_WP*time%dt)
+         ! call print_mixture_cells('RK1 post-add_phasic_pressure')
          call fs%Q%average_down(); call fs%Q%fill(time=time%t+0.5_WP*time%dt)
+         ! call print_mixture_cells('RK1 post-average_down+fill')
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%t+0.5_WP*time%dt)
          call fs%get_primitive(fs%Q)
+         ! call print_mixture_cells('RK1 post-get_primitive#2')
 
          ! ===== RK2 Stage 2: advective flux at midpoint =====
          call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t+0.5_WP*time%dt)
          call fs%Q%copy(src=fs%Qold); call fs%Q%saxpy(a=time%dt,src=dQdt)
-         call print_anomalous_cells('RK2 post-advection')
+         ! call print_anomalous_cells('RK2 post-advection')
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          call fs%build_plic(time%t)
          call fs%apply_relax(time=time%t)
-         call print_anomalous_cells('RK2 post-relax')
+         ! call print_anomalous_cells('RK2 post-relax')
+         ! call print_mixture_cells('RK2 post-apply_relax')
          call fs%clean_Q()
+         ! call print_mixture_cells('RK2 post-clean_Q')
          call fs%get_primitive(fs%Q)
+         ! call print_mixture_cells('RK2 post-get_primitive#1')
          call fs%build_subVF()
+         ! call print_mixture_cells('RK2 post-build_subVF')
          call fs%get_face_velocity()
+         ! call print_mixture_cells('RK2 post-get_face_velocity')
          call fs%add_phasic_pressure(scale=time%dt)
+         ! call print_mixture_cells('RK2 post-add_phasic_pressure')
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
+         ! call print_mixture_cells('RK2 post-average_down+fill')
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%t)
          call fs%get_primitive(fs%Q)
+         ! call print_mixture_cells('RK2 post-get_primitive#2')
 
          ! Regrid if event triggers
          if (regrid_evt%occurs()) then

@@ -10,6 +10,7 @@ module amrmpcomp_class
    use amrex_amr_module, only: amrex_box,amrex_boxarray,amrex_distromap,amrex_mfiter
    use eos_class,        only: eos
    use mix_class,        only: mix
+   use relax_class,      only: dbg_i,dbg_j
    implicit none
    private
 
@@ -2286,6 +2287,7 @@ contains
             ! Check if mixture cell prior to relaxation
             oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
             ! Apply user-provided relaxation model (modifies VF and Q)
+            dbg_i=i; dbg_j=j
             call this%relax(VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
             ! Check if mixture cell after relaxation
             newmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)

@@ -1,6 +1,7 @@
 !> NASG liquid and ideal gas relaxation model
 module relax_nasg_ig_class
    use precision,         only: WP
+   use relax_class,       only: dbg_i,dbg_j
    use relax_sg_ig_class, only: relax_sg_ig,Mv,Ma
    use sg_class,          only: sg
    use nasg_class,        only: nasg
@@ -26,14 +27,15 @@ contains
 
    !> Initialize: call parent, then add NASG-specific fields.
    !> Takes class(sg) to match parent interface; select type extracts the nasg-specific fields.
-   subroutine relax_nasg_ig_initialize(this,liq,gas,indV,indA)
+   subroutine relax_nasg_ig_initialize(this,liq,gas,indV,indA,p_cav,VF_nuc)
       class(relax_nasg_ig), intent(inout) :: this
       class(sg),    target, intent(in)    :: liq
       class(igmix), target, intent(in)    :: gas
       integer, intent(in) :: indV,indA
+      real(WP), intent(in), optional :: p_cav,VF_nuc
       real(WP) :: cpV,cvV,RV
-      ! Parent sets this%liq, this%gas, this%indV/A, this%AS-DS, this%ES=0
-      call this%relax_sg_ig%initialize(liq=liq,gas=gas,indV=indV,indA=indA)
+      ! Parent sets this%liq, this%gas, this%indV/A, this%AS-DS, this%ES=0, this%p_cav/VF_nuc
+      call this%relax_sg_ig%initialize(liq=liq,gas=gas,indV=indV,indA=indA,p_cav=p_cav,VF_nuc=VF_nuc)
       ! Set typed pointer and override ES (select type needed to get type(nasg) from class(sg))
       select type (liq)
       type is (nasg)
@@ -83,6 +85,7 @@ contains
       CG=this%gas%get_c_from_p_rho(p=PG,rho=RHOG,y=y)
       ! Handle limit cases - should mass/energy be transfered or lost? - this should probably never happen...
       if (PL.le.-this%liq%pinf) then
+         ! if (dbg_i.eq.64.and.dbg_j.eq.64) print*,"*** LIQUID CLIPPED!",PL,VF,Q
          print*,"*** LIQUID CLIPPED!",PL,VF,Q
          VF=0.0_WP
          Q(2)=sum(Q(1:2)); Q(1)=0.0_WP
@@ -92,6 +95,7 @@ contains
          return
       end if
       if (PG.le.0.0_WP) then
+         ! if (dbg_i.eq.64.and.dbg_j.eq.64) print*,"*** GAS CLIPPED!",PG,VF,Q
          print*,"*** GAS CLIPPED!",PG,VF,Q
          ! debug: show liquid pressure before/after the merge, since dumping the nucleated vapor's
          ! mass+energy back into the liquid EOS is not pressure-neutral and can make PL worse
@@ -103,7 +107,7 @@ contains
             Q(3)=sum(Q(3:4)); Q(4)=0.0_WP
             Q(8)=0.0_WP
             PL_after=this%liq%get_p_from_rho_e(rho=Q(1),e=Q(3)/Q(1))
-            print*,'[GAS CLIP merge] PG=',PG,'RHOG=',RHOG,'IG=',IG,'PL_before=',PL_before,'PL_after=',PL_after
+            ! if (dbg_i.eq.64.and.dbg_j.eq.64) print*,'[GAS CLIP merge] PG=',PG,'RHOG=',RHOG,'IG=',IG,'PL_before=',PL_before,'PL_after=',PL_after
          end block
          call dealloc()
          return

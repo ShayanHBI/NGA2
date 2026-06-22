@@ -4,7 +4,11 @@ module relax_class
    implicit none
    private
 
-   public :: relax
+   public :: relax,dbg_i,dbg_j
+
+   !> Debug: current cell index, set by the caller right before invoking relaxation,
+   !> so prints deep inside relax/relax_pTg implementations can be filtered to one cell
+   integer :: dbg_i=-1,dbg_j=-1
 
    !> Abstract relaxation model type
    type, abstract :: relax

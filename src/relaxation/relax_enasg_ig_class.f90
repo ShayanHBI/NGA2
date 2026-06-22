@@ -38,12 +38,13 @@ contains
    !> implemented below via pTsat/dpTsatdT/dpTsatdp_lv/dpTsatdlnp/get_pvsat).
    !> Then set the typed ENASG pointer for direct parameter access (pinf1,
    !> b1, pp_inf0).
-   subroutine relax_enasg_ig_initialize(this,liq,gas,indV,indA)
+   subroutine relax_enasg_ig_initialize(this,liq,gas,indV,indA,p_cav,VF_nuc)
       class(relax_enasg_ig), intent(inout) :: this
       class(sg),    target,  intent(in)    :: liq
       class(igmix), target,  intent(in)    :: gas
       integer,               intent(in)    :: indV,indA
-      call this%relax_nasg_ig%initialize(liq=liq,gas=gas,indV=indV,indA=indA)
+      real(WP), intent(in), optional :: p_cav,VF_nuc
+      call this%relax_nasg_ig%initialize(liq=liq,gas=gas,indV=indV,indA=indA,p_cav=p_cav,VF_nuc=VF_nuc)
       ! Set typed ENASG pointer
       select type (liq)
       type is (enasg)

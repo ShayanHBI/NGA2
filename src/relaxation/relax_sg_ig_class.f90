@@ -1,7 +1,7 @@
 !> SG liquid and ideal gas relaxation model
 module relax_sg_ig_class
    use precision,   only: WP
-   use relax_class, only: relax
+   use relax_class, only: relax,dbg_i,dbg_j
    use sg_class,    only: sg
    use igmix_class, only: igmix
    implicit none
@@ -33,6 +33,10 @@ module relax_sg_ig_class
       !> Iteration limits
       integer :: Tsat_itmax=40
       integer :: NR_itmax  =40
+      !> Nucleation control: delay cavitation/condensation onset past p_sat down to
+      !> p_cav, then seed a VF_nuc-sized parcel (also the eligibility band half-width)
+      real(WP) :: p_cav =huge(1.0_WP)
+      real(WP) :: VF_nuc=1.0e-7_WP
    contains
       procedure :: initialize   =>relax_sg_ig_initialize
       procedure :: relax_p      =>relax_sg_ig_relax_p
@@ -52,11 +56,12 @@ module relax_sg_ig_class
 contains
 
    !> Initialize: store EOS pointers and compute saturation curve coefficients
-   subroutine relax_sg_ig_initialize(this,liq,gas,indV,indA)
+   subroutine relax_sg_ig_initialize(this,liq,gas,indV,indA,p_cav,VF_nuc)
       class(relax_sg_ig), intent(inout)    :: this
       class(sg),    target, intent(in)     :: liq
       class(igmix), target, intent(in)     :: gas
       integer, intent(in) :: indV,indA
+      real(WP), intent(in), optional :: p_cav,VF_nuc
       real(WP) :: cpV,cvV,RV
       this%liq=>liq
       this%gas=>gas
@@ -70,6 +75,8 @@ contains
       this%CS=(cpV-liq%cp)                                /RV
       this%DS=(liq%cp-liq%cv)                             /RV
       ! ES stays 0.0_WP (SG has no co-volume b); NASG overrides this after calling parent init
+      if (present(p_cav))  this%p_cav =p_cav
+      if (present(VF_nuc)) this%VF_nuc=VF_nuc
    end subroutine relax_sg_ig_initialize
 
    !> Mechanical relaxation
@@ -97,6 +104,7 @@ contains
       PG=this%gas%get_p_from_rho_e(Q(2)/(1.0_WP-VF),Q(4)/Q(2),y)
       ! Handle limit cases - should mass/energy be transfered or lost? - this should probably never happen...
       if (PL.le.-this%liq%pinf) then
+         ! if (dbg_i.eq.64.and.dbg_j.eq.64) print*,"*** LIQUID CLIPPED!",PL,VF,Q
          print*,"*** LIQUID CLIPPED!",PL,VF,Q
          VF=0.0_WP
          Q(2)=sum(Q(1:2)); Q(1)=0.0_WP
@@ -106,6 +114,7 @@ contains
          return
       end if
       if (PG.le.0.0_WP) then
+         ! if (dbg_i.eq.64.and.dbg_j.eq.64) print*,"*** GAS CLIPPED!",PG,VF,Q
          print*,"*** GAS CLIPPED!",PG,VF,Q
          VF=1.0_WP
          Q(1)=sum(Q(1:2)); Q(2)=0.0_WP
@@ -216,62 +225,53 @@ contains
       ! Nucleation: Conservatively move a little mass and energy so the chemical relaxation starts from a non-stiff initial condition.
       ! This handles both cavitation and condensation.
       nucleation: block
-         real(WP), parameter :: VF_nuc=1.0e-7_WP
-         ! debug
-         ! real(WP), parameter :: VF_nuc=1.0e-3_WP
-         real(WP) :: rhoL_nuc,pL_nuc,TL_nuc,pv_sat,rhoV_nuc,eV_nuc
+         ! Condensation branch keeps its own unchanged tiny seed/band (see open question
+         ! in the cavitation-onset delay change: only the cavitation branch below was
+         ! asked to grow VF_nuc/delay past p_cav -- this stays as it always was)
+         real(WP), parameter :: VF_nuc_cond=1.0e-7_WP
+         real(WP) :: rhoL_nuc,eL_nuc,pL_nuc,TL_nuc,pv_sat,rhoV_nuc,eV_nuc
          real(WP) :: rhoG_nuc,pG_nuc,TG_nuc,Yv_nuc,xv_nuc,pv_nuc,Tsat_nuc
          real(WP) :: rhoL_new,eL_new,drho,de
          real(WP) :: y_nuc(this%gas%ns)
          logical  :: conv_nuc
          integer  :: Tsat_it_nuc
          ! Almost pure liquid: check if liquid is metastable and needs vapor nucleation
-         if (VF.ge.1.0_WP-VF_nuc) then
+         if (VF.ge.1.0_WP-1.0e-7_WP) then
             ! Get current liquid state
             rhoL_nuc=Q(1)/VF
-            pL_nuc=this%liq%get_p_from_rho_e(rhoL_nuc,Q(3)/Q(1))
+            eL_nuc=Q(3)/Q(1)
+            pL_nuc=this%liq%get_p_from_rho_e(rhoL_nuc,eL_nuc)
             TL_nuc=this%liq%get_T_from_p_rho(pL_nuc,rhoL_nuc)
             ! Check if inside EOS validity range
             if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) return
-            ! debug
-            ! if (pL_nuc.gt.-1.0e6_WP) return
             ! Saturation vapor pressure at current liquid state
             pv_sat=this%get_pvsat(pL_nuc,TL_nuc)
-            if (pL_nuc.lt.-1.0e5_WP) then
-               print_stuff=.true.
-               print*,'pL=',pL_nuc,', TL=',TL_nuc,', pv_sat=',pv_sat
-            end if
-            ! debug
-            ! pv_sat=1.0e3_WP
-            ! Check if metastable
+            ! if (pL_nuc.lt.-1.0e5_WP) then
+            !    print_stuff=.true.
+            !    print*,'pL=',pL_nuc,', TL=',TL_nuc,', pv_sat=',pv_sat
+            ! end if
+            ! Check if metastable at all
             if (pv_sat.le.pL_nuc) return
-            ! Nucleate a tiny vapor phase
+            ! Delay nucleation until the metastable tension has deepened past p_cav
+            if (pL_nuc.gt.this%p_cav) return
+            ! Nucleate a vapor phase of size VF_nuc
             y_nuc           =0.0_WP
             y_nuc(this%indV)=1.0_WP
             ! Approximate vapor state
             rhoV_nuc=this%gas%get_rho_from_p_T(pv_sat,TL_nuc,y_nuc)
             eV_nuc=this%gas%get_e_from_p_T(pv_sat,TL_nuc,y_nuc)
             ! Transfer mass and energy from liquid to vapor
-            drho=VF_nuc*rhoV_nuc
+            drho=this%VF_nuc*rhoV_nuc
             de=drho*eV_nuc
             ! debug: show what nucleation is about to move, so relax_p's subsequent GAS CLIPPED merge (if any) can be traced back to this
-            if (pL_nuc.lt.-1.0e4_WP) print*,'[nucleation] pL_nuc=',pL_nuc,'pv_sat=',pv_sat,'rhoV_nuc=',rhoV_nuc,'eV_nuc=',eV_nuc,'drho=',drho,'de=',de,'Qbefore=',Q
+            ! if (pL_nuc.lt.-1.0e4_WP) print*,'[nucleation] pL_nuc=',pL_nuc,'pv_sat=',pv_sat,'rhoV_nuc=',rhoV_nuc,'eV_nuc=',eV_nuc,'drho=',drho,'de=',de,'Qbefore=',Q
             Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
             Q(3)=Q(3)-de;   Q(4)=Q(4)+de
             Q(8)=Q(8)+drho
-            VF=1.0_WP-VF_nuc
+            VF=1.0_WP-this%VF_nuc
             nucleated=.true.
-            if (pL_nuc.lt.-1.0e4_WP) print*,'[nucleation] Qafter=',Q,'VF=',VF
-            ! debug
-            ! cavitated=.true.
-            ! if (cavitated) then
-            !    print*,'*** CAVITATION SAMPLE ***'
-            !    print*,'pLin=',pL_nuc
-            !    print*,'TLin=',TL_nuc
-            !    print*,'Estimated pv_sat=',pv_sat
-            ! end if
          ! Almost pure gas: check if vapor is metastable and needs liquid nucleation.
-         else if (VF.le.VF_nuc) then
+         else if (VF.le.VF_nuc_cond) then
             ! Get vapor mass fraction
             Yv_nuc=Q(8)/Q(2)
             Yv_nuc=max(Yvmin,min(Yvmax,Yv_nuc))
@@ -298,7 +298,7 @@ contains
             rhoL_new=this%liq%get_rho_from_p_T(pG_nuc,TG_nuc)
             eL_new=this%liq%get_e_from_p_T(pG_nuc,TG_nuc)
             ! Transfer mass and energy from liquid to vapor
-            drho=VF_nuc*rhoL_new
+            drho=VF_nuc_cond*rhoL_new
             drho=min(drho,0.5_WP*Q(8),0.5_WP*Q(2))
             if (drho.le.0.0_WP) return
             de=drho*eL_new
@@ -331,9 +331,9 @@ contains
       end if
       ! Store input state to the chemical relaxation algorithm
       VF0=VF
-      if (print_stuff) then
-         print*,'after pT relaxation: ',' Yv=',Yv,', p=',p,', T=',T
-      end if
+      ! if (print_stuff) then
+      !    print*,'after pT relaxation: ',' Yv=',Yv,', p=',p,', T=',T
+      ! end if
       allocate(Q0(size(Q)))
       Q0=Q
       rho0 =sum(Q0(1:2))
