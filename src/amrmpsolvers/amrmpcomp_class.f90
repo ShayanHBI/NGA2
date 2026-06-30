@@ -2248,6 +2248,8 @@ contains
    subroutine apply_relax(this,time)
       use mpi_f08, only: MPI_Wtime
       use amrvof_geometry, only: get_plane_dist,cut_hex_vol
+      use mathtools, only: Pi,twoPi
+      use random, only: random_uniform
       implicit none
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: time
@@ -2316,7 +2318,33 @@ contains
             end if
 
             ! If mixture cell, post-process PLIC and barycenters
-            if (.not.oldmix) pPLIC(i,j,k,1:3)=[1.0_WP,0.0_WP,0.0_WP]
+            if (.not.oldmix) then
+               block
+                  real(WP) :: theta,nx,ny,nz,nmag,x_cc,y_cc,z_cc,r,phi,r_xy
+                  ! theta=random_uniform(0.0_WP,twoPi)
+                  ! pPLIC(i,j,k,1:3)=[cos(theta),sin(theta),0.0_WP]
+
+                  nx=random_uniform(0.0_WP,1.0_WP); if (this%amr%nx.eq.1) nx=0.0_WP
+                  ny=random_uniform(0.0_WP,1.0_WP); if (this%amr%ny.eq.1) ny=0.0_WP
+                  nz=random_uniform(0.0_WP,1.0_WP); if (this%amr%nz.eq.1) nz=0.0_WP
+                  nmag=sqrt(nx**2+ny**2+nz**2)
+                  pPLIC(i,j,k,1:3)=[nx,ny,nz]/nmag
+
+                  ! x_cc=this%amr%xlo+(real(i,WP)+0.5_WP)*dx; if (this%amr%nx.eq.1) x_cc=0.0_WP
+                  ! y_cc=this%amr%ylo+(real(j,WP)+0.5_WP)*dy; if (this%amr%ny.eq.1) y_cc=0.0_WP
+                  ! z_cc=this%amr%zlo+(real(k,WP)+0.5_WP)*dz; if (this%amr%nz.eq.1) z_cc=0.0_WP
+                  ! r_xy=sqrt(x_cc**2+y_cc**2)
+                  ! r=sqrt(x_cc**2+y_cc**2+z_cc**2)
+                  ! if (x_cc.gt.0.0_WP) then 
+                  !    phi=atan(y_cc/x_cc)
+                  ! else if (y.gt.0.0_WP)
+                  !    phi=0.5_WP*Pi
+                  ! else
+                  !    phi=1.5_WP*Pi
+                  ! end if
+                  ! pPLIC(i,j,k,1:3)=-[x_cc,y_cc,z_cc]/r
+               end block
+            end if
             ! Adjust PLIC plane to match new VF
             lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
             hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]

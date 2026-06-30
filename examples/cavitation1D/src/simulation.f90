@@ -1,4 +1,4 @@
-!> Cavitation of an energized liquid droplet
+!> Cavitation of an energized liquid droplet (1D version)
 module simulation
    use precision,           only: WP
    use string,              only: str_medium
@@ -124,12 +124,12 @@ contains
    end function levelset_liquid
 
 
-   function get_radial_velocity(r) result(Ur)
-      real(WP), intent(in) :: r
-      real(WP) :: Ur
-      ! Ur=U_exit*r/sqrt(r**2+Rc**2)
-      ! Ur=U_exit
-      Ur=U_slp*r+U_core
+   function get_radial_velocity(x) result(Ux)
+      real(WP), intent(in) :: x
+      real(WP) :: Ux
+      ! Ux=U_exit*x/sqrt(x**2+Rc**2)
+      ! Ux=U_exit
+      Ux=sign(U_slp*abs(x)+U_core,x)
    end function get_radial_velocity
 
    !> Compute viscosity: constant gas and liquid, VF-weighted blend
@@ -216,7 +216,7 @@ contains
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pCL,pCG
       real(WP), dimension(3) :: BL,BG
       real(WP) :: dx,dy,dz,myVF,rhoG_local,eG_local,rhoL_local,eL_local,Yv0,y(1:2)
-      real(WP) :: x_cc,y_cc,r,Ur,rho_mix
+      real(WP) :: x_cc,Ux,rho_mix
       integer :: i,j,k
       integer, parameter :: nref=3
       ! Get mesh size
@@ -260,12 +260,10 @@ contains
             pQ(i,j,k,3)=pQ(i,j,k,1)*eL_local
             pQ(i,j,k,4)=pQ(i,j,k,2)*eG_local
             x_cc=solver%amr%xlo+(real(i,WP)+0.5_WP)*dx
-            y_cc=solver%amr%ylo+(real(j,WP)+0.5_WP)*dy
-            r=sqrt(x_cc**2+y_cc**2)
-            Ur=get_radial_velocity(r)
+            Ux=get_radial_velocity(x_cc)
             rho_mix=pQ(i,j,k,1)+pQ(i,j,k,2)
-            pQ(i,j,k,5)=rho_mix*Ur*x_cc/r
-            pQ(i,j,k,6)=rho_mix*Ur*y_cc/r
+            pQ(i,j,k,5)=rho_mix*Ux
+            pQ(i,j,k,6)=0.0_WP
             pQ(i,j,k,7)=0.0_WP
             pQ(i,j,k,8)=pQ(i,j,k,2)*Yv0
          end do; end do; end do
@@ -343,7 +341,7 @@ contains
       call solver%amr%mfiter_destroy(mfi)
    end subroutine my_tagger
 
-   !> User BC callback – radial outward velocity Dirichlet condition on every boundary
+   !> User BC callback – outward expansion velocity Dirichlet condition on every boundary
    subroutine radial_dirichlet_bc(solver,lvl,time,face,bx,comp,p)
       use amrex_amr_module, only: amrex_box
       class(amrmpcomp), intent(inout) :: solver
@@ -353,9 +351,9 @@ contains
       type(amrex_box), intent(in) :: bx
       character(len=1), intent(in) :: comp
       real(WP), dimension(:,:,:,:), contiguous, pointer :: p
-      real(WP) :: dx,dy,dz,x,y,z,r,U_r,ur,vr
+      real(WP) :: dx,x,Ux
       integer :: i,j,k
-      dx=amr%dx(lvl); dy=amr%dy(lvl); dz=amr%dz(lvl)
+      dx=amr%dx(lvl)
       do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
          ! Position: staggered in the component's own direction, cell-centered otherwise
          if (comp.eq.'U') then
@@ -363,25 +361,18 @@ contains
          else
             x=amr%xlo+(real(i,WP)+0.5_WP)*dx
          end if
-         if (comp.eq.'V') then
-            y=amr%ylo+real(j,WP)*dy
-         else
-            y=amr%ylo+(real(j,WP)+0.5_WP)*dy
-         end if
-         r=sqrt(x**2+y**2)
-         U_r=get_radial_velocity(r)
-         ur=U_r*x/r; vr=U_r*y/r
+         Ux=get_radial_velocity(x)
          select case (comp)
          case ('U')
-            p(i,j,k,1)=ur
+            p(i,j,k,1)=Ux
          case ('V')
-            p(i,j,k,1)=vr
+            p(i,j,k,1)=0.0_WP
          case ('W')
             p(i,j,k,1)=0.0_WP
          case ('Q')
             p(i,j,k,1)=rhoL0; p(i,j,k,2)=0.0_WP
             p(i,j,k,3)=rhoL0*eL0; p(i,j,k,4)=0.0_WP
-            p(i,j,k,5)=rhoL0*ur; p(i,j,k,6)=rhoL0*vr; p(i,j,k,7)=0.0_WP
+            p(i,j,k,5)=rhoL0*Ux; p(i,j,k,6)=0.0_WP; p(i,j,k,7)=0.0_WP
             p(i,j,k,8)=0.0_WP
          end select
       end do; end do; end do
@@ -441,7 +432,7 @@ contains
          call param_read('Relaxation type',relaxation_type)
          select case(relaxation_type)
          case('p','pT','pTg')
-            case_name='cavitation_'//trim(liquid_eos_type)//'_relax_'//trim(relaxation_type)
+            case_name='cavitation1D_'//trim(liquid_eos_type)//'_relax_'//trim(relaxation_type)
          case default
             call die('Relaxation type has to be either p, pT, or pTg')
          end select
@@ -496,10 +487,15 @@ contains
          amr%zlo=-0.5_WP*Ly; amr%zhi=+0.5_WP*Ly
          amr%xper=.false.; amr%yper=.false.; amr%zper=.false.
          call param_read('Max level',amr%maxlvl)
-         ! Enable quasi-2D
+         ! Enable quasi-1D: collapse y and z to a single periodic cell matching the finest x spacing
+         if (amr%ny.eq.1) then
+            amr%ylo=-0.5_WP*Lx/real(amr%nx*2**amr%maxlvl,WP)
+            amr%yhi=+0.5_WP*Lx/real(amr%nx*2**amr%maxlvl,WP)
+            amr%yper=.true.
+         end if
          if (amr%nz.eq.1) then
-            amr%zlo=-0.5_WP*(amr%yhi-amr%ylo)/real(amr%ny*2**amr%maxlvl,WP)
-            amr%zhi=+0.5_WP*(amr%yhi-amr%ylo)/real(amr%ny*2**amr%maxlvl,WP)
+            amr%zlo=-0.5_WP*Lx/real(amr%nx*2**amr%maxlvl,WP)
+            amr%zhi=+0.5_WP*Lx/real(amr%nx*2**amr%maxlvl,WP)
             amr%zper=.true.
          end if
          call amr%initialize()

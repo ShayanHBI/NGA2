@@ -206,7 +206,7 @@ contains
       real(WP), dimension(1:), intent(inout) :: Q
       real(WP),                intent(in)    :: Pjump
       real(WP), dimension(:),  allocatable   :: Q0,Qin,y
-      real(WP) :: VF0,VFin,p,T,Yv
+      real(WP) :: VF0,VFin,p,T,Yv!,pLin,pGin,rhoLin,eLin,rhoGin,TLin,TGin,eGin,Yvin,rhoLout,rhoGout
       real(WP) :: rho0,rhoe0,rhoA0
       real(WP) :: RHOL,RHOG
       real(WP) :: cvG,cpG,qG,gammaG
@@ -214,14 +214,25 @@ contains
       real(WP), parameter :: Yv_dry=1.0e-5_WP,pv_dry=1.0_WP,Yv_pure=0.999_WP
       real(WP), parameter :: fd_eps=1.0e-7_WP,F_line_search_tol=0.3_WP
       ! debug
-      logical :: chem_relax,nucleated,print_stuff!,cavitated
+      logical :: chem_relax,nucleated!,print_stuff,cavitated
       allocate(Qin(size(Q)))
       Qin=Q
       VFin=VF
       nucleated=.false.
-      print_stuff=.false.
+      ! print_stuff=.false.
       ! debug
       ! cavitated=.false.
+      ! if ((VF.gt.0.0_WP).and.(VF.lt.1.0_WP)) then
+      !    print_stuff=.true.
+      !    rhoLin=Q(1)/VF
+      !    eLin=Q(3)/Q(1)
+      !    pLin=this%liq%get_p_from_rho_e(rhoLin,eLin)
+      !    TLin=this%liq%get_T_from_p_rho(pLin,rhoLin)
+      !    Yvin=Q(8)/Q(2)
+      !    rhoGin=Q(2)/max(1.0_WP-VF,tiny(1.0_WP))
+      !    pGin=this%gas%get_p_from_rho_e(rhoGin,Q(4)/Q(2),[Yvin,1.0_WP-Yvin])
+      !    TGin=this%gas%get_T_from_p_rho(pGin,rhoGin,[Yvin,1.0_WP-Yvin])
+      ! end if
       ! Nucleation: Conservatively move a little mass and energy so the chemical relaxation starts from a non-stiff initial condition.
       ! This handles both cavitation and condensation.
       nucleation: block
@@ -242,6 +253,9 @@ contains
             eL_nuc=Q(3)/Q(1)
             pL_nuc=this%liq%get_p_from_rho_e(rhoL_nuc,eL_nuc)
             TL_nuc=this%liq%get_T_from_p_rho(pL_nuc,rhoL_nuc)
+            ! pLin=pL_nuc
+            ! TLin=TL_nuc
+            ! rhoLin=rhoL_nuc
             ! Check if inside EOS validity range
             if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) return
             ! Saturation vapor pressure at current liquid state
@@ -270,6 +284,8 @@ contains
             Q(8)=Q(8)+drho
             VF=1.0_WP-this%VF_nuc
             nucleated=.true.
+            ! cavitated=.true.
+            ! print_stuff=.false.
          ! Almost pure gas: check if vapor is metastable and needs liquid nucleation.
          else if (VF.le.VF_nuc_cond) then
             ! Get vapor mass fraction
@@ -307,6 +323,7 @@ contains
             Q(8)=Q(8)-drho
             VF=drho/rhoL_new
             nucleated=.true.
+            ! print_stuff=.false.
          end if
       end block nucleation
       ! ================ First and second steps for mechanical and thermal relaxation ================
@@ -471,6 +488,26 @@ contains
       ! if (cavitated) then
       !    print*,'VFin=',VFin
       !    print*,'Qin=',Qin
+      !    print*,'pLin=',pLin
+      !    print*,'TLin=',TLin
+      !    print*,'rhoLin=',rhoLin
+      !    print*,'         -------         '
+      !    print*,'pout=',p
+      !    print*,'Tout=',T
+      !    print*,'VFout=',VF
+      !    print*,'Qout=',Q
+      !    print*,'*************************'
+      ! end if
+      ! if (print_stuff) then
+      !    print*,'VFin=',VFin
+      !    print*,'Qin=',Qin
+      !    ! print*,'Yvin=',Yvin
+      !    print*,'pLin=',pLin
+      !    print*,'TLin=',TLin
+      !    print*,'rhoLin=',rhoLin
+      !    print*,'pGin=',pGin
+      !    print*,'TGin=',TGin
+      !    print*,'rhoGin=',rhoGin
       !    print*,'         -------         '
       !    print*,'pout=',p
       !    print*,'Tout=',T

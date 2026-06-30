@@ -1,6 +1,6 @@
 # AMR grid
 Base nx   : 32
-Base ny   : 32
+Base ny   : 1
 Base nz   : 1
 Max level : 2
 
@@ -16,9 +16,9 @@ Ly : 0.1
 # Flow setup
 Liquid temperature            : 350
 Liquid pressure               : 1e5
-Exit velocity                 : 30
+Exit velocity                 : 45
 Core velocity                 : 50
-Cavitation pressure threshold : -1e8
+Cavitation pressure threshold : -5e7
 Cavitation seed VF            : 0.1
 Initial vapor mass fraction   : 0
 
@@ -51,9 +51,9 @@ Air reference entropy shift                      : 0
 Max dt     : 5e-8
 ! Initial dt : 1e-8
 Max CFL    : 0.5
-Max time   : 8e-6
+Max time   : 8e-5
 
 # Output
-Output period     : 2.5e-7
+Output period     : 4e-7
 !Checkpoint period : 4.10000E-06
 !Restart from      : 1.00000E-05
