@@ -429,7 +429,11 @@ contains
          end if
       end block pure_phase_bounds
       ! Check if chemical relaxation should be activated
-      chem_relax=activate_chem(p,T,Yv)
+      if (nucleated) then
+         chem_relax=.true.
+      else
+         chem_relax=activate_chem(p,T,Yv)
+      end if
       if (.not.chem_relax) then
          call restore()
          call dealloc()
