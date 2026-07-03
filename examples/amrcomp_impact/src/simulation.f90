@@ -1,18 +1,18 @@
 !> AMR compressible impact test case
 module simulation
-   use precision,         only: WP
-   use string,            only: str_medium
-   use amrgrid_class,     only: amrgrid
-   use amrmpcomp_class,   only: amrmpcomp
-   use amrviz_class,      only: amrviz
-   use amrdata_class,     only: amrdata
-   use timetracker_class, only: timetracker
-   use event_class,       only: event
-   use monitor_class,     only: monitor
-   use amrio_class,       only: amrio
-   use nasg_class,        only: nasg
-   use ideal_gas_class,   only: ideal_gas
-   use relax_ig_nasg_class, only: relax_ig_nasg
+   use precision,              only: WP
+   use string,                 only: str_medium
+   use amrgrid_class,          only: amrgrid
+   use amrmpcomp_class,        only: amrmpcomp
+   use amrviz_class,           only: amrviz
+   use amrdata_class,          only: amrdata
+   use timetracker_class,      only: timetracker
+   use event_class,            only: event
+   use monitor_class,          only: monitor
+   use amrio_class,            only: amrio
+   use nasg_class,             only: nasg
+   use igmix_class,            only: igmix
+   use relax_igmix_nasg_class, only: relax_igmix_nasg
    implicit none
    private
    
@@ -39,16 +39,19 @@ module simulation
    character(len=str_medium) :: restart_dir
    logical :: restarted
    real(WP) :: restart_time
+   integer  :: restart_step
    
    !> Simulation monitoring
-   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile
+   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,pcfile
    
    !> Materials
-   type(nasg),      target :: water
-   type(ideal_gas), target :: gas
+   type(nasg),  target :: water
+   type(igmix), target :: gas
 
    !> Relaxation model
-   type(relax_ig_nasg), target :: relax_model
+   type(relax_igmix_nasg), target :: relax_model
+   character(len=str_medium) :: relaxation_type,case_name
+   real(WP) :: p_cav_cof
 
    !> Flow parameters
    real(WP) :: rhoG1,pG1,u1           !< Pre-shock gas state
@@ -158,9 +161,9 @@ contains
                pVisc(i,j,k,1)=1.0_WP/(pVF(i,j,k,1)/max(mu_l,myeps)+(1.0_WP-pVF(i,j,k,1))/max(mu_g,myeps)) ! Harmonic averaging
                ! Zero bulk viscosity
                pBeta(i,j,k,1)=0.0_WP
-               ! Phasic heat diffusivities: gas k=cp*mu/Pr, liquid from ratio
-               pDiffG(i,j,k,1)=gas%cp*mu_g/Prandtl
-               pDiffL(i,j,k,1)=diff_ratio*gas%cp/(Reynolds*Prandtl)
+               ! Phasic heat diffusivities: gas k=cp*mu/Pr (air, carrier species 2), liquid from ratio
+               pDiffG(i,j,k,1)=gas%cp(2)*mu_g/Prandtl
+               pDiffL(i,j,k,1)=diff_ratio*gas%cp(2)/(Reynolds*Prandtl)
                ! Apply sponge layer viscosity
                r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2+(amr%zlo+(real(k,WP)+0.5_WP)*amr%dz(lvl))**2)
                if (amr%nz.eq.1) r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2) ! Enable quasi-2D runs
@@ -233,10 +236,11 @@ contains
             pQ(i,j,k,1)=(       myVF)*rhoL1
             pQ(i,j,k,2)=(1.0_WP-myVF)*rhoG
             pQ(i,j,k,3)=pQ(i,j,k,1)*IEL
-            pQ(i,j,k,4)=pQ(i,j,k,2)*gas%get_e_from_p_rho(p=pG,rho=rhoG,y=[1.0_WP])
+            pQ(i,j,k,4)=pQ(i,j,k,2)*gas%get_e_from_p_rho(p=pG,rho=rhoG,y=[0.0_WP,1.0_WP])
             pQ(i,j,k,5)=(pQ(i,j,k,1)+pQ(i,j,k,2))*uG
             pQ(i,j,k,6)=0.0_WP
             pQ(i,j,k,7)=0.0_WP
+            pQ(i,j,k,8)=0.0_WP
          end do; end do; end do
       end do
       call amrex_mfiter_destroy(mfi)
@@ -269,10 +273,11 @@ contains
                p(i,j,k,1)=0.0_WP                  ! No liquid
                p(i,j,k,2)=rhoG1                   ! Gas density
                p(i,j,k,3)=0.0_WP                  ! No liquid energy
-               p(i,j,k,4)=rhoG1*gas%get_e_from_p_rho(p=pG1,rho=rhoG1,y=[1.0_WP]) ! Gas internal energy
+               p(i,j,k,4)=rhoG1*gas%get_e_from_p_rho(p=pG1,rho=rhoG1,y=[0.0_WP,1.0_WP]) ! Gas internal energy
                p(i,j,k,5)=rhoG1*u1                ! X-momentum
                p(i,j,k,6)=0.0_WP
                p(i,j,k,7)=0.0_WP
+               p(i,j,k,8)=0.0_WP
             end do; end do; end do
          end select
       end select
@@ -366,10 +371,14 @@ contains
       use param, only: param_read
       implicit none
 
+      ! Determine case name from relaxation type
+      call param_read('Relaxation type',relaxation_type)
+      case_name='impact_relax_'//trim(relaxation_type)
+
       ! Initialize AMR grid
       create_amrgrid: block
          ! Set name
-         amr%name='impact'
+         amr%name=trim(case_name)
          ! Read in base grid size
          call param_read('Base nx',amr%nx)
          call param_read('Base ny',amr%ny)
@@ -398,22 +407,25 @@ contains
          character(len=str_long) :: message
          real(WP) :: A,B,C
          real(WP) :: GammaL,PinfL,bL,CvL,qpL
-         real(WP) :: GammaG,CvG
+         real(WP) :: GammaA,CvA
+         real(WP) :: GammaV,CvV,qV,qpV
          real(WP) :: T_G
-         ! Gas EoS parameters (ideal gas)
-         call param_read('GammaG',GammaG)
+         ! Air EoS parameters (ideal gas, carrier species)
+         call param_read('GammaA',GammaA)
+         ! Vapor EoS parameters
+         call param_read('GammaV',GammaV)
          ! Liquid EoS: gamma only, PinfL is computed below
          call param_read('GammaL',GammaL)
-         ! Shock parameters (gas phase, uses GammaG)
+         ! Shock parameters (pre/post-shock gas is pure air, uses GammaA)
          call param_read('Gas Mach number',M2)
          call param_read('Shock location',Xs)
          ! Post-shock normalization: rhoG2=1, Deltau=1, T2=1
          rhoG2=1.0_WP
-         pG2=1.0_WP/(GammaG*M2**2)
+         pG2=1.0_WP/(GammaA*M2**2)
          ! Quadratic for rhoG1: A*rhoG1^2 - B*rhoG1 + C = 0
-         A=2.0_WP*GammaG*pG2+(GammaG-1.0_WP)
-         B=4.0_WP*GammaG*pG2+(GammaG+1.0_WP)
-         C=2.0_WP*GammaG*pG2
+         A=2.0_WP*GammaA*pG2+(GammaA-1.0_WP)
+         B=4.0_WP*GammaA*pG2+(GammaA+1.0_WP)
+         C=2.0_WP*GammaA*pG2
          rhoG1=(B-sqrt(B**2-4.0_WP*A*C))/(2.0_WP*A)  ! smaller root for compression
          ! Shock-fixed frame velocities and pressure
          u1=1.0_WP/(1.0_WP-rhoG1)
@@ -421,7 +433,7 @@ contains
          pG1=pG2-rhoG1/(1.0_WP-rhoG1)
          if (pG1.le.0.0_WP) call die('[simulation_init] Cannot achieve requested Mach number - negative pre-shock pressure')
          ! Shock Mach number
-         Ms=u1/sqrt(GammaG*pG1/rhoG1)
+         Ms=u1/sqrt(GammaA*pG1/rhoG1)
          ! Shift to lab frame: pre-shock stationary
          u2=1.0_WP
          u1=0.0_WP
@@ -431,8 +443,11 @@ contains
          u1=u1-1.0_WP
          ! Drop initial location
          call param_read('Drop location',x_drop)
-         ! CvG from T2=1
-         CvG=pG2/(rhoG2*(GammaG-1.0_WP))
+         ! CvA from T2=1 normalization
+         CvA=pG2/(rhoG2*(GammaA-1.0_WP))
+         call param_read('Vapor cv',CvV)
+         call param_read('Vapor q',qV)
+         call param_read('Vapor qp',qpV)
          ! Surface tension
          call param_read('Weber number',Weber)
          ! Liquid EoS, fit to this case's reference parameters
@@ -440,8 +455,12 @@ contains
          call param_read('Liquid covolume',bL)
          call param_read('Liquid cv',CvL)
          call param_read('Liquid qp',qpL)
+         if (trim(relaxation_type).eq.'pTg') then
+            call param_read('Cavitation pressure threshold coefficient',p_cav_cof)
+            relax_model%p_cav=-p_cav_cof*PinfL
+         end if
          ! Pre-shock gas temperature (ideal gas, T = p/((gamma-1)*Cv*rho))
-         T_G=pG1/(rhoG1*(GammaG-1.0_WP)*CvG)
+         T_G=pG1/(rhoG1*(GammaA-1.0_WP)*CvA)
          ! Pressure equilibrium (Laplace jump): liquid pressure = gas + surface tension
          pL1=pG1+4.0_WP/Weber                   ! 3D Laplace pressure
          if (amr%nz.eq.1) pL1=pG1+2.0_WP/Weber  ! 2D Laplace pressure
@@ -449,8 +468,8 @@ contains
          rhoL1=(pL1+PinfL)/((GammaL-1.0_WP)*CvL*T_G+bL*(pL1+PinfL))
          density_ratio=rhoL1/rhoG1                                        ! diagnostic (was an input under SG)
          ML=1.0_WP/sqrt(GammaL*(pL1+PinfL)/(rhoL1*(1.0_WP-bL*rhoL1)))     ! diagnostic liquid Mach (Deltau=1)
-         ! Build materials: gas = ideal-gas air; liquid = NASG water
-         call gas%initialize(gamma=GammaG,cv=CvG,q=0.0_WP,qp=0.0_WP,name='gas')
+         ! Build materials: gas = igmix (vapor + air); liquid = NASG water
+         call gas%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,0.0_WP],qp=[qpV,0.0_WP],species_names=['vapor','air  '],name='gas')
          call water%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=0.0_WP,qp=qpL,name='water')
          ! Viscous parameters
          call param_read('Reynolds number',Reynolds)
@@ -473,12 +492,12 @@ contains
 
       ! Handle restart/saves here
       handle_restart: block
-         integer :: restart_step
          ! Initialize IO object
          call io%initialize(amr=amr,nfiles=1)
          ! Check if restarting
          call param_read('Restart from',restart_dir,default='')
          restarted=(len_trim(restart_dir).gt.0)
+         if (restarted) restart_dir='restart/'//trim(case_name)//'_'//trim(adjustl(restart_dir))
          ! If restarting, read header
          if (restarted) call io%read_header(dirname=trim(restart_dir),time=restart_time,step=restart_step)
       end block handle_restart
@@ -493,24 +512,31 @@ contains
          if (restarted) then
             call io%get_scalar('dt',time%dt)
             time%t=restart_time
+            time%n=restart_step
          end if
       end block initialize_timetracker
 
       ! Initialize compressible multiphase solver
       create_solver: block
-         use amrex_amr_module, only: amrex_bc_ext_dir,amrex_bc_foextrap,amrex_bc_reflect_odd
-         use amrmpcomp_class,  only: BC_GAS,BC_REFLECT
-         use amrdata_class,    only: interp_face_lin
-         use messager,         only: die
+         use amrex_amr_module,     only: amrex_bc_ext_dir,amrex_bc_foextrap,amrex_bc_reflect_odd
+         use amrmpcomp_class,      only: BC_GAS,BC_REFLECT
+         use amrdata_class,        only: interp_face_lin
+         use messager,             only: die
+         use relax_igmix_sg_class, only: Prelax,PTrelax,PTgrelax
          ! Assign materials and create flow solver
-         fs%liq=>water; fs%gas=>gas; call fs%initialize(amr=amr,name='impact')
+         fs%liq=>water; fs%gas=>gas; call fs%initialize(amr=amr,name=trim(case_name))
          ! Set surface tension coefficient
          fs%sigma=1.0_WP/Weber
          ! Use face-linear interp if 2D (divfree requires ratio=2 in all dirs)
          if (amr%nz.eq.1) fs%interp_vel=interp_face_lin
-         ! Provide pressure relaxation model
-         call relax_model%initialize(gas=gas,liq=water); fs%relax=>relax_model
-         relax_model%model=1 ! 1=Prelax (mechanical only); 2=pT
+         ! Wire relaxation model: species 1=vapor (transported), 2=air (carrier)
+         call relax_model%initialize(liq=water,gas=gas,indV=1,indA=2); fs%relax=>relax_model
+         select case (trim(relaxation_type))
+         case ('p');   relax_model%model=Prelax
+         case ('pT');  relax_model%model=PTrelax
+         case ('pTg'); relax_model%model=PTgrelax
+         case default; call die('[simulation_init] Relaxation type must be p, pT, or pTg')
+         end select
          ! Set initial conditions
          fs%user_init=>shockdrop_init
 
@@ -614,7 +640,7 @@ contains
       ! Initialize visualization
       create_viz: block
          ! Create visualization object
-         call viz%initialize(amr,'impact',use_hdf5=.false.)
+         call viz%initialize(amr,trim(case_name),use_hdf5=.false.)
          call viz%add_scalar(fs%VF,1,'VF')
          call viz%add_scalar(fs%RHOL,1,'RHOL')
          call viz%add_scalar(fs%RHOG,1,'RHOG')
@@ -627,6 +653,7 @@ contains
          call viz%add_scalar(fs%UVW,3,'W')
          call viz%add_scalar(Umag,1,'Umag')
          call viz%add_scalar(Mach,1,'Mach')
+         call viz%add_scalar(fs%Yg,1,'Yv')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -730,6 +757,24 @@ contains
          call tfile%add_column(fs%nmixed_max,'mixed_max')
          call tfile%add_column(fs%nmixed_min,'mixed_min')
          call tfile%write()
+         ! Create phase change monitor (pTg only)
+         if (trim(relaxation_type).eq.'pTg') then
+            pcfile=monitor(amRoot=amr%amRoot,name='phasechange')
+            call pcfile%add_column(time%n,'Timestep number')
+            call pcfile%add_column(time%t,'Time')
+            call pcfile%add_column(fs%VFint,'VFint')         ! liquid volume (shrinks as vapor forms)
+            call pcfile%add_column(fs%Qint(1),'LiqMass')    ! integral of VF*rhoL
+            call pcfile%add_column(fs%Qint(2),'GasMass')    ! integral of (1-VF)*rhoG
+            call pcfile%add_column(fs%Qint(8),'VapMass')    ! integral of (1-VF)*rhoG*Yv
+            call pcfile%add_column(fs%Ygmin(1),'Yvmin')     ! min gas-phase vapor mass fraction
+            call pcfile%add_column(fs%Ygmax(1),'Yvmax')     ! max gas-phase vapor mass fraction
+            call pcfile%add_column(fs%PLmin,'PLmin')         ! min liquid pressure (tension indicator)
+            call pcfile%add_column(fs%TLmin,'TLmin')         ! min liquid temperature (superheat indicator)
+            call pcfile%add_column(fs%TLmax,'TLmax')
+            call pcfile%add_column(fs%TGmin,'TGmin')
+            call pcfile%add_column(fs%TGmax,'TGmax')
+            call pcfile%write()
+         end if
       end block create_monitors
 
    end subroutine simulation_init
@@ -821,7 +866,7 @@ contains
          if (save_evt%occurs()) then
             save_checkpoint: block
                use string, only: rtoa
-               call io%write(dirname='restart/impact_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
+               call io%write(dirname='restart/'//trim(case_name)//'_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
             end block save_checkpoint
          end if
 
@@ -831,8 +876,15 @@ contains
          call consfile%write()
          call cflfile%write()
          call tfile%write()
+         if (trim(relaxation_type).eq.'pTg') call pcfile%write()
          
       end do
+
+      ! Save the final checkpoint
+      save_final_checkpoint: block
+         use string, only: rtoa
+         call io%write(dirname='restart/'//trim(case_name)//'_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
+      end block save_final_checkpoint
 
    end subroutine simulation_run
    
@@ -864,6 +916,7 @@ contains
       call consfile%finalize()
       call gridfile%finalize()
       call tfile%finalize()
+      if (trim(relaxation_type).eq.'pTg') call pcfile%finalize()
    end subroutine simulation_final
 
 end module simulation

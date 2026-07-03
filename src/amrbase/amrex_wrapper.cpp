@@ -650,8 +650,21 @@ void amrplotfile_write_hdf5(const char *name, int nlevels, void **mf_ptrs,
 #include <AMReX_VisMF.H>
 
 // Write a MultiFab to disk using VisMF
+// NOTE: Skip per-fab min/max in the header (NoFabHeader_v1). Apple's libc++
+// std::num_get can set failbit when parsing subnormal doubles (e.g. 1e-310),
+// which can legitimately appear as a fab min/max in our data; that corrupts
+// header parsing on restart ("Read of Vector<Vector<Real>> failed"). The
+// min/max values are only used by visualization tools, not by VisMF::Read,
+// so they are safe to omit for checkpoint data.
+// VisMF::currentVersion is a process-global static shared with the plotfile
+// writer (WriteMultiLevelPlotfile also calls VisMF::Write internally), so the
+// version must be restored right after this write or later plotfiles silently
+// switch format too (breaking ParaView/VisIt readers expecting Version_v1).
 void amrmfab_vismf_write(void *mf, const char *path) {
+  amrex::VisMF::Header::Version saved = amrex::VisMF::GetHeaderVersion();
+  amrex::VisMF::SetHeaderVersion(amrex::VisMF::Header::NoFabHeader_v1);
   amrex::VisMF::Write(*static_cast<amrex::MultiFab *>(mf), std::string(path));
+  amrex::VisMF::SetHeaderVersion(saved);
 }
 
 // Read a MultiFab from disk using VisMF

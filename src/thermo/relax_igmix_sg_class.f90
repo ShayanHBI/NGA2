@@ -46,8 +46,9 @@ module relax_igmix_sg_class
       integer  :: Tsat_itmax=40
       integer  :: NR_itmax  =40
       !> Phase-change controls (defaults preserve the original dimensional behaviour; override per case)
-      real(WP) :: pv_dry     =1.0_WP    !< Vapor partial-pressure floor for the dry-edge reseed in activate_chem
-      logical  :: do_nucleate=.true.    !< Seed opposite phase in near-pure metastable cells (cavitation/condensation)
+      real(WP) :: pv_min     =1.0e-8_WP    !< Vapor partial-pressure floor for the dry-edge reseed in activate_chem
+      logical  :: do_nucleate=.true.       !< Seed opposite phase in near-pure metastable cells (cavitation/condensation)
+      real(WP) :: p_cav=huge(1.0_WP)       !< Cavitation delay: nucleate only when pL < p_cav (default: nucleate at p_sat)
       !> Dispatch
       integer  :: model=Prelax
    contains
@@ -103,8 +104,9 @@ contains
       real(WP), dimension(:), intent(inout) :: Q
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
-      ! Mixture cells only
-      if (VF.le.0.0_WP.or.VF.ge.1.0_WP) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
+      ! Mixture and liquid cells only
+      ! if (VF.le.0.0_WP.or.VF.ge.1.0_WP) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
+      if (VF.le.0.0_WP.or.VF.gt.1.0_WP) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
       ! Dispatch on model
       select case (this%model)
       case (Prelax);   call this%p_relax  (dt,VF,Q,Pjump,ierr)
@@ -245,12 +247,12 @@ contains
       real(WP), dimension(:), intent(inout) :: Q
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
-      real(WP), dimension(:), allocatable :: Q0,Qin,y
-      real(WP) :: VF0,VFin,p,T,Yv
+      real(WP), dimension(:), allocatable   :: Qin,Q0,y
+      real(WP) :: VFin,VF0,p,T,Yv
       real(WP) :: rho0,rhoe0,rhoA0
       real(WP) :: RHOL,RHOG
       real(WP) :: cvG,cpG,qG,gammaG
-      real(WP), parameter :: p_eps=1.0e-10_WP,VFmin=1.0e-5_WP,Yvmin=0.0_WP,Yvmax=1.0_WP
+      real(WP), parameter :: p_eps=1.0e-10_WP,Yvmin=0.0_WP,Yvmax=1.0_WP
       real(WP), parameter :: Yv_dry=1.0e-5_WP,Yv_pure=0.999_WP
       real(WP), parameter :: fd_eps=1.0e-7_WP,F_line_search_tol=0.3_WP
       logical :: chem_relax,nucleated
@@ -271,6 +273,13 @@ contains
          real(WP) :: y_nuc(this%gas%ns)
          logical  :: conv_nuc
          integer  :: Tsat_it_nuc
+         ! Vapor mass fraction in gas phase
+         if (Q(2).gt.0.0_WP) then
+            Yv=Q(7+this%liq%ns+this%indV-1)/Q(2)
+            Yv=max(Yvmin,min(Yvmax,Yv))
+         else
+            Yv=0.0_WP
+         end if
          if (VF.ge.1.0_WP-VF_nuc) then
             ! Near-pure liquid: check cavitation
             rhoL_nuc=Q(1)/VF
@@ -278,16 +287,39 @@ contains
             TL_nuc=this%liq%get_T_from_p_rho(p=pL_nuc,rho=rhoL_nuc,y=[1.0_WP])
             if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_LIQUID; return; end if
             pv_sat=this%get_pvsat(pL_nuc,TL_nuc)
-            if (pv_sat.le.pL_nuc) return  ! stable pure liquid
-            ! Superheated liquid: nucleate tiny vapor
+            if (pv_sat.le.pL_nuc) return  ! stable
+            if (pL_nuc.gt.this%p_cav) return  ! metastable but not deep enough to nucleate
+            ! Superheated: estimate nucleated vapor state
             y_nuc=0.0_WP; y_nuc(this%indV)=1.0_WP
-            rhoV_nuc=this%gas%get_rho_from_p_T(p=pL_nuc,T=TL_nuc,y=y_nuc)
-            eV_nuc  =this%gas%get_e_from_p_T  (p=pL_nuc,T=TL_nuc,y=y_nuc)
-            drho=VF_nuc*rhoV_nuc; de=drho*eV_nuc
+            rhoV_nuc=this%gas%get_rho_from_p_T(p=pv_sat,T=TL_nuc,y=y_nuc)
+            eV_nuc  =this%gas%get_e_from_p_T  (p=pv_sat,T=TL_nuc,y=y_nuc)
+            drho=VF_nuc*rhoV_nuc
+            drho=min(drho,0.5_WP*Q(1))
+            if (drho.le.0.0_WP) return
+            de=drho*eV_nuc
             Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
             Q(3)=Q(3)-de;   Q(4)=Q(4)+de
             Q(7+this%liq%ns+this%indV-1)=Q(7+this%liq%ns+this%indV-1)+drho
-            VF=1.0_WP-VF_nuc
+            VF=VF-VF_nuc
+            nucleated=.true.
+         else if ((VF.gt.VF_nuc).and.(Yv.lt.Yv_dry)) then
+            ! Interfacial cell but no vapor
+            rhoL_nuc=Q(1)/VF
+            pL_nuc=this%liq%get_p_from_rho_e(rho=rhoL_nuc,e=Q(3)/Q(1),y=[1.0_WP])
+            TL_nuc=this%liq%get_T_from_p_rho(p=pL_nuc,rho=rhoL_nuc,y=[1.0_WP])
+            if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_LIQUID; return; end if
+            pv_sat=this%get_pvsat(pL_nuc,TL_nuc)
+            if (.not.check_pv(pv_sat)) return
+            y_nuc=0.0_WP; y_nuc(this%indV)=1.0_WP
+            eV_nuc=this%gas%get_e_from_p_T(p=pv_sat,T=TL_nuc,y=y_nuc)
+            drho=Yv_dry*Q(2)
+            drho=min(drho,0.5_WP*Q(1))
+            if (drho.le.0.0_WP) return
+            de=drho*eV_nuc
+            Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
+            Q(3)=Q(3)-de;   Q(4)=Q(4)+de
+            Q(7+this%liq%ns+this%indV-1)=Q(7+this%liq%ns+this%indV-1)+drho
+            VF=VF-drho/rhoL_nuc
             nucleated=.true.
          else if (VF.le.VF_nuc) then
             ! Near-pure gas: check condensation
@@ -300,7 +332,7 @@ contains
             TG_nuc=this%gas%get_T_from_p_rho(p=pG_nuc,rho=rhoG_nuc,y=y_nuc)
             if (pG_nuc.le.0.0_WP.or.TG_nuc.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_GAS; return; end if
             xv_nuc=this%get_xv(Yv_nuc); pv_nuc=xv_nuc*pG_nuc
-            if (pv_nuc.le.p_eps) return
+            if (.not.check_pv(pv_nuc)) return
             call this%get_Tsat(pG_nuc,pv_nuc,TG_nuc,Tsat_nuc,conv_nuc,Tsat_it_nuc)
             if (.not.conv_nuc) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
             if (TG_nuc.ge.Tsat_nuc) return  ! stable pure vapor/gas
@@ -348,68 +380,74 @@ contains
       rhoe0=sum(Q0(3:4))
       rhoA0=(1.0_WP-Yv)*Q0(2)
       ! Pure-phase admissibility tests (Caze et al. trigger)
-      pure_phase_bounds: block
-         real(WP), parameter :: rhoA_pure=1.0e-12_WP
-         real(WP) :: rhoL_pure,eL_pure,pL_pure,TL_pure,Tsat_pure
-         real(WP) :: rhoV_pure,eV_pure,pV_pure,TV_pure
-         real(WP) :: rhoV0,Yv_gas,pG_pure,TG_pure,xv_gas,pv_gas
-         integer  :: Tsat_it_pure
-         logical  :: conv_pure
-         if (rho0.le.0.0_WP.or.rhoe0.le.0.0_WP) exit pure_phase_bounds
-         if (rhoA0/rho0.le.rhoA_pure) then
-            ! No air content: literal pure-liquid / pure-vapor tests
-            rhoL_pure=rho0; eL_pure=rhoe0/rho0
-            pL_pure=this%liq%get_p_from_rho_e(rho=rhoL_pure,e=eL_pure,y=[1.0_WP])
-            TL_pure=this%liq%get_T_from_p_rho(p=pL_pure,rho=rhoL_pure,y=[1.0_WP])
-            if (pL_pure.gt.p_eps.and.TL_pure.gt.0.0_WP) then
-               call this%get_Tsat(pL_pure,pL_pure,TL_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-               if (conv_pure.and.TL_pure.le.Tsat_pure*(1.0_WP+this%Tsat_tol)) then
-                  VF=1.0_WP
-                  Q(1)=rho0;     Q(2)=0.0_WP
-                  Q(3)=rhoe0;    Q(4)=0.0_WP
-                  Q(7+this%liq%ns+this%indV-1)=0.0_WP
-                  call dealloc(); return
-               end if
-            end if
-            rhoV_pure=rho0; eV_pure=rhoe0/rho0
-            y=0.0_WP; y(this%indV)=1.0_WP
-            pV_pure=this%gas%get_p_from_rho_e(rho=rhoV_pure,e=eV_pure,y=y)
-            TV_pure=this%gas%get_T_from_p_rho(p=pV_pure,rho=rhoV_pure,y=y)
-            if (pV_pure.gt.p_eps.and.TV_pure.gt.0.0_WP) then
-               call this%get_Tsat(pV_pure,pV_pure,TV_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-               if (conv_pure.and.TV_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
-                  VF=0.0_WP
-                  Q(1)=0.0_WP;   Q(2)=rho0
-                  Q(3)=0.0_WP;   Q(4)=rhoe0
-                  Q(7+this%liq%ns+this%indV-1)=rho0
-                  call dealloc(); return
-               end if
-            end if
-         else
-            ! With non-condensable air: only check all-water-as-vapor gas state
-            rhoV0=rho0-rhoA0
-            if (rhoV0.le.0.0_WP) exit pure_phase_bounds
-            Yv_gas=rhoV0/rho0; Yv_gas=max(Yvmin,min(Yvmax,Yv_gas))
-            y=0.0_WP; y(this%indV)=Yv_gas; y(this%indA)=1.0_WP-Yv_gas
-            pG_pure=this%gas%get_p_from_rho_e(rho=rho0,e=rhoe0/rho0,y=y)
-            TG_pure=this%gas%get_T_from_p_rho(p=pG_pure,rho=rho0,y=y)
-            if (pG_pure.gt.p_eps.and.TG_pure.gt.0.0_WP) then
-               xv_gas=this%get_xv(Yv_gas); pv_gas=xv_gas*pG_pure
-               if (pv_gas.gt.p_eps) then
-                  call this%get_Tsat(pG_pure,pv_gas,TG_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-                  if (conv_pure.and.TG_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
-                     VF=0.0_WP
-                     Q(1)=0.0_WP;   Q(2)=rho0
-                     Q(3)=0.0_WP;   Q(4)=rhoe0
-                     Q(7+this%liq%ns+this%indV-1)=rhoV0
+      if (.not.nucleated) then
+         pure_phase_bounds: block
+            real(WP), parameter :: rhoA_pure=1.0e-12_WP
+            real(WP) :: rhoL_pure,eL_pure,pL_pure,TL_pure,Tsat_pure
+            real(WP) :: rhoV_pure,eV_pure,pV_pure,TV_pure
+            real(WP) :: rhoV0,Yv_gas,pG_pure,TG_pure,xv_gas,pv_gas
+            integer  :: Tsat_it_pure
+            logical  :: conv_pure
+            if (rho0.le.0.0_WP.or.rhoe0.le.0.0_WP) exit pure_phase_bounds
+            if (rhoA0/rho0.le.rhoA_pure) then
+               ! No air content: literal pure-liquid / pure-vapor tests
+               rhoL_pure=rho0; eL_pure=rhoe0/rho0
+               pL_pure=this%liq%get_p_from_rho_e(rho=rhoL_pure,e=eL_pure,y=[1.0_WP])
+               TL_pure=this%liq%get_T_from_p_rho(p=pL_pure,rho=rhoL_pure,y=[1.0_WP])
+               if (TL_pure.gt.0.0_WP) then
+                  call this%get_Tsat(pL_pure,pL_pure,TL_pure,Tsat_pure,conv_pure,Tsat_it_pure)
+                  if (conv_pure.and.TL_pure.le.Tsat_pure*(1.0_WP+this%Tsat_tol)) then
+                     VF=1.0_WP
+                     Q(1)=rho0;     Q(2)=0.0_WP
+                     Q(3)=rhoe0;    Q(4)=0.0_WP
+                     Q(7+this%liq%ns+this%indV-1)=0.0_WP
                      call dealloc(); return
                   end if
                end if
+               rhoV_pure=rho0; eV_pure=rhoe0/rho0
+               y=0.0_WP; y(this%indV)=1.0_WP
+               pV_pure=this%gas%get_p_from_rho_e(rho=rhoV_pure,e=eV_pure,y=y)
+               TV_pure=this%gas%get_T_from_p_rho(p=pV_pure,rho=rhoV_pure,y=y)
+               if (pV_pure.gt.p_eps.and.TV_pure.gt.0.0_WP) then
+                  call this%get_Tsat(pV_pure,pV_pure,TV_pure,Tsat_pure,conv_pure,Tsat_it_pure)
+                  if (conv_pure.and.TV_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
+                     VF=0.0_WP
+                     Q(1)=0.0_WP;   Q(2)=rho0
+                     Q(3)=0.0_WP;   Q(4)=rhoe0
+                     Q(7+this%liq%ns+this%indV-1)=rho0
+                     call dealloc(); return
+                  end if
+               end if
+            else
+               ! With non-condensable air: only check all-water-as-vapor gas state
+               rhoV0=rho0-rhoA0
+               if (rhoV0.le.0.0_WP) exit pure_phase_bounds
+               Yv_gas=rhoV0/rho0; Yv_gas=max(Yvmin,min(Yvmax,Yv_gas))
+               y=0.0_WP; y(this%indV)=Yv_gas; y(this%indA)=1.0_WP-Yv_gas
+               pG_pure=this%gas%get_p_from_rho_e(rho=rho0,e=rhoe0/rho0,y=y)
+               TG_pure=this%gas%get_T_from_p_rho(p=pG_pure,rho=rho0,y=y)
+               if (pG_pure.gt.p_eps.and.TG_pure.gt.0.0_WP) then
+                  xv_gas=this%get_xv(Yv_gas); pv_gas=xv_gas*pG_pure
+                  if (pv_gas.gt.p_eps) then
+                     call this%get_Tsat(pG_pure,pv_gas,TG_pure,Tsat_pure,conv_pure,Tsat_it_pure)
+                     if (conv_pure.and.TG_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
+                        VF=0.0_WP
+                        Q(1)=0.0_WP;   Q(2)=rho0
+                        Q(3)=0.0_WP;   Q(4)=rhoe0
+                        Q(7+this%liq%ns+this%indV-1)=rhoV0
+                        call dealloc(); return
+                     end if
+                  end if
+               end if
             end if
-         end if
-      end block pure_phase_bounds
+         end block pure_phase_bounds
+      end if
       ! Activation: decide if chemical relaxation should fire
-      chem_relax=activate_chem(p,T,Yv)
+      if (nucleated) then
+         chem_relax=.true.
+      else
+         chem_relax=activate_chem(p,T,Yv)
+      end if
       if (.not.chem_relax) then
          call restore(); call dealloc(); return
       end if
@@ -425,6 +463,7 @@ contains
       else
          call solve_lvg(p,T,Yv,chem_relax)
       end if
+      ! Skip if not converged
       if (.not.chem_relax) then
          if (nucleated) then
             VF=VFin; Q=Qin
@@ -444,7 +483,7 @@ contains
       RHOG=this%gas%get_rho_from_p_T(p=p,T=T,y=y)
       VF=(rho0-RHOG)/(RHOL-RHOG)
       if (VF.lt.0.0_WP) then; VF=0.0_WP; p=max(p,-this%liq%pinf); end if
-      if (VF.gt.1.0_WP) then; VF=1.0_WP; p=max(p,0.0_WP);          end if
+      if (VF.gt.1.0_WP) then; VF=1.0_WP; p=max(p,0.0_WP);         end if
       Q(1)=(       VF)*RHOL
       Q(2)=(1.0_WP-VF)*RHOG
       Q(3)=Q(1)*this%liq%get_e_from_p_T(p=p,T=T,y=[1.0_WP])
@@ -479,15 +518,23 @@ contains
          real(WP), intent(inout) :: Yv_
          real(WP) :: xv,pv_,Fsat
          activate_chem=.false.
+         ! Get vapor mole fraction and partial pressure
          xv=this%get_xv(Yv_); pv_=xv*p_
-         if ((Yv_.le.Yv_dry).or.(pv_.le.this%pv_dry).or.(.not.check_pv(pv_))) then
-            ! Dry / ill-conditioned edge: seed Yv from saturation at current state
+         if (pv_.lt.this%pv_min) then
+            print*,'pv_=',pv_
             pv_=exp(this%AS+(this%BS+this%ES*p_)/T_)*T_**this%CS*(p_+this%liq%pinf)**this%DS
-            if (.not.check_pv(pv_)) return
-            if (pv_.ge.p_) then
-               Yv_=sqrt(0.0001_WP)
+            if (pv_.lt.this%pv_min) then
+               print*,'failed act chem'
+               return
+            else if (pv_.ge.p_) then
+               print*,'seeding Yv'
+               Yv_=0.01_WP
             else
                xv=pv_/p_; Yv_=xv*Mv/(xv*Mv+(1.0_WP-xv)*Ma)
+               if (Yv_.lt.Yv_dry) then
+                  print*,'Yv small even with pv sat'
+                  Yv_=0.01_WP
+               end if
             end if
             Yv_=max(Yvmin,min(Yvmax,Yv_))
          else
@@ -499,11 +546,26 @@ contains
       end function activate_chem
       real(WP) function get_T_lv(ap,bp,dp)
          real(WP), intent(in) :: ap,bp,dp
-         get_T_lv=(-bp+sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+         real(WP) :: T1,T2
+         T1=(-bp-sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+         T2=(-bp+sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+         if (abs(T1-T).lt.abs(T2-T)) then
+            get_T_lv=T1
+         else
+            get_T_lv=T2
+         end if
       end function get_T_lv
       real(WP) function get_dTdp_lv(ap,bp,dp,dapdp,dbpdp,ddpdp)
          real(WP), intent(in) :: ap,bp,dp,dapdp,dbpdp,ddpdp
-         get_dTdp_lv=(ap*(-dbpdp+(bp*dbpdp-2.0_WP*(dapdp*dp+ap*ddpdp))/sqrt(bp**2-4.0_WP*ap*dp))-dapdp*(-bp+sqrt(bp**2-4.0_WP*ap*dp)))/(2.0_WP*ap**2)
+         real(WP) :: T1,T2,sgn
+         T1=(-bp-sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+         T2=(-bp+sqrt(bp**2-4.0_WP*ap*dp))/(2.0_WP*ap)
+         if (abs(T1-T).lt.abs(T2-T)) then
+            sgn=-1.0_WP
+         else
+            sgn= 1.0_WP
+         end if
+         get_dTdp_lv=(ap*(-dbpdp+sgn*(bp*dbpdp-2.0_WP*(dapdp*dp+ap*ddpdp))/sqrt(bp**2-4.0_WP*ap*dp))-dapdp*(-bp+sgn*sqrt(bp**2-4.0_WP*ap*dp)))/(2.0_WP*ap**2)
       end function get_dTdp_lv
       real(WP) function rhoe_res_lvg(p_,T_,Yv_)
          real(WP), intent(in) :: p_,T_,Yv_
@@ -528,6 +590,8 @@ contains
          real(WP) :: F1,F1_try,dlnp_nr,p_err,alpha
          integer  :: it
          logical  :: accepted
+         ! Reset small pressure to saturated vapor pressure
+         if (p_eq.le.p_eps) p_eq=this%get_pvsat(p_eq,T_eq)
          conv=.false.; p_err=10.0_WP*this%p_tol
          do it=1,this%NR_itmax
             call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
