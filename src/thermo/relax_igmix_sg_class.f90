@@ -521,13 +521,13 @@ contains
          ! Get vapor mole fraction and partial pressure
          xv=this%get_xv(Yv_); pv_=xv*p_
          if (pv_.lt.this%pv_min) then
-            print*,'pv_=',pv_
+            ! print*,'pv_=',pv_
             pv_=exp(this%AS+(this%BS+this%ES*p_)/T_)*T_**this%CS*(p_+this%liq%pinf)**this%DS
             if (pv_.lt.this%pv_min) then
                print*,'failed act chem'
                return
             else if (pv_.ge.p_) then
-               print*,'seeding Yv'
+               ! print*,'seeding Yv'
                Yv_=0.01_WP
             else
                xv=pv_/p_; Yv_=xv*Mv/(xv*Mv+(1.0_WP-xv)*Ma)

@@ -89,6 +89,13 @@ module simulation
    real(WP) :: P_tag=huge(1.0_WP)
    real(WP) :: Ducros_tag=huge(1.0_WP)
 
+   !> Time stepping
+   real(WP) :: dt_init
+
+   !> Debug cell tracking
+   integer, parameter :: lvl_dbg=6
+   integer, parameter :: i_dbg=68,j_dbg=931,k_dbg=0
+
 contains
 
    !> Smooth Heaviside function
@@ -179,6 +186,84 @@ contains
          call amr%mfiter_destroy(mfi)
       end do
    end subroutine get_viscosities
+
+   subroutine dbg_print_premitive(label)
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      use amrmpcomp_class,  only: VFlo,VFhi
+      character(len=*), intent(in) :: label
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
+      real(WP), dimension(fs%liq%ns) :: yL
+      real(WP), dimension(fs%gas%ns) :: yG
+      real(WP) :: myVF,irho,myU,myV,myW
+      real(WP) :: myRHOL,myIL,myPL,myTL,myCL
+      real(WP) :: myRHOG,myIG,myPG,myTG,myCG,myC
+      call amr%mfiter_build(lvl_dbg,mfi)
+      do while (mfi%next())
+         bx=mfi%tilebox()
+         if (i_dbg.ge.bx%lo(1).and.i_dbg.le.bx%hi(1).and. &
+         &   j_dbg.ge.bx%lo(2).and.j_dbg.le.bx%hi(2).and. &
+         &   k_dbg.ge.bx%lo(3).and.k_dbg.le.bx%hi(3)) then
+            pVF=>fs%VF%mf(lvl_dbg)%dataptr(mfi)
+            pQ =>fs%Q%mf(lvl_dbg)%dataptr(mfi)
+            myVF=pVF(i_dbg,j_dbg,k_dbg,1)
+            ! Mixture velocity
+            irho=1.0_WP/max(pQ(i_dbg,j_dbg,k_dbg,1)+pQ(i_dbg,j_dbg,k_dbg,2),fs%rho_floor)
+            myU=pQ(i_dbg,j_dbg,k_dbg,5)*irho
+            myV=pQ(i_dbg,j_dbg,k_dbg,6)*irho
+            myW=pQ(i_dbg,j_dbg,k_dbg,7)*irho
+            ! Liquid primitives
+            if (myVF.ge.VFlo.and.pQ(i_dbg,j_dbg,k_dbg,1).gt.0.0_WP) then
+               myRHOL=pQ(i_dbg,j_dbg,k_dbg,1)/myVF
+               myIL  =pQ(i_dbg,j_dbg,k_dbg,3)/pQ(i_dbg,j_dbg,k_dbg,1)
+               if (fs%liq%ns.gt.1) yL(1:fs%liq%ns-1)=max(0.0_WP,min(pQ(i_dbg,j_dbg,k_dbg,fs%Yl_lo:fs%Yl_hi)/pQ(i_dbg,j_dbg,k_dbg,1),1.0_WP))
+               yL(fs%liq%ns)=max(0.0_WP,1.0_WP-sum(yL(1:fs%liq%ns-1)))
+               myPL=fs%liq%get_p_from_rho_e(myRHOL,myIL,yL)
+               myTL=fs%liq%get_T_from_rho_e(myRHOL,myIL,yL)
+               myCL=fs%liq%get_c_from_rho_e(myRHOL,myIL,yL)
+            else
+               myRHOL=0.0_WP; myIL=0.0_WP; myPL=0.0_WP; myTL=0.0_WP; myCL=0.0_WP
+            end if
+            ! Gas primitives
+            if (myVF.le.VFhi.and.pQ(i_dbg,j_dbg,k_dbg,2).gt.0.0_WP) then
+               myRHOG=pQ(i_dbg,j_dbg,k_dbg,2)/(1.0_WP-myVF)
+               myIG  =pQ(i_dbg,j_dbg,k_dbg,4)/pQ(i_dbg,j_dbg,k_dbg,2)
+               if (fs%gas%ns.gt.1) yG(1:fs%gas%ns-1)=max(0.0_WP,min(pQ(i_dbg,j_dbg,k_dbg,fs%Yg_lo:fs%Yg_hi)/pQ(i_dbg,j_dbg,k_dbg,2),1.0_WP))
+               yG(fs%gas%ns)=max(0.0_WP,1.0_WP-sum(yG(1:fs%gas%ns-1)))
+               myPG=fs%gas%get_p_from_rho_e(myRHOG,myIG,yG)
+               myTG=fs%gas%get_T_from_rho_e(myRHOG,myIG,yG)
+               myCG=fs%gas%get_c_from_rho_e(myRHOG,myIG,yG)
+            else
+               myRHOG=0.0_WP; myIG=0.0_WP; myPG=0.0_WP; myTG=0.0_WP; myCG=0.0_WP
+            end if
+            ! Mixture speed of sound
+            myC=sqrt((pQ(i_dbg,j_dbg,k_dbg,1)*myCL**2+pQ(i_dbg,j_dbg,k_dbg,2)*myCG**2)*irho)
+            write(*,'(" [DEBUG] PREMITIVE ",A,": VF=",es12.5," rhoL=",es12.5," rhoG=",es12.5," pL=",es12.5," pG=",es12.5," TL=",es12.5," TG=",es12.5," U=",es12.5," V=",es12.5," W=",es12.5," c=",es12.5)') trim(label),myVF,myRHOL,myRHOG,myPL,myPG,myTL,myTG,myU,myV,myW,myC
+         end if
+      end do
+      call amr%mfiter_destroy(mfi)
+   end subroutine dbg_print_premitive
+
+   !> Debug: print conserved Q of the tracked cell (i_dbg,j_dbg,k_dbg) at level lvl_dbg
+   subroutine dbg_print_Q(label)
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      character(len=*), intent(in) :: label
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ
+      call amr%mfiter_build(lvl_dbg,mfi)
+      do while (mfi%next())
+         bx=mfi%tilebox()
+         if (i_dbg.ge.bx%lo(1).and.i_dbg.le.bx%hi(1).and. &
+         &   j_dbg.ge.bx%lo(2).and.j_dbg.le.bx%hi(2).and. &
+         &   k_dbg.ge.bx%lo(3).and.k_dbg.le.bx%hi(3)) then
+            pQ=>fs%Q%mf(lvl_dbg)%dataptr(mfi)
+            write(*,'(" [DEBUG] Q ",A,":  Q(VF.rhoL)=",es12.5," Q((1-VF).rhoG)=",es12.5," Q(VF.rhoL.eL)=",es12.5," Q((1-VF).rhoG.eG)=",es12.5," Q(rhoU)=",es12.5," Q(rhoV)=",es12.5," Q(rhoW)=",es12.5," Q((1-VF).rhoG.Yv)=",es12.5)') trim(label),pQ(i_dbg,j_dbg,k_dbg,1),pQ(i_dbg,j_dbg,k_dbg,2),pQ(i_dbg,j_dbg,k_dbg,3),pQ(i_dbg,j_dbg,k_dbg,4),pQ(i_dbg,j_dbg,k_dbg,5),pQ(i_dbg,j_dbg,k_dbg,6),pQ(i_dbg,j_dbg,k_dbg,7),pQ(i_dbg,j_dbg,k_dbg,8)
+         end if
+      end do
+      call amr%mfiter_destroy(mfi)
+   end subroutine dbg_print_Q
 
    !> User init callback - set Q and VF/barycenters for a drop moving into a static shock
    subroutine shockdrop_init(solver,lvl,time,ba,dm)
@@ -507,6 +592,7 @@ contains
          time=timetracker(amRoot=amr%amRoot)
          call param_read('Max time',time%tmax)
          call param_read('Max dt',time%dtmax)
+         call param_read('Initial dt',dt_init)
          call param_read('Max CFL',time%cflmax)
          time%dt=time%dtmax
          if (restarted) then
@@ -529,14 +615,18 @@ contains
          fs%sigma=1.0_WP/Weber
          ! Use face-linear interp if 2D (divfree requires ratio=2 in all dirs)
          if (amr%nz.eq.1) fs%interp_vel=interp_face_lin
-         ! Wire relaxation model: species 1=vapor (transported), 2=air (carrier)
-         call relax_model%initialize(liq=water,gas=gas,indV=1,indA=2); fs%relax=>relax_model
+         ! Initialize relaxation model: species 1=vapor (transported), 2=air (carrier)
+         call relax_model%initialize(liq=water,gas=gas,indV=1,indA=2)
          select case (trim(relaxation_type))
          case ('p');   relax_model%model=Prelax
          case ('pT');  relax_model%model=PTrelax
          case ('pTg'); relax_model%model=PTgrelax
          case default; call die('[simulation_init] Relaxation type must be p, pT, or pTg')
          end select
+         ! Set minimum gas density threshold for relaxation
+         ! relax_model%RHOGmin=0.0_WP
+         ! Set relaxation model for the flow solver
+         fs%relax=>relax_model
          ! Set initial conditions
          fs%user_init=>shockdrop_init
 
@@ -782,28 +872,38 @@ contains
    !> Perform an NGA2 simulation
    subroutine simulation_run
       implicit none
-      
+
       ! Perform time integration
       do while (.not.time%done())
-         
+
          ! Increment time
          call fs%get_cfl(dt=time%dt,cfl=time%cfl)
-         call time%adjust_dt()
+         if (time%n.lt.50) then
+            time%dtold=time%dt
+            time%dt=dt_init
+         else
+            call time%adjust_dt()
+         end if
          call time%increment()
 
          ! Remember old state
          call fs%store_old()
 
          ! ======================= RK2 Stage 1: Q*=Q[n]+dt/2*dQdt(t,Q[n]) =======================
+         call dbg_print_Q('Pre RK2')
          ! Increment Q without pressure gradient
          call fs%get_dQdt(dQdt=dQdt,dt=0.5_WP*time%dt,time=time%tmid)
          call fs%Q%lincomb(a=1.0_WP,src1=fs%Qold,b=0.5_WP*time%dt,src2=dQdt)
          call fs%Q%average_down(); call fs%Q%fill(time=time%tmid)
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
+         call dbg_print_premitive('RK2 Stage 1')
+         call dbg_print_Q('RK2 Stage 1')
          ! Get most up-to-date pressure
          call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
          call fs%get_primitive(Q=fs%Q)
+         call dbg_print_premitive('RLX Stage 1')
+         call dbg_print_Q('RLX Stage 1')
          ! Rebuild sub-cell VF
          call fs%build_subVF()
          ! Compute face velocities and ensure C/F consistency
@@ -817,6 +917,8 @@ contains
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%tmid)
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
+         call dbg_print_premitive('DP Stage 1')
+         call dbg_print_Q('DP Stage 1')
          ! ======================= RK2 Stage 2: Q[n+1]=Q[n]+dt*dQdt(t,Q*) =======================
          ! Increment Q without pressure gradient
          call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t)
@@ -824,9 +926,13 @@ contains
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
+         call dbg_print_premitive('RK2 Stage 2')
+         call dbg_print_Q('RK2 Stage 2')
          ! Get most up-to-date pressure
          call fs%apply_relax(dt=time%dt,time=time%t)
          call fs%get_primitive(Q=fs%Q)
+         call dbg_print_premitive('RLX Stage 2')
+         call dbg_print_Q('RLX Stage 2')
          ! Rebuild sub-cell VF
          call fs%build_subVF()
          ! Compute face velocities and ensure C/F consistency
@@ -840,6 +946,8 @@ contains
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%t)
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
+         call dbg_print_premitive('DP Stage 2')
+         call dbg_print_Q('DP Stage 2')
          ! ======================================================================================
 
          ! Regrid if event triggers
@@ -877,7 +985,7 @@ contains
          call cflfile%write()
          call tfile%write()
          if (trim(relaxation_type).eq.'pTg') call pcfile%write()
-         
+
       end do
 
       ! Save the final checkpoint

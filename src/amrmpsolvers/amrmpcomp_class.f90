@@ -15,6 +15,8 @@ module amrmpcomp_class
 
    ! Expose type and constants
    public :: amrmpcomp,VFlo,VFhi,BC_LIQ,BC_GAS,BC_REFLECT,BC_USER
+   integer, parameter :: lvl_dbg=6
+   integer, parameter :: i_dbg=68,j_dbg=931,k_dbg=0
 
    !> AMR compressible multiphase solver type
    type, extends(amrmpflow) :: amrmpcomp
@@ -601,7 +603,9 @@ contains
                   rhoLo=pRHOL(i-1,j,k,1)*pSubVF(i-1,j,k,2)+pRHOG(i-1,j,k,1)*(1.0_WP-pSubVF(i-1,j,k,2))
                   rhoHi=pRHOL(i  ,j,k,1)*pSubVF(i  ,j,k,1)+pRHOG(i  ,j,k,1)*(1.0_WP-pSubVF(i  ,j,k,1))
                end if
-               pU(i,j,k,1)=(rhoLo*pUVW(i-1,j,k,1)+rhoHi*pUVW(i,j,k,1))/(rhoLo+rhoHi)
+               ! debug
+               ! pU(i,j,k,1)=(rhoLo*pUVW(i-1,j,k,1)+rhoHi*pUVW(i,j,k,1))/(rhoLo+rhoHi)
+               pU(i,j,k,1)=(rhoLo*pUVW(i-1,j,k,1)+rhoHi*pUVW(i,j,k,1))/max(rhoLo+rhoHi,this%rho_floor)
             end do; end do; end do
             ! Get Y-face velocity
             fbx=mfi%nodaltilebox(2)
@@ -611,7 +615,9 @@ contains
                   rhoLo=pRHOL(i,j-1,k,1)*pSubVF(i,j-1,k,4)+pRHOG(i,j-1,k,1)*(1.0_WP-pSubVF(i,j-1,k,4))
                   rhoHi=pRHOL(i,j  ,k,1)*pSubVF(i,j  ,k,3)+pRHOG(i,j  ,k,1)*(1.0_WP-pSubVF(i,j  ,k,3))
                end if
-               pV(i,j,k,1)=(rhoLo*pUVW(i,j-1,k,2)+rhoHi*pUVW(i,j,k,2))/(rhoLo+rhoHi)
+               ! debug
+               ! pV(i,j,k,1)=(rhoLo*pUVW(i,j-1,k,2)+rhoHi*pUVW(i,j,k,2))/(rhoLo+rhoHi)
+               pV(i,j,k,1)=(rhoLo*pUVW(i,j-1,k,2)+rhoHi*pUVW(i,j,k,2))/max(rhoLo+rhoHi,this%rho_floor)
             end do; end do; end do
             ! Get Z-face velocity
             fbx=mfi%nodaltilebox(3)
@@ -621,7 +627,9 @@ contains
                   rhoLo=pRHOL(i,j,k-1,1)*pSubVF(i,j,k-1,6)+pRHOG(i,j,k-1,1)*(1.0_WP-pSubVF(i,j,k-1,6))
                   rhoHi=pRHOL(i,j,k  ,1)*pSubVF(i,j,k  ,5)+pRHOG(i,j,k  ,1)*(1.0_WP-pSubVF(i,j,k  ,5))
                end if
-               pW(i,j,k,1)=(rhoLo*pUVW(i,j,k-1,3)+rhoHi*pUVW(i,j,k,3))/(rhoLo+rhoHi)
+               ! debug
+               ! pW(i,j,k,1)=(rhoLo*pUVW(i,j,k-1,3)+rhoHi*pUVW(i,j,k,3))/(rhoLo+rhoHi)
+               pW(i,j,k,1)=(rhoLo*pUVW(i,j,k-1,3)+rhoHi*pUVW(i,j,k,3))/max(rhoLo+rhoHi,this%rho_floor)
             end do; end do; end do
          end do
          call this%amr%mfiter_destroy(mfi)
@@ -1097,8 +1105,19 @@ contains
                pUVW(i,j,k,1)=pQ(i,j,k,5)*irho
                pUVW(i,j,k,2)=pQ(i,j,k,6)*irho
                pUVW(i,j,k,3)=pQ(i,j,k,7)*irho
+               ! debug
+               ! if (pQ(i,j,k,1)+pQ(i,j,k,2).gt.0.0_WP) then
+               !    irho=1.0_WP/max(pQ(i,j,k,1)+pQ(i,j,k,2),this%rho_floor)
+               !    pUVW(i,j,k,1)=pQ(i,j,k,5)*irho
+               !    pUVW(i,j,k,2)=pQ(i,j,k,6)*irho
+               !    pUVW(i,j,k,3)=pQ(i,j,k,7)*irho
+               ! else
+               !    pUVW(i,j,k,:)=0.0_WP
+               ! end if
                ! Get liquid primitive variables
-               if (pVF(i,j,k,1).ge.VFlo.and.pQ(i,j,k,1).gt.0.0_WP.and.pQ(i,j,k,3).gt.0.0_WP) then
+               ! debug
+               ! if (pVF(i,j,k,1).ge.VFlo.and.pQ(i,j,k,1).gt.0.0_WP.and.pQ(i,j,k,3).gt.0.0_WP) then
+               if (pVF(i,j,k,1).ge.VFlo.and.pQ(i,j,k,1).gt.0.0_WP) then
                   pRHOL(i,j,k,1)=pQ(i,j,k,1)/pVF(i,j,k,1)
                   pIL  (i,j,k,1)=pQ(i,j,k,3)/pQ(i,j,k,1)
                   ! Liquid composition: cache first ns-1 species (clipped to [0,1]), close ns-th (clipped to [0,1])
@@ -1119,7 +1138,9 @@ contains
                   if (this%liq%ns.gt.1) pYl(i,j,k,:)=0.0_WP
                end if
                ! Get gas primitive variables
-               if (pVF(i,j,k,1).le.VFhi.and.pQ(i,j,k,2).gt.0.0_WP.and.pQ(i,j,k,4).gt.0.0_WP) then
+               ! debug
+               ! if (pVF(i,j,k,1).le.VFhi.and.pQ(i,j,k,2).gt.0.0_WP.and.pQ(i,j,k,4).gt.0.0_WP) then
+               if (pVF(i,j,k,1).le.VFhi.and.pQ(i,j,k,2).gt.0.0_WP) then
                   pRHOG(i,j,k,1)=pQ(i,j,k,2)/(1.0_WP-pVF(i,j,k,1))
                   pIG  (i,j,k,1)=pQ(i,j,k,4)/pQ(i,j,k,2)
                   ! Gas composition: cache first ns-1 species (clipped to [0,1]), close ns-th (clipped to [0,1])
@@ -2183,12 +2204,12 @@ contains
          jpv=floor((pos(2)-this%amr%ylo)*dyi)
          kpw=floor((pos(3)-this%amr%zlo)*dzi)
          ! Clamp to array bounds
-         !ipu=max(lbound(pU,1),min(ubound(pU,1)-1,ipu))
-         !jpc=max(lbound(pU,2),min(ubound(pU,2)-1,jpc))
-         !kpc=max(lbound(pU,3),min(ubound(pU,3)-1,kpc))
-         !ipc=max(lbound(pV,1),min(ubound(pV,1)-1,ipc))
-         !jpv=max(lbound(pV,2),min(ubound(pV,2)-1,jpv))
-         !kpw=max(lbound(pW,3),min(ubound(pW,3)-1,kpw))
+         ! ipu=max(lbound(pU,1),min(ubound(pU,1)-1,ipu))
+         ! jpc=max(lbound(pU,2),min(ubound(pU,2)-1,jpc))
+         ! kpc=max(lbound(pU,3),min(ubound(pU,3)-1,kpc))
+         ! ipc=max(lbound(pV,1),min(ubound(pV,1)-1,ipc))
+         ! jpv=max(lbound(pV,2),min(ubound(pV,2)-1,jpv))
+         ! kpw=max(lbound(pW,3),min(ubound(pW,3)-1,kpw))
          ! Cell-centered weights
          wxc1=(pos(1)-(this%amr%xlo+(real(ipc,WP)+0.5_WP)*dx))*dxi
          wyc1=(pos(2)-(this%amr%ylo+(real(jpc,WP)+0.5_WP)*dy))*dyi
