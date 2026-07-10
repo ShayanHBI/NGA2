@@ -18,7 +18,7 @@ Domain length:  20
 Wall BC:        slip
 
 # Relaxation
-Relaxation type: pTg
+Relaxation type: p
 Cavitation pressure threshold coefficient: 0.8
 
 ###########################################
@@ -78,9 +78,9 @@ Sutherland temperature: 0.073
 Max dt:   2e-3
 Initial dt: 1e-3
 Max CFL:  0.75
-Max time: 11
+Max time: 8
 
 # Output
 Output period:     2e-3
 Checkpoint period: 0.1
-Restart from:      1.00011E+01
+Restart from:      7.60107E+00

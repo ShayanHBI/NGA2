@@ -65,7 +65,7 @@ Sutherland temperature: 0.073
 # Time integration
 Max dt:   1e-3
 Max CFL:  0.75
-Max time: 100
+Max time: 10
 
 # Output
 Output period:     1e-1

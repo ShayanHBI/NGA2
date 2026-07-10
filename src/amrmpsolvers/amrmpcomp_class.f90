@@ -15,8 +15,6 @@ module amrmpcomp_class
 
    ! Expose type and constants
    public :: amrmpcomp,VFlo,VFhi,BC_LIQ,BC_GAS,BC_REFLECT,BC_USER
-   integer, parameter :: lvl_dbg=6
-   integer, parameter :: i_dbg=68,j_dbg=931,k_dbg=0
 
    !> AMR compressible multiphase solver type
    type, extends(amrmpflow) :: amrmpcomp
@@ -2289,6 +2287,8 @@ contains
    subroutine apply_relax(this,dt,time)
       use mpi_f08, only: MPI_Wtime
       use amrvof_geometry, only: get_plane_dist,cut_hex_vol
+      use mathtools, only: normalize
+      use random, only: random_uniform
       implicit none
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: dt
@@ -2300,7 +2300,7 @@ contains
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC
       logical :: oldmix,newmix
       real(WP) :: dx,dy,dz,cell_vol,vol_liq,vol_gas
-      real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas
+      real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas,rand_dir
       real(WP), dimension(3,8) :: hex
       real(WP), dimension(4) :: plane
       ! If no relaxation model was provided, return
@@ -2359,7 +2359,10 @@ contains
             end if
 
             ! If mixture cell, post-process PLIC and barycenters
-            if (.not.oldmix) pPLIC(i,j,k,1:3)=[1.0_WP,0.0_WP,0.0_WP]
+            if (.not.oldmix) then
+               rand_dir=[random_uniform(-1.0_WP,1.0_WP),random_uniform(-1.0_WP,1.0_WP),random_uniform(-1.0_WP,1.0_WP)]
+               pPLIC(i,j,k,1:3)=normalize(rand_dir)
+            end if
             ! Adjust PLIC plane to match new VF
             lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
             hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]

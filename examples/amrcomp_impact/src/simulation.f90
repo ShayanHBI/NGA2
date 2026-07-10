@@ -897,13 +897,13 @@ contains
          call fs%Q%average_down(); call fs%Q%fill(time=time%tmid)
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
-         call dbg_print_premitive('RK2 Stage 1')
-         call dbg_print_Q('RK2 Stage 1')
+         ! call dbg_print_premitive('RK2 Stage 1')
+         ! call dbg_print_Q('RK2 Stage 1')
          ! Get most up-to-date pressure
          call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
          call fs%get_primitive(Q=fs%Q)
-         call dbg_print_premitive('RLX Stage 1')
-         call dbg_print_Q('RLX Stage 1')
+         ! call dbg_print_premitive('RLX Stage 1')
+         ! call dbg_print_Q('RLX Stage 1')
          ! Rebuild sub-cell VF
          call fs%build_subVF()
          ! Compute face velocities and ensure C/F consistency
@@ -917,8 +917,8 @@ contains
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%tmid)
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
-         call dbg_print_premitive('DP Stage 1')
-         call dbg_print_Q('DP Stage 1')
+         ! call dbg_print_premitive('DP Stage 1')
+         ! call dbg_print_Q('DP Stage 1')
          ! ======================= RK2 Stage 2: Q[n+1]=Q[n]+dt*dQdt(t,Q*) =======================
          ! Increment Q without pressure gradient
          call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t)
@@ -926,13 +926,13 @@ contains
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
-         call dbg_print_premitive('RK2 Stage 2')
-         call dbg_print_Q('RK2 Stage 2')
+         ! call dbg_print_premitive('RK2 Stage 2')
+         ! call dbg_print_Q('RK2 Stage 2')
          ! Get most up-to-date pressure
          call fs%apply_relax(dt=time%dt,time=time%t)
          call fs%get_primitive(Q=fs%Q)
-         call dbg_print_premitive('RLX Stage 2')
-         call dbg_print_Q('RLX Stage 2')
+         ! call dbg_print_premitive('RLX Stage 2')
+         ! call dbg_print_Q('RLX Stage 2')
          ! Rebuild sub-cell VF
          call fs%build_subVF()
          ! Compute face velocities and ensure C/F consistency
@@ -946,8 +946,8 @@ contains
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%t)
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
-         call dbg_print_premitive('DP Stage 2')
-         call dbg_print_Q('DP Stage 2')
+         ! call dbg_print_premitive('DP Stage 2')
+         ! call dbg_print_Q('DP Stage 2')
          ! ======================================================================================
 
          ! Regrid if event triggers
