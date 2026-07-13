@@ -49,6 +49,7 @@ module relax_igmix_sg_class
       real(WP) :: pv_min     =1.0e-8_WP    !< Vapor partial-pressure floor for the dry-edge reseed in activate_chem
       logical  :: do_nucleate=.true.       !< Seed opposite phase in near-pure metastable cells (cavitation/condensation)
       real(WP) :: p_cav=huge(1.0_WP)       !< Cavitation delay: nucleate only when pL < p_cav (default: nucleate at p_sat)
+      real(WP) :: Tctol=0.0_WP              !< Condensation temperature tolerance: nucleate only when TG < Tsat-Tctol (default: nucleate at Tsat)
       !> Dispatch
       integer  :: model=Prelax
    contains
@@ -336,6 +337,7 @@ contains
             call this%get_Tsat(pG_nuc,pv_nuc,TG_nuc,Tsat_nuc,conv_nuc,Tsat_it_nuc)
             if (.not.conv_nuc) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
             if (TG_nuc.ge.Tsat_nuc) return  ! stable pure vapor/gas
+            if (TG_nuc.gt.Tsat_nuc-this%Tctol) return  ! metastable but not deep enough to nucleate
             ! Supersaturated: nucleate tiny liquid
             rhoL_new=this%liq%get_rho_from_p_T(p=pG_nuc,T=TG_nuc,y=[1.0_WP])
             eL_new  =this%liq%get_e_from_p_T  (p=pG_nuc,T=TG_nuc,y=[1.0_WP])

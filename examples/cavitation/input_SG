@@ -23,6 +23,7 @@ Pulse amplitude               : 5000   ! [1/s] Ur(r)=Pulse amplitude*r*exp(-(r/P
 Pulse radius                  : 0.02   ! [m] sets size of initial depressurized/cavitating region
 Boundary condition            : wall   ! dirichlet=cavitation only, wall=cavitation+condensation
 Cavitation pressure threshold : -1e8
+Condensation temperature tolerance : 0   ! [K] nucleate liquid only when TG < Tsat-this; 0=nucleate at Tsat (old behavior)
 Initial vapor mass fraction   : 0
 
 # Fluid properties

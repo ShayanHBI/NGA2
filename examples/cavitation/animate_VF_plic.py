@@ -179,7 +179,7 @@ ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
 ax.tick_params(which="both", top=True, right=True, pad=TICK_PAD_PT)
 
 ax.set_xlabel(r"$x\;\left(\mathrm{cm}\right)$", labelpad=5.0)
-ax.set_ylabel(r"$y\;\left(\mathrm{cm}\right)$", labelpad=-10.0)
+ax.set_ylabel(r"$y\;\left(\mathrm{cm}\right)$", labelpad=-5.0)
 title = ax.set_title(
     rf"$t = {f'{t0 * 1.0e6:.2f}'.rstrip('0').rstrip('.')}\;\mu\mathrm{{s}}$", fontsize=TITLE_FONTSIZE, pad=6.0
 )

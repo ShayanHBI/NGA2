@@ -67,6 +67,7 @@ module simulation
    real(WP) :: rhoL0,eL0          !< Liquid density/energy at (p0,T0), used by the Dirichlet BC
    real(WP) :: U0,r0              !< Gaussian pulse radial profile: amplitude [1/s] and radius [m]
    real(WP) :: p_cav              !< Cavitation onset pressure threshold
+   real(WP) :: Tctol              !< Condensation temperature tolerance [K]
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG            !< Prandtl numbers
 
@@ -213,12 +214,11 @@ contains
       call amrex_mfiter_destroy(mfi)
    end subroutine cavitation_init
 
-   !> Tagger based on vorticity and density ratio
    subroutine my_tagger(solver,lvl,time,tags_ptr)
       use iso_c_binding,    only: c_ptr,c_char
       use amrex_amr_module, only: amrex_mfiter,amrex_box,amrex_tagboxarray
       use amrgrid_class,    only: SETtag
-      use amrmpcomp_class,  only: VFlo
+      use amrmpcomp_class,  only: VFhi
       class(amrmpcomp), intent(inout) :: solver
       integer, intent(in) :: lvl
       real(WP), intent(in) :: time
@@ -250,6 +250,22 @@ contains
          pVF=>solver%VF%mf(lvl)%dataptr(mfi)
          ! Loop over tile
          bx=mfi%tilebox()
+         if (time.eq.0.0_WP) then
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               ! Get local inverse densities
+               irho_xp=1.0_WP/max(sum(pQ(i+1,j,  k,  1:2)),solver%rho_floor)
+               irho_xm=1.0_WP/max(sum(pQ(i-1,j,  k,  1:2)),solver%rho_floor)
+               irho_yp=1.0_WP/max(sum(pQ(i,  j+1,k,  1:2)),solver%rho_floor)
+               irho_ym=1.0_WP/max(sum(pQ(i,  j-1,k,  1:2)),solver%rho_floor)
+               irho_zp=1.0_WP/max(sum(pQ(i,  j,  k+1,1:2)),solver%rho_floor)
+               irho_zm=1.0_WP/max(sum(pQ(i,  j,  k-1,1:2)),solver%rho_floor)
+               ! Compute divergence and tag based on it
+               div_mag=(pQ(i+1,j,k,5)*irho_xp-pQ(i-1,j,k,5)*irho_xm)*0.5_WP*dxi &
+               &      +(pQ(i,j+1,k,6)*irho_yp-pQ(i,j-1,k,6)*irho_ym)*0.5_WP*dyi &
+               &      +(pQ(i,j,k+1,7)*irho_zp-pQ(i,j,k-1,7)*irho_zm)*0.5_WP*dzi
+               if (abs(div_mag).gt.divergence_tag) tagarr(i,j,k,1)=SETtag
+            end do; end do; end do
+         end if
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
             ! Get local inverse densities
             irho_cc=1.0_WP/max(sum(pQ(i  ,j,  k,  1:2)),solver%rho_floor)
@@ -265,14 +281,6 @@ contains
             vort_z=(pQ(i+1,j,k,6)*irho_xp-pQ(i-1,j,k,6)*irho_xm)*0.5_WP*dxi-(pQ(i,j+1,k,5)*irho_yp-pQ(i,j-1,k,5)*irho_ym)*0.5_WP*dyi
             vort_mag=sqrt(vort_x**2+vort_y**2+vort_z**2)
             if (vort_mag.gt.vorticity_tag) tagarr(i,j,k,1)=SETtag
-            ! Compute divergence and tag based on it -- directly measures local
-            ! expansion rate (dp/p~-Gamma*div(u)*dt), so it catches the nucleation
-            ! kernel from the imposed pulse velocity before any vorticity or
-            ! density-ratio signal exists to trigger refinement
-            div_mag=(pQ(i+1,j,k,5)*irho_xp-pQ(i-1,j,k,5)*irho_xm)*0.5_WP*dxi &
-            &      +(pQ(i,j+1,k,6)*irho_yp-pQ(i,j-1,k,6)*irho_ym)*0.5_WP*dyi &
-            &      +(pQ(i,j,k+1,7)*irho_zp-pQ(i,j,k-1,7)*irho_zm)*0.5_WP*dzi
-            if (abs(div_mag).gt.divergence_tag) tagarr(i,j,k,1)=SETtag
             ! Compute density ratio in 3x3x3 stencil and tag based on it
             rho_max=solver%rho_floor; rho_min=huge(1.0_WP)
             do kk=-1,1; do jj=-1,1; do ii=-1,1
@@ -282,15 +290,8 @@ contains
             end do; end do; end do
             rho_ratio=rho_max/rho_min
             if (rho_ratio.gt.rho_ratio_tag) tagarr(i,j,k,1)=SETtag
-            ! Always keep any liquid-containing cell at the finest level, so that
-            ! apply_relax (which only processes lvl=maxlvl) sees every droplet cell
-            ! every step -- bulk interior cells in tension must never be stranded
-            ! on a coarser level where cavitation nucleation can never trigger
-            ! if (pVF(i,j,k,1).gt.VFlo) tagarr(i,j,k,1)=SETtag
-            ! Tag interfacial cells only (VOF interface actually cuts the cell) --
-            ! narrower than tagging every liquid-containing cell; the divergence
-            ! tag above now covers keeping the pre-interface nucleation region resolved
-            if (pVF(i,j,k,1).gt.VFlo.and.pVF(i,j,k,1).lt.1.0_WP-VFlo) tagarr(i,j,k,1)=SETtag
+            ! Gas and interfacial cells
+            if (pVF(i,j,k,1).lt.VFhi) tagarr(i,j,k,1)=SETtag
          end do; end do; end do
       end do
       call solver%amr%mfiter_destroy(mfi)
@@ -384,6 +385,8 @@ contains
          call param_read('Pulse radius',r0)
          ! Cavitation onset: nucleate when liquid pressure drops below p_cav
          call param_read('Cavitation pressure threshold',p_cav,default=huge(1.0_WP))
+         ! Condensation onset: nucleate only when vapor is subcooled by more than Tctol below Tsat
+         call param_read('Condensation temperature tolerance',Tctol,default=0.0_WP)
          ! Domain dimensions
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
@@ -428,9 +431,10 @@ contains
          ! Gas mixture: species 1=vapor (transported), species 2=air (carrier)
          call mixG%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,qA],qp=[qpV,qpA], &
          &                     species_names=['vapor','air  '],name='gas')
-         ! Relaxation model: initialize then set cavitation threshold and dispatch model
+         ! Relaxation model: initialize then set cavitation/condensation thresholds and dispatch model
          call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
          relax_model%p_cav=p_cav
+         relax_model%Tctol=Tctol
          select case (trim(relaxation_type))
          case ('p');   relax_model%model=Prelax
          case ('pT');  relax_model%model=PTrelax
@@ -488,6 +492,7 @@ contains
 
       ! Initialize compressible multiphase solver
       create_solver: block
+         use param,            only: param_read
          use amrex_amr_module, only: amrex_bc_ext_dir,amrex_bc_foextrap,amrex_bc_reflect_odd
          use amrmpcomp_class,  only: BC_REFLECT
          use amrdata_class,    only: interp_face_lin
@@ -497,8 +502,8 @@ contains
          ! Assign materials and create flow solver
          fs%liq=>eosL; fs%gas=>mixG
          call fs%initialize(amr=amr,name=trim(case_name))
-         ! No surface tension modeling in this case
-         fs%sigma=0.0_WP
+         ! Get surface tension
+         call param_read('Surface tension',fs%sigma)
          ! Provide relaxation model
          fs%relax=>relax_model
          ! Set initial conditions via cavitation callback
