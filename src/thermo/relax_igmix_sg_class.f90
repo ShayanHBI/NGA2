@@ -266,7 +266,7 @@ contains
       ! Gated by do_nucleate -- off defers cavitation/condensation of pure cells (first phase-change pass).
       if (this%do_nucleate) then
       nucleation: block
-         real(WP), parameter :: VF_nuc=1.0e-4_WP
+         real(WP), parameter :: VF_nuc=0.01_WP
          real(WP) :: rhoL_nuc,pL_nuc,TL_nuc,pv_sat,rhoV_nuc,eV_nuc
          real(WP) :: rhoG_nuc,pG_nuc,TG_nuc,Yv_nuc,xv_nuc,pv_nuc,Tsat_nuc
          real(WP) :: rhoL_new,eL_new,drho,de

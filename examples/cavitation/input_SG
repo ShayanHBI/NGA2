@@ -8,6 +8,7 @@ Max level : 2
 Regrid nsteps     : 10
 Tagging vorticity : 5
 Tagging rho ratio : 1.5
+Tagging divergence : 1e3   ! [1/s] fraction of peak pulse divergence (2*Pulse amplitude = 1e4)
 
 # Mesh definition
 Lx : 0.1
@@ -16,8 +17,11 @@ Ly : 0.1
 # Flow setup
 Liquid temperature            : 350
 Liquid pressure               : 1e5
-Exit velocity                 : 30
-Core velocity                 : 50
+!Exit velocity                 : 30
+!Core velocity                 : 50
+Pulse amplitude               : 5000   ! [1/s] Ur(r)=Pulse amplitude*r*exp(-(r/Pulse radius)^2)
+Pulse radius                  : 0.02   ! [m] sets size of initial depressurized/cavitating region
+Boundary condition            : wall   ! dirichlet=cavitation only, wall=cavitation+condensation
 Cavitation pressure threshold : -1e8
 Initial vapor mass fraction   : 0
 

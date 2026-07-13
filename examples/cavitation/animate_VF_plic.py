@@ -1,3 +1,4 @@
+import argparse
 import re
 from pathlib import Path
 
@@ -9,29 +10,36 @@ from matplotlib.animation import FuncAnimation
 import pyvista as pv
 import yt
 
-CASE = "cavitation_NASG_relax_pTg"
+parser = argparse.ArgumentParser()
+parser.add_argument("input", help="case identifier, e.g. NASG_relax_pTg")
+args = parser.parse_args()
+
+INPUT = args.input
+CASE = f"cavitation_{INPUT}"
 AMRVIZ_DIR = Path("amrviz") / CASE
 
 FIELD = "VF"
 CBAR_LABEL = r"$\alpha$"
 VMIN, VMAX = 0.0, 1.0
 
-VIEW_XLIM = (-0.01, 0.01)
-VIEW_YLIM = (-0.01, 0.01)
+# View limits and all plotted coordinates are in cm (raw plotfile/vtp data is in meters).
+M_TO_CM = 100.0
+VIEW_XLIM = (-1.5, 1.5)
+VIEW_YLIM = (-1.5, 1.5)
 
 CMAP = "jet"
 INTERFACE_COLOR = "white"
 INTERFACE_LINEWIDTH = 1.2
 
 FPS = 12
-OUTPUT = "VF_plic.mp4"
+OUTPUT = f"VF_plic_{INPUT}.mp4"
 
 # Paper-style figure geometry (inches). Canvas sized to ~9.5 x 7.0 cm --
 # smaller physical size, so fonts/lines are scaled up to stay legible and
 # margins are generous enough that the rotated y-label always fits.
 CM_TO_IN = 1.0 / 2.54
 FIG_WIDTH_IN     = 9.5 * CM_TO_IN
-LEFT_MARGIN_IN   = 0.95
+LEFT_MARGIN_IN   = 0.78
 RIGHT_MARGIN_IN  = 0.75
 BOTTOM_MARGIN_IN = 0.62
 TOP_MARGIN_IN    = 0.40
@@ -107,7 +115,8 @@ def extract_plic_segments(vtp_path: Path):
         bottom_xy = cell_pts[np.isclose(cell_pts[:, 2], zmin, atol=1.0e-9)][:, :2]
         if len(bottom_xy) >= 2:
             segments.append(bottom_xy[:2])
-    return np.array(segments) if segments else np.empty((0, 2, 2))
+    segments = np.array(segments) if segments else np.empty((0, 2, 2))
+    return segments * M_TO_CM
 
 
 def load_frame(plt_path: Path, vtp_path: Path):
@@ -132,14 +141,16 @@ plt_files = sorted(AMRVIZ_DIR.glob("plt.nga2.cell.*"), key=frame_number)
 vtp_files = {frame_number(p): p for p in AMRVIZ_DIR.glob("plic_*.vtp")}
 frames = [(p, vtp_files[frame_number(p)]) for p in plt_files if frame_number(p) in vtp_files]
 
-t0, data0, segs0, le, re = load_frame(*frames[0])
+t0, data0, segs0, le_m, re_m = load_frame(*frames[0])
+le = le_m * M_TO_CM
+re = re_m * M_TO_CM
 
 x_span = VIEW_XLIM[1] - VIEW_XLIM[0]
 y_span = VIEW_YLIM[1] - VIEW_YLIM[0]
 data_height_over_width = y_span / x_span
 extent = [le[0], re[0], le[1], re[1]]
-x_ticks = [VIEW_XLIM[0], 0.0, VIEW_XLIM[1]]
-y_ticks = [VIEW_YLIM[0], 0.0, VIEW_YLIM[1]]
+x_ticks = [-1, 0.0, 1]
+y_ticks = [-1, 0.0, 1]
 
 PLOT_WIDTH_IN = FIG_WIDTH_IN - LEFT_MARGIN_IN - RIGHT_MARGIN_IN - CBAR_GAP_IN - CBAR_WIDTH_IN
 PANEL_HEIGHT_IN = PLOT_WIDTH_IN * data_height_over_width
@@ -167,9 +178,11 @@ ax.set_yticks(y_ticks)
 ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
 ax.tick_params(which="both", top=True, right=True, pad=TICK_PAD_PT)
 
-ax.set_xlabel(r"$x\;\left(\mathrm{m}\right)$", labelpad=5.0)
-ax.set_ylabel(r"$y\;\left(\mathrm{m}\right)$", labelpad=5.0)
-title = ax.set_title(rf"$t = {t0 * 1.0e6:.2f}\;\mu\mathrm{{s}}$", fontsize=TITLE_FONTSIZE, pad=6.0)
+ax.set_xlabel(r"$x\;\left(\mathrm{cm}\right)$", labelpad=5.0)
+ax.set_ylabel(r"$y\;\left(\mathrm{cm}\right)$", labelpad=-10.0)
+title = ax.set_title(
+    rf"$t = {f'{t0 * 1.0e6:.2f}'.rstrip('0').rstrip('.')}\;\mu\mathrm{{s}}$", fontsize=TITLE_FONTSIZE, pad=6.0
+)
 
 cbar = fig.colorbar(im, cax=cax, orientation="vertical")
 cbar.set_ticks(np.linspace(VMIN, VMAX, 5))
@@ -183,7 +196,7 @@ def update(i):
     t, data, segments, _, _ = load_frame(plt_path, vtp_path)
     im.set_data(data)
     lc.set_segments(segments)
-    title.set_text(rf"$t = {t * 1.0e6:.2f}\;\mu\mathrm{{s}}$")
+    title.set_text(rf"$t = {f'{t * 1.0e6:.2f}'.rstrip('0').rstrip('.')}\;\mu\mathrm{{s}}$")
     return im, lc, title
 
 

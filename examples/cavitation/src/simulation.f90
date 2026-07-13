@@ -52,16 +52,20 @@ module simulation
    real(WP) :: GammaV,qV,qpV,CvV,CpV
 
    !> EOS and relaxation
-   class(stiffened_gas), allocatable, target, save :: eosL         !< Liquid pure-substance EOS (SG or NASG)
-   type(igmix),                       target, save :: mixG         !< Gas mixture (vapor + air)
+   class(stiffened_gas), allocatable, target, save :: eosL          !< Liquid pure-substance EOS (SG or NASG)
+   type(igmix),                       target, save :: mixG          !< Gas mixture (vapor + air)
    class(relax_igmix_sg), allocatable, target, save :: relax_model  !< Relaxation model (SG or NASG liquid)
    character(len=str_medium), save :: liquid_eos_type,relaxation_type
    character(len=str_medium), save :: case_name
 
+   !> Boundary condition mode: 'dirichlet' (cavitation only, sustained expansion)
+   !> or 'wall' (cavitation+condensation, reflective walls bounce the wave back)
+   character(len=str_medium), save :: bc_type
+
    !> Case parameters
    real(WP) :: T0,p0              !< Uniform initial liquid temperature/pressure
-   real(WP) :: rhoL0,eL0          !< Liquid density/energy at (p0,T0)
-   real(WP) :: U_exit,U_core,U_slp
+   real(WP) :: rhoL0,eL0          !< Liquid density/energy at (p0,T0), used by the Dirichlet BC
+   real(WP) :: U0,r0              !< Gaussian pulse radial profile: amplitude [1/s] and radius [m]
    real(WP) :: p_cav              !< Cavitation onset pressure threshold
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG            !< Prandtl numbers
@@ -72,6 +76,7 @@ module simulation
    !> Tagging parameters
    real(WP) :: vorticity_tag=huge(1.0_WP)
    real(WP) :: rho_ratio_tag=huge(1.0_WP)
+   real(WP) :: divergence_tag=huge(1.0_WP)
 
    !> Time stepping
    real(WP) :: dt_init
@@ -89,7 +94,12 @@ contains
    function get_radial_velocity(r) result(Ur)
       real(WP), intent(in) :: r
       real(WP) :: Ur
-      Ur=U_slp*r+U_core
+      ! Gaussian-pulse radial profile: u=Ur(r)*x/r, v=Ur(r)*y/r with Ur(r)=U0*r*exp(-(r/r0)^2)
+      ! is smooth and exactly zero at r=0 (no 0/0 direction singularity), while its divergence
+      ! div(u)=2*U0*exp(-(r/r0)^2)*(1-r^2/r0^2) is finite and maximal at r=0 (value 2*U0), decaying
+      ! smoothly outward. This concentrates the pressure drop at the center without the 1/r
+      ! divergence singularity that the old U_core offset introduced at r=0.
+      Ur=U0*r*exp(-(r/r0)**2)
    end function get_radial_velocity
 
    !> Compute viscosity: constant gas and liquid, VF-weighted blend
@@ -222,6 +232,7 @@ contains
       real(WP) :: dx,dy,dz,dxi,dyi,dzi
       real(WP) :: irho_cc,irho_xp,irho_xm,irho_yp,irho_ym,irho_zp,irho_zm
       real(WP) :: vort_x,vort_y,vort_z,vort_mag
+      real(WP) :: div_mag
       real(WP) :: rho_max,rho_min,rho_nb,rho_ratio
       integer :: i,j,k,ii,jj,kk
       ! Get mesh size
@@ -254,6 +265,14 @@ contains
             vort_z=(pQ(i+1,j,k,6)*irho_xp-pQ(i-1,j,k,6)*irho_xm)*0.5_WP*dxi-(pQ(i,j+1,k,5)*irho_yp-pQ(i,j-1,k,5)*irho_ym)*0.5_WP*dyi
             vort_mag=sqrt(vort_x**2+vort_y**2+vort_z**2)
             if (vort_mag.gt.vorticity_tag) tagarr(i,j,k,1)=SETtag
+            ! Compute divergence and tag based on it -- directly measures local
+            ! expansion rate (dp/p~-Gamma*div(u)*dt), so it catches the nucleation
+            ! kernel from the imposed pulse velocity before any vorticity or
+            ! density-ratio signal exists to trigger refinement
+            div_mag=(pQ(i+1,j,k,5)*irho_xp-pQ(i-1,j,k,5)*irho_xm)*0.5_WP*dxi &
+            &      +(pQ(i,j+1,k,6)*irho_yp-pQ(i,j-1,k,6)*irho_ym)*0.5_WP*dyi &
+            &      +(pQ(i,j,k+1,7)*irho_zp-pQ(i,j,k-1,7)*irho_zm)*0.5_WP*dzi
+            if (abs(div_mag).gt.divergence_tag) tagarr(i,j,k,1)=SETtag
             ! Compute density ratio in 3x3x3 stencil and tag based on it
             rho_max=solver%rho_floor; rho_min=huge(1.0_WP)
             do kk=-1,1; do jj=-1,1; do ii=-1,1
@@ -267,13 +286,18 @@ contains
             ! apply_relax (which only processes lvl=maxlvl) sees every droplet cell
             ! every step -- bulk interior cells in tension must never be stranded
             ! on a coarser level where cavitation nucleation can never trigger
-            if (pVF(i,j,k,1).gt.VFlo) tagarr(i,j,k,1)=SETtag
+            ! if (pVF(i,j,k,1).gt.VFlo) tagarr(i,j,k,1)=SETtag
+            ! Tag interfacial cells only (VOF interface actually cuts the cell) --
+            ! narrower than tagging every liquid-containing cell; the divergence
+            ! tag above now covers keeping the pre-interface nucleation region resolved
+            if (pVF(i,j,k,1).gt.VFlo.and.pVF(i,j,k,1).lt.1.0_WP-VFlo) tagarr(i,j,k,1)=SETtag
          end do; end do; end do
       end do
       call solver%amr%mfiter_destroy(mfi)
    end subroutine my_tagger
 
    !> User BC callback - radial outward velocity Dirichlet condition on every boundary
+   !> Only used when Boundary condition = dirichlet (sustained expansion, cavitation only)
    subroutine radial_dirichlet_bc(solver,lvl,time,face,bx,comp,p)
       use amrex_amr_module, only: amrex_box
       class(amrmpcomp), intent(inout) :: solver
@@ -356,23 +380,22 @@ contains
          ! Uniform liquid state and boundary velocity
          call param_read('Liquid temperature',T0)
          call param_read('Liquid pressure',p0)
-         call param_read('Exit velocity',U_exit)
-         call param_read('Core velocity',U_core)
+         call param_read('Pulse amplitude',U0)
+         call param_read('Pulse radius',r0)
          ! Cavitation onset: nucleate when liquid pressure drops below p_cav
          call param_read('Cavitation pressure threshold',p_cav,default=huge(1.0_WP))
          ! Domain dimensions
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
-         U_slp=(U_exit-U_core)/Lx
-         ! Select liquid EOS type and allocate eosL and relax_model
-         call param_read('Liquid EOS type',liquid_eos_type)
-         call param_read('Relaxation type',relaxation_type)
-         select case(relaxation_type)
-         case('p','pT','pTg')
-            case_name='cavitation_'//trim(liquid_eos_type)//'_relax_'//trim(relaxation_type)
+         ! Select boundary condition
+         call param_read('Boundary condition',bc_type)
+         select case (trim(bc_type))
+         case ('dirichlet','wall')
          case default
-            call die('Relaxation type has to be either p, pT, or pTg')
+            call die('Boundary condition has to be either dirichlet or wall')
          end select
+         ! Select liquid eos
+         call param_read('Liquid EOS type',liquid_eos_type)
          select case (trim(liquid_eos_type))
          case ('SG')
             allocate(stiffened_gas  :: eosL)
@@ -383,6 +406,15 @@ contains
          case default
             call die('[simulation] Unknown Liquid EOS type: '//trim(liquid_eos_type))
          end select
+         ! Select relaxation model
+         call param_read('Relaxation type',relaxation_type)
+         select case(relaxation_type)
+         case('p','pT','pTg')
+         case default
+            call die('Relaxation type has to be either p, pT, or pTg')
+         end select
+         ! Build case name
+         case_name='cavitation_'//trim(bc_type)//'_'//trim(liquid_eos_type)//'_'//trim(relaxation_type)
          ! Initialize EOS objects
          select type (eosL)
          type is (stiffened_gas)
@@ -390,7 +422,7 @@ contains
          type is (nasg)
             call eosL%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
          end select
-         ! Liquid density and energy at the uniform initial state
+         ! Liquid density and energy at the uniform initial state (used by the Dirichlet BC)
          rhoL0=eosL%get_rho_from_p_T(p=p0,T=T0,y=[1.0_WP])
          eL0  =eosL%get_e_from_p_T  (p=p0,T=T0,y=[1.0_WP])
          ! Gas mixture: species 1=vapor (transported), species 2=air (carrier)
@@ -456,7 +488,8 @@ contains
 
       ! Initialize compressible multiphase solver
       create_solver: block
-         use amrex_amr_module, only: amrex_bc_ext_dir
+         use amrex_amr_module, only: amrex_bc_ext_dir,amrex_bc_foextrap,amrex_bc_reflect_odd
+         use amrmpcomp_class,  only: BC_REFLECT
          use amrdata_class,    only: interp_face_lin
          ! Use piecewise-linear face interpolation -- FaceDivFree requires ratio==2 in all dirs
          ! but this case is quasi-2D with ref_ratio_z=1
@@ -470,26 +503,60 @@ contains
          fs%relax=>relax_model
          ! Set initial conditions via cavitation callback
          fs%user_init=>cavitation_init
-         ! Set BCs: radial outward velocity Dirichlet on every non-periodic boundary
-         if (.not.amr%xper) then
-            fs%Q%lo_bc(1,:)=amrex_bc_ext_dir; fs%Q%hi_bc(1,:)=amrex_bc_ext_dir
-            fs%U%lo_bc(1,1)=amrex_bc_ext_dir; fs%U%hi_bc(1,1)=amrex_bc_ext_dir
-            fs%V%lo_bc(1,1)=amrex_bc_ext_dir; fs%V%hi_bc(1,1)=amrex_bc_ext_dir
-            fs%W%lo_bc(1,1)=amrex_bc_ext_dir; fs%W%hi_bc(1,1)=amrex_bc_ext_dir
-         end if
-         if (.not.amr%yper) then
-            fs%Q%lo_bc(2,:)=amrex_bc_ext_dir; fs%Q%hi_bc(2,:)=amrex_bc_ext_dir
-            fs%U%lo_bc(2,1)=amrex_bc_ext_dir; fs%U%hi_bc(2,1)=amrex_bc_ext_dir
-            fs%V%lo_bc(2,1)=amrex_bc_ext_dir; fs%V%hi_bc(2,1)=amrex_bc_ext_dir
-            fs%W%lo_bc(2,1)=amrex_bc_ext_dir; fs%W%hi_bc(2,1)=amrex_bc_ext_dir
-         end if
-         if (.not.amr%zper) then
-            fs%Q%lo_bc(3,:)=amrex_bc_ext_dir; fs%Q%hi_bc(3,:)=amrex_bc_ext_dir
-            fs%U%lo_bc(3,1)=amrex_bc_ext_dir; fs%U%hi_bc(3,1)=amrex_bc_ext_dir
-            fs%V%lo_bc(3,1)=amrex_bc_ext_dir; fs%V%hi_bc(3,1)=amrex_bc_ext_dir
-            fs%W%lo_bc(3,1)=amrex_bc_ext_dir; fs%W%hi_bc(3,1)=amrex_bc_ext_dir
-         end if
-         fs%user_bc=>radial_dirichlet_bc
+         select case (trim(bc_type))
+         case ('dirichlet')
+            ! Radial outward velocity is continuously re-imposed at the boundary
+            ! -> sustained expansion, vapor keeps growing (cavitation only)
+            if (.not.amr%xper) then
+               fs%Q%lo_bc(1,:)=amrex_bc_ext_dir; fs%Q%hi_bc(1,:)=amrex_bc_ext_dir
+               fs%U%lo_bc(1,1)=amrex_bc_ext_dir; fs%U%hi_bc(1,1)=amrex_bc_ext_dir
+               fs%V%lo_bc(1,1)=amrex_bc_ext_dir; fs%V%hi_bc(1,1)=amrex_bc_ext_dir
+               fs%W%lo_bc(1,1)=amrex_bc_ext_dir; fs%W%hi_bc(1,1)=amrex_bc_ext_dir
+            end if
+            if (.not.amr%yper) then
+               fs%Q%lo_bc(2,:)=amrex_bc_ext_dir; fs%Q%hi_bc(2,:)=amrex_bc_ext_dir
+               fs%U%lo_bc(2,1)=amrex_bc_ext_dir; fs%U%hi_bc(2,1)=amrex_bc_ext_dir
+               fs%V%lo_bc(2,1)=amrex_bc_ext_dir; fs%V%hi_bc(2,1)=amrex_bc_ext_dir
+               fs%W%lo_bc(2,1)=amrex_bc_ext_dir; fs%W%hi_bc(2,1)=amrex_bc_ext_dir
+            end if
+            if (.not.amr%zper) then
+               fs%Q%lo_bc(3,:)=amrex_bc_ext_dir; fs%Q%hi_bc(3,:)=amrex_bc_ext_dir
+               fs%U%lo_bc(3,1)=amrex_bc_ext_dir; fs%U%hi_bc(3,1)=amrex_bc_ext_dir
+               fs%V%lo_bc(3,1)=amrex_bc_ext_dir; fs%V%hi_bc(3,1)=amrex_bc_ext_dir
+               fs%W%lo_bc(3,1)=amrex_bc_ext_dir; fs%W%hi_bc(3,1)=amrex_bc_ext_dir
+            end if
+            fs%user_bc=>radial_dirichlet_bc
+         case ('wall')
+            ! Solid free-slip walls on every non-periodic boundary. Unlike a Dirichlet
+            ! inflow/outflow BC, a reflective wall bounces the outgoing rarefaction wave
+            ! (launched once by the initial expansion pulse) back inward as a compression
+            ! wave, which recompresses -- and via the pTg relaxation model, condenses --
+            ! the vapor generated at the center
+            if (.not.amr%xper) then
+               fs%lo_bc(1)=BC_REFLECT; fs%hi_bc(1)=BC_REFLECT
+               fs%Q%lo_bc(1,:)=amrex_bc_foextrap;    fs%Q%hi_bc(1,:)=amrex_bc_foextrap
+               fs%Q%lo_bc(1,5)=amrex_bc_reflect_odd; fs%Q%hi_bc(1,5)=amrex_bc_reflect_odd
+               fs%U%lo_bc(1,:)=amrex_bc_reflect_odd; fs%U%hi_bc(1,:)=amrex_bc_reflect_odd
+               fs%V%lo_bc(1,:)=amrex_bc_foextrap;    fs%V%hi_bc(1,:)=amrex_bc_foextrap
+               fs%W%lo_bc(1,:)=amrex_bc_foextrap;    fs%W%hi_bc(1,:)=amrex_bc_foextrap
+            end if
+            if (.not.amr%yper) then
+               fs%lo_bc(2)=BC_REFLECT; fs%hi_bc(2)=BC_REFLECT
+               fs%Q%lo_bc(2,:)=amrex_bc_foextrap;    fs%Q%hi_bc(2,:)=amrex_bc_foextrap
+               fs%Q%lo_bc(2,6)=amrex_bc_reflect_odd; fs%Q%hi_bc(2,6)=amrex_bc_reflect_odd
+               fs%V%lo_bc(2,:)=amrex_bc_reflect_odd; fs%V%hi_bc(2,:)=amrex_bc_reflect_odd
+               fs%U%lo_bc(2,:)=amrex_bc_foextrap;    fs%U%hi_bc(2,:)=amrex_bc_foextrap
+               fs%W%lo_bc(2,:)=amrex_bc_foextrap;    fs%W%hi_bc(2,:)=amrex_bc_foextrap
+            end if
+            if (.not.amr%zper) then
+               fs%lo_bc(3)=BC_REFLECT; fs%hi_bc(3)=BC_REFLECT
+               fs%Q%lo_bc(3,:)=amrex_bc_foextrap;    fs%Q%hi_bc(3,:)=amrex_bc_foextrap
+               fs%Q%lo_bc(3,7)=amrex_bc_reflect_odd; fs%Q%hi_bc(3,7)=amrex_bc_reflect_odd
+               fs%W%lo_bc(3,:)=amrex_bc_reflect_odd; fs%W%hi_bc(3,:)=amrex_bc_reflect_odd
+               fs%U%lo_bc(3,:)=amrex_bc_foextrap;    fs%U%hi_bc(3,:)=amrex_bc_foextrap
+               fs%V%lo_bc(3,:)=amrex_bc_foextrap;    fs%V%hi_bc(3,:)=amrex_bc_foextrap
+            end if
+         end select
       end block create_solver
 
       ! Initialize workspaces
@@ -511,6 +578,7 @@ contains
          fs%user_tagging=>my_tagger
          call param_read('Tagging vorticity',vorticity_tag)
          call param_read('Tagging rho ratio',rho_ratio_tag)
+         call param_read('Tagging divergence',divergence_tag)
          ! Build the grid
          if (restarted) then
             ! Restore grid hierarchy from checkpoint
