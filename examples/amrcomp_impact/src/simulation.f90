@@ -42,7 +42,10 @@ module simulation
    integer  :: restart_step
    
    !> Simulation monitoring
-   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,pcfile
+   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile
+   !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
+   real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
+   real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
    
    !> Materials
    type(nasg),  target :: water
@@ -623,8 +626,16 @@ contains
          case ('pTg'); relax_model%model=PTgrelax
          case default; call die('[simulation_init] Relaxation type must be p, pT, or pTg')
          end select
-         ! Set minimum gas density threshold for relaxation
-         ! relax_model%RHOGmin=0.0_WP
+         relax_model%RHOGmin=0.0_WP
+         relax_model%vol=amr%cell_vol(amr%maxlvl)
+         fs%merge_sick=100.0_WP
+         relax_model%diss_P=200.0_WP
+         fs%Pmin_liq=-0.98_WP*water%pinf
+         fs%Tmin_liq=0.1_WP
+         fs%Pmin_gas=1.0e-4_WP
+         fs%Tmin_gas=0.1_WP
+         relax_model%Pmin_liq=fs%Pmin_liq; relax_model%Tmin_liq=fs%Tmin_liq
+         relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
          ! Set relaxation model for the flow solver
          fs%relax=>relax_model
          ! Set initial conditions
@@ -847,24 +858,25 @@ contains
          call tfile%add_column(fs%nmixed_max,'mixed_max')
          call tfile%add_column(fs%nmixed_min,'mixed_min')
          call tfile%write()
-         ! Create phase change monitor (pTg only)
-         if (trim(relaxation_type).eq.'pTg') then
-            pcfile=monitor(amRoot=amr%amRoot,name='phasechange')
-            call pcfile%add_column(time%n,'Timestep number')
-            call pcfile%add_column(time%t,'Time')
-            call pcfile%add_column(fs%VFint,'VFint')         ! liquid volume (shrinks as vapor forms)
-            call pcfile%add_column(fs%Qint(1),'LiqMass')    ! integral of VF*rhoL
-            call pcfile%add_column(fs%Qint(2),'GasMass')    ! integral of (1-VF)*rhoG
-            call pcfile%add_column(fs%Qint(8),'VapMass')    ! integral of (1-VF)*rhoG*Yv
-            call pcfile%add_column(fs%Ygmin(1),'Yvmin')     ! min gas-phase vapor mass fraction
-            call pcfile%add_column(fs%Ygmax(1),'Yvmax')     ! max gas-phase vapor mass fraction
-            call pcfile%add_column(fs%PLmin,'PLmin')         ! min liquid pressure (tension indicator)
-            call pcfile%add_column(fs%TLmin,'TLmin')         ! min liquid temperature (superheat indicator)
-            call pcfile%add_column(fs%TLmax,'TLmax')
-            call pcfile%add_column(fs%TGmin,'TGmin')
-            call pcfile%add_column(fs%TGmax,'TGmax')
-            call pcfile%write()
-         end if
+         ! Create rescue-census monitor (cumulative counters/amounts per mechanism)
+         rescfile=monitor(amRoot=amr%amRoot,name='rescue')
+         call rescfile%add_column(time%n,'Timestep')
+         call rescfile%add_column(time%t,'Time')
+         call rescfile%add_column(fs%resc_nl,'LiqResc n')
+         call rescfile%add_column(fs%resc_ml,'LiqResc dm')
+         call rescfile%add_column(fs%resc_el,'LiqResc dE')
+         call rescfile%add_column(fs%resc_ng,'GasResc n')
+         call rescfile%add_column(fs%resc_mg,'GasResc dm')
+         call rescfile%add_column(fs%resc_eg,'GasResc dE')
+         call rescfile%add_column(diss_n,'Diss n')
+         call rescfile%add_column(diss_m,'Diss dm')
+         call rescfile%add_column(quad_n,'Quad n')
+         call rescfile%add_column(swap_n,'Swap n')
+         call rescfile%add_column(flr_n,'Floor n')
+         call rescfile%add_column(flr_e,'Floor dE')
+         call rescfile%add_column(stuck_n,'Stuck n')
+         call rescfile%add_column(fs%pool_n,'Pool n')
+         call rescfile%write()
       end block create_monitors
 
    end subroutine simulation_init
@@ -980,11 +992,21 @@ contains
 
          ! Perform and output monitoring
          call fs%get_info()
+         relax_census: block
+            use mpi_f08,  only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
+            use parallel, only: MPI_REAL_WP
+            real(WP), dimension(7) :: tmp
+            integer :: ierr
+            tmp=relax_model%acc
+            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
+            flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
+         end block relax_census
          call mfile%write()
          call consfile%write()
          call cflfile%write()
          call tfile%write()
-         if (trim(relaxation_type).eq.'pTg') call pcfile%write()
+         call rescfile%write()
 
       end do
 
@@ -1024,7 +1046,7 @@ contains
       call consfile%finalize()
       call gridfile%finalize()
       call tfile%finalize()
-      if (trim(relaxation_type).eq.'pTg') call pcfile%finalize()
+      call rescfile%finalize()
    end subroutine simulation_final
 
 end module simulation
