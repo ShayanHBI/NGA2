@@ -13,7 +13,7 @@ module relax_igmix_sg_class
    private
 
    public :: relax_igmix_sg
-   public :: Prelax,PTrelax,PTgrelax
+   public :: Prelax,PTrelax,PTgrelax,PThybrid
    public :: Mv,Ma
 
    !> Molar masses of vapor and air [kg/mol]
@@ -24,6 +24,7 @@ module relax_igmix_sg_class
    integer, parameter :: Prelax  =1   !< Mechanical only
    integer, parameter :: PTrelax =2   !< Mechanical + thermal
    integer, parameter :: PTgrelax=3   !< Mechanical + thermal + chemical/phase change
+   integer, parameter :: PThybrid=4   !< Mechanical below Tratmax temperature contrast, mechanical+thermal above
 
    type, extends(thermorelax) :: relax_igmix_sg
       class(stiffened_gas), pointer :: liq => null()
@@ -52,6 +53,19 @@ module relax_igmix_sg_class
       real(WP) :: Tctol=0.0_WP             !< Condensation temperature tolerance: nucleate only when TG < Tsat-Tctol (default: nucleate at Tsat)
       !> Dispatch
       integer  :: model=Prelax
+      real(WP) :: Tratmax=10.0_WP          !< PThybrid: temperature contrast max(TG/TL,TL/TG) above which pT_relax is used
+      !> Case-owned stability guards (defaults are no-ops; a case opts in by setting these)
+      real(WP) :: Pmin_liq=-1.0e30_WP   !< Liquid pressure floor (e.g. max sustainable tension); off by default
+      real(WP) :: Tmin_liq=-1.0_WP      !< Liquid temperature floor; off by default
+      real(WP) :: Pmin_gas=-1.0e30_WP   !< Gas pressure floor (e.g. ~saturation pressure); off by default
+      real(WP) :: Tmin_gas=-1.0_WP      !< Gas temperature floor; off by default
+      real(WP) :: diss_P=1.0e30_WP      !< Dissolution: absorb gas where phasic gas pressure exceeds this (1e30=off)
+      real(WP) :: vol=1.0_WP            !< Cell volume for ledger units (set by the case; apply() runs on the finest level only)
+      !> Ledger: rank-local cumulative accumulators (1-2 dissolution n/dm; 3 quadratic proposal
+      !> succeeded; 4 proposal failed, completed by the swap alone; 5-6 floor n/dE; 7 untouched
+      !> cells, non-positive phase mass). The model only counts; reduction across ranks is the
+      !> monitoring code's business (the case reduces acc itself)
+      real(WP), dimension(7) :: acc=0.0_WP
    contains
       procedure :: initialize
       procedure :: apply
@@ -96,8 +110,9 @@ contains
       ! ES stays 0 for SG; NASG override sets ES=liq%b/RV after calling parent initialize
    end subroutine initialize
 
-   !> Dispatch via model. Encapsulates mixture-cell gate.
+   !> Apply the safe relaxation policy: absorb -> equilibrate -> floor
    subroutine apply(this,dt,VF,Q,Pjump,ierr)
+      use amrvof_class, only: VFlo,VFhi
       implicit none
       class(relax_igmix_sg),  intent(inout) :: this
       real(WP),               intent(in)    :: dt
@@ -105,16 +120,163 @@ contains
       real(WP), dimension(:), intent(inout) :: Q
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
-      ! Mixture and liquid cells only
-      ! if (VF.le.0.0_WP.or.VF.ge.1.0_WP) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
-      if (VF.le.0.0_WP.or.VF.gt.1.0_WP) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
-      ! Dispatch on model
+      real(WP), dimension(this%gas%ns) :: y
+      real(WP) :: Yv,cvG,cpG,qG,gammaG,PG,PL,Ptar,Eold,TL,TG
+      integer  :: iVQ,ier
+      ! Decide if relaxation should fire
+      ! if (this%model.eq.PTgrelax) then
+      !    ! Only mixture and liquid cells
+      !    if (VF.eq.0.0_WP) then
+      !       if (present(ierr)) ierr=RELAX_DEGENERATE
+      !       return
+      !    end if
+      ! else
+      !    ! Only mixture cells; the solver's pure-cell snap owns the rest
+      !    if (VF.lt.VFlo.or.VF.gt.VFhi) then
+      !       if (present(ierr)) ierr=RELAX_DEGENERATE
+      !       return
+      !    end if
+      ! end if
+      if (this%model.ne.PTgrelax) then
+         ! Only mixture cells; the solver's pure-cell snap owns the rest
+         if (VF.lt.VFlo.or.VF.gt.VFhi) then
+            if (present(ierr)) ierr=RELAX_DEGENERATE
+            return
+         end if
+      end if
+      iVQ=7+this%liq%ns+this%indV-1
+      ! Absorb (seed culling, high-pressure extreme): a gas packet above diss_P is
+      ! supercritical and mixes into the liquid; conserves cell totals exactly, the cell
+      ! becomes pure liquid, and the caller's pure-cell snap completes the PLIC reset
+      if (this%diss_P.lt.1.0e30_WP.and.Q(2).gt.0.0_WP.and.Q(4).gt.0.0_WP) then
+         Yv=Q(iVQ)/Q(2)
+         y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+         PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
+         if (PG.gt.this%diss_P) then
+            this%acc(1)=this%acc(1)+1.0_WP; this%acc(2)=this%acc(2)+Q(2)*this%vol
+            Q(1)=Q(1)+Q(2); Q(3)=Q(3)+Q(4)
+            Q(2)=0.0_WP; Q(4)=0.0_WP; Q(iVQ)=0.0_WP
+            VF=1.0_WP
+            if (present(ierr)) ierr=RELAX_OK
+            return
+         end if
+      end if
+      ! Stage 1 — propose VF: stock quadratic relaxation (Prelax/PTrelax/PThybrid dispatch).
+      ! Its return code only feeds the ledger; the energy split is set unconditionally below.
+      ier=RELAX_OK
       select case (this%model)
-      case (Prelax);   call this%p_relax  (dt,VF,Q,Pjump,ierr)
-      case (PTrelax);  call this%pT_relax (dt,VF,Q,Pjump,ierr)
-      case (PTgrelax); call this%pTg_relax(dt,VF,Q,Pjump,ierr)
-      case default;    call die('[relax_igmix_sg apply] unknown model')
+      case (Prelax);   call this%p_relax  (dt,VF,Q,Pjump,ier)
+      case (PTrelax);  call this%pT_relax (dt,VF,Q,Pjump,ier)
+      case (PTgrelax)
+         if (any(Q(1:4).le.0.0_WP)) then
+            call this%p_relax(dt,VF,Q,Pjump,ier)
+         else
+            Yv=Q(iVQ)/Q(2)
+            y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+            TL=this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
+            TG=this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
+            if (TL.gt.0.0_WP.and.TG.gt.0.0_WP) then
+               call this%pTg_relax(dt,VF,Q,Pjump,ier)
+            else
+               call this%p_relax(dt,VF,Q,Pjump,ier)
+            end if
+         end if
+      case (PThybrid)
+         if (any(Q(1:4).le.0.0_WP)) then
+            call this%p_relax(dt,VF,Q,Pjump,ier)
+         else
+            Yv=Q(iVQ)/Q(2)
+            y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+            TL=this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
+            TG=this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
+            if (TL.gt.0.0_WP.and.TG.gt.0.0_WP.and.max(TG/TL,TL/TG).gt.this%Tratmax) then
+               call this%pT_relax(dt,VF,Q,Pjump,ier)
+            else
+               call this%p_relax(dt,VF,Q,Pjump,ier)
+            end if
+         end if
+      case default; call die('[relax_igmix_sg apply] unknown model')
       end select
+      ! Ledger the proposal outcome; a non-positive phase mass is the only untouched exit
+      if (ier.eq.RELAX_OK) then
+         this%acc(3)=this%acc(3)+1.0_WP
+      else if (Q(1).le.0.0_WP.or.Q(2).le.0.0_WP) then
+         this%acc(7)=this%acc(7)+1.0_WP
+         if (present(ierr)) ierr=ier
+         return
+      else
+         this%acc(4)=this%acc(4)+1.0_WP
+      end if
+      ! The proposal may exit at the VF bounds; the solver's pure-cell snap owns those
+      if (VF.lt.VFlo.or.VF.gt.VFhi) then
+         if (present(ierr)) ierr=RELAX_OK
+         return
+      end if
+      ! Gas composition
+      Yv=Q(iVQ)/Q(2)
+      y=0.0_WP; y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+      cvG   =sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
+      cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
+      qG    =sum(y(1:this%gas%ns)*this%gas%q (1:this%gas%ns))
+      gammaG=cpG/cvG
+      if (this%model.ne.PTgrelax) then
+         ! Stage 2 — set energies (unconditional fixed-VF swap): whatever VF stage 1 produced
+         ! (converged, VFratmax-clamped, or unchanged on failure), impose the unique energy
+         ! split with PL-PG=Pjump at frozen VF and masses. Conserves phasic masses, total
+         ! energy, momentum; a no-op to roundoff where the quadratic fully converged; completes
+         ! the equilibration where it was clamped or failed (also the vacuum-runaway cutoff).
+         ! Co-volume factor VF*(1-b*rhoL) clamped consistently with the nasg accessors.
+         Eold=Q(3)+Q(4)
+         PL=this%get_p_eq(VF,Q,qG,gammaG,Pjump)
+         ! Stage 3 — floor: if the shared pressure sits below any user limit (PL,TL,PG,TG),
+         ! raise it to the binding limit (all four rise monotonically with the shared pressure);
+         ! the energy added is Asum*(Ptar-PL). Ledgered.
+         Ptar=-1.0e30_WP
+         if (this%Pmin_liq.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_liq)
+         if (this%Pmin_gas.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_gas+Pjump)
+         if (this%Tmin_liq.gt.0.0_WP) Ptar=max(Ptar,this%liq%get_p_from_rho_T(rho=Q(1)/VF,T=this%Tmin_liq,y=[1.0_WP]))
+         if (this%Tmin_gas.gt.0.0_WP) Ptar=max(Ptar,this%gas%get_p_from_rho_T(rho=Q(2)/(1.0_WP-VF),T=this%Tmin_gas,y=y)+Pjump)
+         if (PL.lt.Ptar) then
+            this%acc(5)=this%acc(5)+1.0_WP
+            this%acc(6)=this%acc(6)+(VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])+(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)-Eold)*this%vol
+            PL=Ptar
+         end if
+         ! Write the split
+         Q(3)=VF*this%liq%get_rhoe_from_p_rho(p=PL,rho=Q(1)/VF,y=[1.0_WP])
+         Q(4)=(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=PL-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)
+      else
+         ! PTgrelax: its own converged state is left untouched except an independent
+         ! per-phase floor (no Pjump coupling -- its chemical solve doesn't have one either).
+         PL=this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
+         Ptar=-1.0e30_WP
+         if (this%Pmin_liq.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_liq)
+         if (this%Tmin_liq.gt.0.0_WP) Ptar=max(Ptar,this%liq%get_p_from_rho_T(rho=Q(1)/VF,T=this%Tmin_liq,y=[1.0_WP]))
+         if (PL.lt.Ptar) then
+            Eold=Q(3)
+            Q(3)=VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])
+            this%acc(5)=this%acc(5)+1.0_WP
+            this%acc(6)=this%acc(6)+(Q(3)-Eold)*this%vol
+         end if
+         PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
+         Ptar=-1.0e30_WP
+         if (this%Pmin_gas.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_gas)
+         if (this%Tmin_gas.gt.0.0_WP) Ptar=max(Ptar,this%gas%get_p_from_rho_T(rho=Q(2)/(1.0_WP-VF),T=this%Tmin_gas,y=y))
+         if (PG.lt.Ptar) then
+            Eold=Q(4)
+            Q(4)=(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar,rho=Q(2)/(1.0_WP-VF),y=y)
+            this%acc(5)=this%acc(5)+1.0_WP
+            this%acc(6)=this%acc(6)+(Q(4)-Eold)*this%vol
+         end if
+      end if
+      ! Final verdict: Prelax/PTrelax/PThybrid are always left in a consistent state by the
+      ! swap above; PTgrelax's own convergence verdict (ier) is propagated unchanged.
+      if (present(ierr)) then
+         if (this%model.eq.PTgrelax) then
+            ierr=ier
+         else
+            ierr=RELAX_OK
+         end if
+      end if
    end subroutine apply
 
    !> Mechanical relaxation (Pelanti quadratic). Has clipping for unphysical phasic pressures.
@@ -862,14 +1024,16 @@ contains
       ddpdp=(qG-this%liq%q)*(2.0_WP*p_eq+this%liq%pinf)
    end subroutine get_coeffs_lv
 
-   !> SG-form energy-conserving equilibrium pressure at given VF (used by NASG override)
-   real(WP) function get_p_eq(this,VF_,Q0_,qG_,gammaG_)
+   !> SG-form energy-conserving equilibrium pressure at given (frozen) VF, liquid pressure PL
+   !> with PL-PG=Pjump_ (used by NASG override, and by apply()'s fixed-VF energy-split stage)
+   real(WP) function get_p_eq(this,VF_,Q0_,qG_,gammaG_,Pjump_)
       implicit none
       class(relax_igmix_sg), intent(in) :: this
       real(WP),               intent(in) :: VF_
       real(WP), dimension(:), intent(in) :: Q0_
-      real(WP),               intent(in) :: qG_,gammaG_
-      get_p_eq=(sum(Q0_(3:4))-Q0_(1)*this%liq%q-VF_*this%liq%gamma*this%liq%pinf/(this%liq%gamma-1.0_WP)-Q0_(2)*qG_)/&
+      real(WP),               intent(in) :: qG_,gammaG_,Pjump_
+      get_p_eq=(sum(Q0_(3:4))-Q0_(1)*this%liq%q-VF_*this%liq%gamma*this%liq%pinf/(this%liq%gamma-1.0_WP)-Q0_(2)*qG_+&
+      &         (1.0_WP-VF_)*Pjump_/(gammaG_-1.0_WP))/&
       &        (VF_/(this%liq%gamma-1.0_WP)+(1.0_WP-VF_)/(gammaG_-1.0_WP))
    end function get_p_eq
 

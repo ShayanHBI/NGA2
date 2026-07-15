@@ -1,4 +1,4 @@
-!> Cavitation of an energized liquid droplet
+!> Cavitation/condensation in tensioned liquid
 module simulation
    use precision,              only: WP
    use string,                 only: str_medium
@@ -470,7 +470,7 @@ contains
          ! Check if restarting
          call param_read('Restart from',restart_dir,default='')
          restarted=(len_trim(restart_dir).gt.0)
-         if (restarted) restart_dir='restart/'//trim(case_name)//'_'//trim(adjustl(restart_dir))
+         if (restarted) restart_dir='restart/'//trim(case_name)//'/'//trim(adjustl(restart_dir))
          ! If restarting, read header
          if (restarted) call io%read_header(dirname=trim(restart_dir),time=restart_time,step=restart_step)
       end block handle_restart
@@ -844,7 +844,7 @@ contains
          if (save_evt%occurs()) then
             save_checkpoint: block
                use string, only: rtoa
-               call io%write(dirname='restart/'//trim(case_name)//'_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
+               call io%write(dirname='restart/'//trim(case_name)//'/'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
             end block save_checkpoint
          end if
 
@@ -860,7 +860,7 @@ contains
       ! Save the final checkpoint
       save_final_checkpoint: block
          use string, only: rtoa
-         call io%write(dirname='restart/'//trim(case_name)//'_'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
+         call io%write(dirname='restart/'//trim(case_name)//'/'//trim(adjustl(rtoa(time%t))),time=time%t,step=time%n)
       end block save_final_checkpoint
 
    end subroutine simulation_run

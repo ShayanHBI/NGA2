@@ -1125,15 +1125,6 @@ contains
                pUVW(i,j,k,1)=pQ(i,j,k,5)*irho
                pUVW(i,j,k,2)=pQ(i,j,k,6)*irho
                pUVW(i,j,k,3)=pQ(i,j,k,7)*irho
-               ! debug
-               ! if (pQ(i,j,k,1)+pQ(i,j,k,2).gt.0.0_WP) then
-               !    irho=1.0_WP/max(pQ(i,j,k,1)+pQ(i,j,k,2),this%rho_floor)
-               !    pUVW(i,j,k,1)=pQ(i,j,k,5)*irho
-               !    pUVW(i,j,k,2)=pQ(i,j,k,6)*irho
-               !    pUVW(i,j,k,3)=pQ(i,j,k,7)*irho
-               ! else
-               !    pUVW(i,j,k,:)=0.0_WP
-               ! end if
                ! Get liquid primitive variables
                if (pVF(i,j,k,1).ge.VFlo.and.pQ(i,j,k,1).gt.0.0_WP) then
                   pRHOL(i,j,k,1)=pQ(i,j,k,1)/pVF(i,j,k,1)

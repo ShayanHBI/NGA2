@@ -173,16 +173,18 @@ contains
       if (present(ierr)) ierr=RELAX_OK
    end subroutine pT_relax
 
-   !> NASG-form energy-conserving equilibrium pressure
-   real(WP) function get_p_eq(this,VF_,Q0_,qG_,gammaG_) result(p_eq)
+   !> NASG-form energy-conserving equilibrium pressure at given (frozen) VF, liquid pressure PL
+   !> with PL-PG=Pjump_ (co-volume clamped consistently with the nasg accessors)
+   real(WP) function get_p_eq(this,VF_,Q0_,qG_,gammaG_,Pjump_) result(p_eq)
       implicit none
       class(relax_igmix_nasg), intent(in) :: this
       real(WP),                intent(in) :: VF_
       real(WP), dimension(:),  intent(in) :: Q0_
-      real(WP),                intent(in) :: qG_,gammaG_
+      real(WP),                intent(in) :: qG_,gammaG_,Pjump_
       real(WP) :: one_brho
-      one_brho=1.0_WP-this%liq_nasg%b*Q0_(1)/VF_
-      p_eq=(sum(Q0_(3:4))-Q0_(1)*this%liq%q-one_brho*VF_*this%liq%gamma*this%liq%pinf/(this%liq%gamma-1.0_WP)-Q0_(2)*qG_)/&
+      one_brho=max(1.0_WP-this%liq_nasg%b*Q0_(1)/VF_,1.0_WP-this%liq_nasg%brhomax)
+      p_eq=(sum(Q0_(3:4))-Q0_(1)*this%liq%q-one_brho*VF_*this%liq%gamma*this%liq%pinf/(this%liq%gamma-1.0_WP)-Q0_(2)*qG_+&
+      &     (1.0_WP-VF_)*Pjump_/(gammaG_-1.0_WP))/&
       &    (one_brho*VF_/(this%liq%gamma-1.0_WP)+(1.0_WP-VF_)/(gammaG_-1.0_WP))
    end function get_p_eq
 
