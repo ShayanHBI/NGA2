@@ -4,7 +4,7 @@
 !> References Pelanti 2022 https://doi.org/10.1016/j.ijmultiphaseflow.2022.104097
 module relax_igmix_nasg_class
    use precision,               only: WP
-   use relax_igmix_sg_class,    only: relax_igmix_sg
+   use relax_igmix_sg_class,    only: relax_igmix_sg,dbg_cell,dbg_i,dbg_j ! debug
    use stiffened_gas_class,     only: stiffened_gas
    use nasg_class,              only: nasg
    use igmix_class,             only: igmix
@@ -111,6 +111,9 @@ contains
       ! Equilibrium VF (strict bounds)
       VFeq=(n1*Peq+n0)/(d1*Peq+d0)
       if (VFeq.lt.0.0_WP.or.VFeq.gt.1.0_WP) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
+      ! Clamp per-call phase-volume change to a factor VFratmax (bounds consistent for VFratmax>=1)
+      VFeq=max(1.0_WP-this%VFratmax*(1.0_WP-VF),VF/this%VFratmax, &
+      &        min(VFeq,1.0_WP-(1.0_WP-VF)/this%VFratmax,this%VFratmax*VF))
       ! Update Q with p*dV work at the relaxed interface pressure
       Q(3)=Q(3)-(this%phist*Peq+this%phi0*Pint-this%phist*cJ*Pjump)*(VFeq-VF)
       Q(4)=Q(4)+(this%phist*Peq+this%phi0*Pint-this%phist*cJ*Pjump)*(VFeq-VF)
@@ -135,6 +138,7 @@ contains
       integer  :: iVQ
       ! Mechanical relaxation first (its own ierr is not propagated; pT owns the final verdict)
       call this%p_relax(dt,VF,Q,Pjump)
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax post-p_relax VF=',VF,' Q=',Q ! debug
       ! Skip if any conserved quantity is non-positive
       if (any(Q(1:4).le.0.0_WP)) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
       ! Frozen gas composition -> mixture-effective ideal-gas parameters
@@ -149,14 +153,19 @@ contains
       cv1=this%liq%cv; g1=this%liq%gamma; pinf=this%liq%pinf
       R1=cv1*(g1-1.0_WP); R2=cv2*(g2-1.0_WP)
       bL=this%liq_nasg%b
-      ombm=1.0_WP-bL*Q(1)             ! (1 - m1*b) co-volume factor
-      if (ombm.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_LIQUID; return; end if   ! liquid past co-volume packing limit
+      ! debug: clamp covolume term like nasg_class does
+      ! ombm=1.0_WP-bL*Q(1)             ! (1 - m1*b) co-volume factor
+      ! if (ombm.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_LIQUID; return; end if   ! liquid past co-volume packing limit
+      ombm=max(1.0_WP-bL*Q(1),1.0_WP-this%liq_nasg%brhomax)
       ! Thermal internal energy (formation energies removed); invariant under thermal relax
       Eth=Q(3)+Q(4)-Q(1)*this%liq%q-Q(2)*qG
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax coeffs Yv=',Yv,' cv1=',cv1,' cv2=',cv2,' g1=',g1,' g2=',g2,&
+      &                    ' pinf=',pinf,' R1=',R1,' R2=',R2,' bL=',bL,' ombm=',ombm,' Eth=',Eth,' qG=',qG ! debug
       ! Quadratic for liquid equilibrium pressure Peq (gas pressure Peq-Pjump), TL=TG, pinf_g=0
       a=ombm*(Q(1)*cv1+Q(2)*cv2)
       b=ombm*(Q(1)*cv1*g1*pinf+Q(2)*cv2*pinf-Pjump*(Q(1)*cv1+Q(2)*cv2))-Eth*(Q(1)*R1+Q(2)*R2)
       d=-ombm*Pjump*(Q(1)*cv1*g1*pinf+Q(2)*cv2*pinf)+Pjump*Eth*Q(1)*R1-Eth*Q(2)*R2*pinf
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax quadratic a=',a,' b=',b,' d=',d,' disc=',b**2-4.0_WP*a*d ! debug
       ! Equilibrium pressure
       if (b**2-4.0_WP*a*d.lt.0.0_WP) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
       Peq=(-b+sqrt(b**2-4.0_WP*a*d))/(2.0_WP*a)
@@ -165,11 +174,14 @@ contains
       if (Peq-Pjump.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_GAS; return; end if
       ! Equilibrium VF (strict bounds); co-volume floor b*Q(1) appears naturally
       VFeq=bL*Q(1)+ombm*Q(1)*R1*(Peq-Pjump)/(Q(1)*R1*(Peq-Pjump)+Q(2)*R2*(Peq+pinf))
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax Peq=',Peq,' VFeq=',VFeq ! debug
       if (VFeq.lt.0.0_WP.or.VFeq.gt.1.0_WP) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
       ! Update Q with the new equilibrium state (co-volume in liquid rhoe, formation energies re-added)
       Q(3)=(VFeq-bL*Q(1))*(Peq+g1*pinf)/(g1-1.0_WP)+Q(1)*this%liq%q
       Q(4)=(1.0_WP-VFeq)*(Peq-Pjump  )/(g2-1.0_WP)+Q(2)*qG
       VF=VFeq
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax FINAL VF=',VF,' Q3=',Q(3),' Q4=',Q(4),&
+      &                    ' TL_check=',(Q(3)/Q(1)-this%liq%q-pinf*ombm/(Q(1)/VF))/cv1 ! debug
       if (present(ierr)) ierr=RELAX_OK
    end subroutine pT_relax
 
@@ -193,7 +205,12 @@ contains
       implicit none
       class(relax_igmix_nasg), intent(in) :: this
       real(WP),                intent(in) :: p_,Yv_,rho0,rhoA0
-      T=(1.0_WP-Yv_-this%liq_nasg%b*(rho0*(1.0_WP-Yv_)-rhoA0))/                                                       &
+      ! debug: clamp covolume term like nasg_class does
+      ! T=(1.0_WP-Yv_-this%liq_nasg%b*(rho0*(1.0_WP-Yv_)-rhoA0))/                                                       &
+      ! & ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)                          +  &
+      ! &   rhoA0*((this%gas%gamma(this%indV)-1.0_WP)*this%gas%cv(this%indV)*Yv_                                     +  &
+      ! &          (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/p_)
+      T=(1.0_WP-Yv_-min(this%liq_nasg%b*(rho0*(1.0_WP-Yv_)-rhoA0),this%liq_nasg%brhomax))/                             &
       & ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)                          +  &
       &   rhoA0*((this%gas%gamma(this%indV)-1.0_WP)*this%gas%cv(this%indV)*Yv_                                     +  &
       &          (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/p_)
@@ -205,23 +222,37 @@ contains
       class(relax_igmix_nasg), intent(in)  :: this
       real(WP),                intent(in)  :: p_eq,rho0,rhoe0,cvG,GammaG,qG
       real(WP),                intent(out) :: ap,bp,dp,dapdp,dbpdp,ddpdp
-      real(WP) :: cvV_,gammaV_,qV_
+      real(WP) :: cvV_,gammaV_,qV_,ombm_lv
       cvV_   =this%gas%cv   (this%indV)
       gammaV_=this%gas%gamma(this%indV)
       qV_    =this%gas%q    (this%indV)
+      ! debug: clamp covolume term like nasg_class does
+      ombm_lv=max(1.0_WP-rho0*this%liq_nasg%b,1.0_WP-this%liq_nasg%brhomax)
       ap=rho0*this%liq%cv*cvV_*((gammaV_-this%liq%gamma)*p_eq+this%liq%gamma*(gammaV_-1.0_WP)*this%liq%pinf)
-      bp=(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq**2                                                    +&
-      &  (this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)                                                          -&
+      ! bp=(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq**2                                                    +&
+      ! &  (this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)                                                          -&
+      ! &   this%liq%gamma*this%liq%cv)+rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)+&
+      ! &   rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_))*p_eq                                    +&
+      ! &   (gammaV_-1.0_WP)*cvV_*this%liq%pinf*(rho0*this%liq%q-rhoe0)
+      ! dp=p_eq*(p_eq+this%liq%pinf)*(qV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%q+this%liq_nasg%b*rhoe0)
+      ! dapdp=rho0*this%liq%cv*cvV_*(gammaV_-this%liq%gamma)
+      ! dbpdp=2.0_WP*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq                                             +&
+      ! &     this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%gamma*this%liq%cv)                            +&
+      ! &     rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)                          +&
+      ! &     rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_)
+      ! ddpdp=(2.0_WP*p_eq+this%liq%pinf)*(qV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%q+this%liq_nasg%b*rhoe0)
+      bp=(cvV_*ombm_lv-this%liq%cv)*p_eq**2                                                                          +&
+      &  (this%liq%pinf*(cvV_*ombm_lv                                                                                -&
       &   this%liq%gamma*this%liq%cv)+rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)+&
       &   rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_))*p_eq                                    +&
       &   (gammaV_-1.0_WP)*cvV_*this%liq%pinf*(rho0*this%liq%q-rhoe0)
-      dp=p_eq*(p_eq+this%liq%pinf)*(qV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%q+this%liq_nasg%b*rhoe0)
+      dp=p_eq*(p_eq+this%liq%pinf)*(qV_*ombm_lv-this%liq%q+this%liq_nasg%b*rhoe0)
       dapdp=rho0*this%liq%cv*cvV_*(gammaV_-this%liq%gamma)
-      dbpdp=2.0_WP*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq                                             +&
-      &     this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%gamma*this%liq%cv)                            +&
+      dbpdp=2.0_WP*(cvV_*ombm_lv-this%liq%cv)*p_eq                                                                   +&
+      &     this%liq%pinf*(cvV_*ombm_lv-this%liq%gamma*this%liq%cv)                                                  +&
       &     rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)                          +&
       &     rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_)
-      ddpdp=(2.0_WP*p_eq+this%liq%pinf)*(qV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%q+this%liq_nasg%b*rhoe0)
+      ddpdp=(2.0_WP*p_eq+this%liq%pinf)*(qV_*ombm_lv-this%liq%q+this%liq_nasg%b*rhoe0)
    end subroutine get_coeffs_lv
 
 end module relax_igmix_nasg_class

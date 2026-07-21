@@ -12,9 +12,11 @@ import yt
 
 parser = argparse.ArgumentParser()
 parser.add_argument("input", help="case identifier, e.g. pTg")
+parser.add_argument("--start-time", type=float, default=0.0, help="skip frames before this simulation time")
 args = parser.parse_args()
 
 INPUT = args.input
+START_TIME = args.start_time
 CASE = f"impact_relax_{INPUT}"
 AMRVIZ_DIR = Path("amrviz") / CASE
 
@@ -23,10 +25,10 @@ CBAR_LABEL = r"$\alpha$"
 VMIN, VMAX = 0.0, 1.0
 
 # Case is non-dimensional -- plotted coordinates and time are used as-is.
-# VIEW_XLIM = (0.0, 11.0)
-VIEW_XLIM = (0.0, 7.5)
-# VIEW_YLIM = (-10.0, 10.0)
-VIEW_YLIM = (-2.5, 2.5)
+VIEW_XLIM = (0.0, 11.0)
+# VIEW_XLIM = (0.0, 2)
+VIEW_YLIM = (-5.5, 5.5)
+# VIEW_YLIM = (-2.5, 2.5)
 
 CMAP = "jet"
 INTERFACE_COLOR = "white"
@@ -141,6 +143,12 @@ def load_frame(plt_path: Path, vtp_path: Path):
 plt_files = sorted(AMRVIZ_DIR.glob("plt.nga2.cell.*"), key=frame_number)
 vtp_files = {frame_number(p): p for p in AMRVIZ_DIR.glob("plic_*.vtp")}
 frames = [(p, vtp_files[frame_number(p)]) for p in plt_files if frame_number(p) in vtp_files]
+
+if START_TIME > 0.0:
+    frames = [
+        (p, vp) for p, vp in frames
+        if float(yt.load(str(p)).current_time.to_value()) >= START_TIME
+    ]
 
 t0, data0, segs0, le, re = load_frame(*frames[0])
 

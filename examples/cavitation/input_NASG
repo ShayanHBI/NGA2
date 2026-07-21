@@ -2,7 +2,7 @@
 Base nx   : 32
 Base ny   : 32
 Base nz   : 1
-Max level : 4
+Max level : 3
 
 # Regridding parameters
 Regrid nsteps     : 10
@@ -11,19 +11,19 @@ Tagging rho ratio : 1.5
 Tagging divergence : 2e5
 
 # Mesh definition
-Lx : 0.1
-Ly : 0.1
+Lx : 0.03 ! 0.1
+Ly : 0.03 ! 0.1
 
 # Flow setup
 Liquid temperature                 : 350
 Liquid pressure                    : 1e5
 Pulse amplitude                    : 1e6
-Pulse radius                       : 0.005
+Pulse radius                       : 0.001
 Boundary condition                 : wall   ! dirichlet=cavitation only, wall=cavitation+condensation
 Cavitation pressure threshold      : -1e8
 Condensation temperature tolerance : 5
 Initial vapor mass fraction        : 0
-Surface tension                    : 0.07
+Surface tension                    : 0
 
 # Fluid properties
 Liquid viscosity      : 9e-4
@@ -50,12 +50,12 @@ Air reference energy shift                       : 0
 Air reference entropy shift                      : 0
 
 # Time integration
-Max dt     : 1e-8
-!Initial dt : 1e-8
+Max dt     : 3e-8
+Initial dt : 5e-9
 Max CFL    : 0.5
-Max time   : 8.5e-5 ! 2e-5
+Max time   : 3.75e-5
 
 # Output
 Output period     : 1e-6
-Checkpoint period : 2e-5
-!Restart from      : 1.00000E-05
+Checkpoint period : 1e-5
+Restart from      : 3.40209E-05

@@ -67,7 +67,7 @@ module simulation
    real(WP) :: rhoL0,eL0          !< Liquid density/energy at (p0,T0), used by the Dirichlet BC
    real(WP) :: U0,r0              !< Gaussian pulse radial profile: amplitude [1/s] and radius [m]
    real(WP) :: p_cav              !< Cavitation onset pressure threshold
-   real(WP) :: Tctol              !< Condensation temperature tolerance [K]
+   real(WP) :: Tctol              !< Condensation temperature tolerance
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG            !< Prandtl numbers
 
@@ -102,6 +102,50 @@ contains
       ! divergence singularity that the old U_core offset introduced at r=0.
       Ur=U0*r*exp(-(r/r0)**2)
    end function get_radial_velocity
+
+   !> debug: print Q, RHOL/RHOG, PL/PG, TL/TG for one target cell at a given pipeline stage,
+   !> gated to a single timestep so we can see exactly where an unphysical value first appears
+   subroutine debug_probe(label)
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      implicit none
+      character(len=*), intent(in) :: label
+      integer :: lvl
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
+      real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
+      real(WP), dimension(2) :: y
+      integer, parameter :: ti=129,tj=133,tk=0
+      if (time%n.ne.1133) return
+      lvl=amr%maxlvl
+      call amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>fs%VF%mf(lvl)%dataptr(mfi)
+         pQ =>fs%Q%mf(lvl)%dataptr(mfi)
+         bx=mfi%tilebox()
+         if (ti.ge.bx%lo(1).and.ti.le.bx%hi(1).and.tj.ge.bx%lo(2).and.tj.le.bx%hi(2).and.tk.ge.bx%lo(3).and.tk.le.bx%hi(3)) then
+            VFc=pVF(ti,tj,tk,1)
+            RHOL=-1.0_WP; RHOG=-1.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP
+            if (VFc.gt.0.0_WP.and.pQ(ti,tj,tk,1).gt.0.0_WP) then
+               RHOL=pQ(ti,tj,tk,1)/VFc
+               eL=pQ(ti,tj,tk,3)/pQ(ti,tj,tk,1)
+               PL=fs%liq%get_p_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
+               TL=fs%liq%get_T_from_p_rho(p=PL,rho=RHOL,y=[1.0_WP])
+            end if
+            if (VFc.lt.1.0_WP.and.pQ(ti,tj,tk,2).gt.0.0_WP) then
+               RHOG=pQ(ti,tj,tk,2)/(1.0_WP-VFc)
+               eG=pQ(ti,tj,tk,4)/pQ(ti,tj,tk,2)
+               Yv=pQ(ti,tj,tk,8)/pQ(ti,tj,tk,2)
+               y=[Yv,1.0_WP-Yv]
+               PG=fs%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=y)
+               TG=fs%gas%get_T_from_p_rho(p=PG,rho=RHOG,y=y)
+            end if
+            print*,'PROBE[',trim(label),'] n=',time%n,' VF=',VFc,' Q=',pQ(ti,tj,tk,1:8),&
+            &      ' RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG ! debug
+         end if
+      end do
+      call amr%mfiter_destroy(mfi)
+   end subroutine debug_probe
 
    !> Compute viscosity: constant gas and liquid, VF-weighted blend
    subroutine get_viscosities()
@@ -774,28 +818,39 @@ contains
 
          ! Remember old state
          call fs%store_old()
+         call debug_probe('00-start-of-step-Qold')
 
          ! ======================= RK2 Stage 1: Q*=Q[n]+dt/2*dQdt(t,Q[n]) =======================
          call fs%get_dQdt(dQdt=dQdt,dt=0.5_WP*time%dt,time=time%tmid)
          call fs%Q%lincomb(a=1.0_WP,src1=fs%Qold,b=0.5_WP*time%dt,src2=dQdt)
+         call debug_probe('01-post-lincomb-raw-advection')
          call fs%Q%average_down(); call fs%Q%fill(time=time%tmid)
+         call debug_probe('02-post-avgdown-fill')
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
+         call debug_probe('03-post-build_plic(merge_Q+clean_Q)')
          ! Relax and clean up
          call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
+         call debug_probe('04-post-apply_relax')
          call fs%clean_Q()
+         call debug_probe('05-post-clean_Q-2nd-call')
          call fs%get_primitive(Q=fs%Q)
+         call debug_probe('06-post-get_primitive')
          ! Rebuild sub-cell VF
          call fs%build_subVF()
+         call debug_probe('07-post-build_subVF')
          ! Compute face velocities and ensure C/F consistency
          call fs%get_face_velocity(); call fs%average_down_velocity()
          ! Add pressure term
          call fs%add_phasic_pressure(scale=0.5_WP*time%dt)
+         call debug_probe('08-post-add_phasic_pressure')
          ! Average down and fill ghosts
          call fs%Q%average_down(); call fs%Q%fill(time=time%tmid)
+         call debug_probe('09-post-final-avgdown-fill')
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%tmid)
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
+         call debug_probe('10-END-of-stage1')
 
          ! ======================= RK2 Stage 2: Q[n+1]=Q[n]+dt*dQdt(t,Q*) =======================
          call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t)

@@ -1,4 +1,6 @@
 import argparse
+import re as re_mod
+from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,11 +19,6 @@ PLTFILE = f"amrviz/{CASE}/plt.nga2.cell.000001"
 
 CBAR_LABEL = r"$\left(\mathrm{m\,s^{-1}}\right)$"
 CMAP = "jet"
-
-VMIN_UV, VMAX_UV = -2150.0, 2150.0
-VMIN_UMAG, VMAX_UMAG = 0.0, 2150.0
-UV_TICKS = [-2150, -1000, 0, 1000, 2150]
-UMAG_TICKS = [0, 500, 1000, 1500, 2150]
 
 # Paper-style figure geometry (inches), following plot_RHOG_SG_NASG_PTg.py.
 FIG_WIDTH_IN     = 6
@@ -94,11 +91,11 @@ def style_axes(ax, x_ticks, y_ticks, show_ylabel):
 
     if show_ylabel:
         ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
-        ax.set_ylabel(r"$y\;\left(\mathrm{cm}\right)$", labelpad=2.5)
+        ax.set_ylabel(r"$y\;\left(\mathrm{mm}\right)$", labelpad=-4)
     else:
         ax.tick_params(labelleft=False)
 
-    ax.set_xlabel(r"$x\;\left(\mathrm{cm}\right)$", labelpad=2.5)
+    ax.set_xlabel(r"$x\;\left(\mathrm{mm}\right)$", labelpad=2.5)
 
 
 def style_cbar(cbar, ticks):
@@ -123,17 +120,27 @@ frb = slc.to_frb((re_m[0] - le_m[0], "code_length"), res, height=(re_m[1] - le_m
 
 data = {field: np.array(frb["boxlib", field]) for field in ("U", "V", "Umag")}
 
-# Everything plotted from here on is in cm -- gives clean integer tick values.
-M_TO_CM = 100.0
-le = le_m * M_TO_CM
-re = re_m * M_TO_CM
+# Colorbar ranges/ticks follow the actual data range of this run rather than
+# fixed constants, so they stay valid across cases with different velocities.
+VMIN_UV = min(data["U"].min(), data["V"].min())
+VMAX_UV = max(data["U"].max(), data["V"].max())
+UV_TICKS = np.linspace(VMIN_UV, VMAX_UV, 5)
+
+VMIN_UMAG = data["Umag"].min()
+VMAX_UMAG = data["Umag"].max()
+UMAG_TICKS = np.linspace(VMIN_UMAG, VMAX_UMAG, 5)
+
+# Everything plotted from here on is in mm -- gives clean integer tick values.
+M_TO_MM = 1000.0
+le = le_m * M_TO_MM
+re = re_m * M_TO_MM
 extent = [le[0], re[0], le[1], re[1]]
 
 x_span = re[0] - le[0]
 y_span = re[1] - le[1]
 data_height_over_width = y_span / x_span
 
-x_ticks = [-4, -2, 0, 2, 4]
+x_ticks = [-10, -5, 0, 5, 10]
 y_ticks = x_ticks
 
 # Row 1: U and V side by side, sharing one colorbar.
@@ -207,28 +214,35 @@ print(f"Saved: {out}")
 # dimensions fall out of the same margin arithmetic, just for a 3x3 grid.
 # =============================================================================
 
-if INPUT.startswith("wall_"):
-    PL_FRAMES = [1, 12, 23, 34, 45, 56, 66, 76, 86]
-elif INPUT.startswith("dirichlet_"):
-    PL_FRAMES = [1, 3, 6, 9, 11, 14, 16, 18, 21]
-else:
-    raise ValueError(f"no PL_FRAMES defined for input {INPUT!r}")
+def _frame_number(path):
+    return int(re_mod.search(r"(\d+)(?:\.vtp)?$", path.name).group(1))
+
+
+def pick_uniform_frames(count=9):
+    """Pick `count` frames spanning the whole run, evenly spaced by frame
+    index so the first and last available frame are always included. Used
+    for both the PL and VF grids below, which share the same 9 frames."""
+    amrviz_dir = Path("amrviz") / CASE
+    plt_frames = {_frame_number(p) for p in amrviz_dir.glob("plt.nga2.cell.*")}
+    plic_frames = {_frame_number(p) for p in amrviz_dir.glob("plic_*.vtp")}
+    available = sorted(plt_frames & plic_frames)
+    if len(available) <= count:
+        return available
+    idx = np.round(np.linspace(0, len(available) - 1, count)).astype(int)
+    return [available[i] for i in idx]
+
+
+PL_FRAMES = pick_uniform_frames()
 PL_ROW_GAP_IN = PANEL_GAP_IN   # vertical gap between grid rows == horizontal gap between columns
 
-# PL swings from ~1e-4 GPa (ambient, t=0) to O(1) GPa (post-impact) down to
-# O(0.1) GPa (cavitation rarefaction spikes at later times); shown here on a
-# single shared linear color scale (vmin/vmax computed from all frames below)
-# -- most panels will read as close to one flat color since the early/late
-# frames differ by orders of magnitude, but every panel uses the exact same
-# scale for direct comparison.
-PL_SCALE = 1.0e9  # Pa -> GPa
-PL_CBAR_LABEL = r"$p_l\;\left(\mathrm{GPa}\right)$"
+PL_SCALE = 1.0e6  # Pa -> MPa
+PL_CBAR_LABEL = r"$p_l\;\left(\mathrm{MPa}\right)$"
 
 N_ROWS, N_COLS = 3, 3
 
-PL_VIEW_XLIM = (-5, 5)
-PL_VIEW_YLIM = (-5, 5)
-PL_X_TICKS = [-3, 0, 3]
+PL_VIEW_XLIM = (-15, 15)
+PL_VIEW_YLIM = (-15, 15)
+PL_X_TICKS = [-10, 0, 10]
 PL_Y_TICKS = PL_X_TICKS
 
 
@@ -244,13 +258,13 @@ def style_axes_grid(ax, x_ticks, y_ticks, xlim, ylim, show_xlabel, show_ylabel):
 
     if show_ylabel:
         ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
-        ax.set_ylabel(r"$y\;\left(\mathrm{cm}\right)$", labelpad=2.5)
+        ax.set_ylabel(r"$y\;\left(\mathrm{mm}\right)$", labelpad=2.5)
     else:
         ax.tick_params(labelleft=False)
 
     if show_xlabel:
         ax.xaxis.set_major_formatter(FuncFormatter(tick_formatter))
-        ax.set_xlabel(r"$x\;\left(\mathrm{cm}\right)$", labelpad=2.5)
+        ax.set_xlabel(r"$x\;\left(\mathrm{mm}\right)$", labelpad=2.5)
     else:
         ax.tick_params(labelbottom=False)
 
@@ -271,7 +285,7 @@ PLIC_LINEWIDTH = 0.4
 
 def extract_plic_segments(vtp_path):
     """Reduce the extruded PLIC quads (2D interface segments extruded in z)
-    back down to 2D line segments in the x-y plane, in cm."""
+    back down to 2D line segments in the x-y plane, in mm."""
     mesh = pv.read(str(vtp_path))
     if mesh.n_cells == 0:
         return np.empty((0, 2, 2))
@@ -290,7 +304,7 @@ def extract_plic_segments(vtp_path):
         if len(bottom_xy) >= 2:
             segments.append(bottom_xy[:2])
     segments = np.array(segments) if segments else np.empty((0, 2, 2))
-    return segments * M_TO_CM
+    return segments * M_TO_MM
 
 
 def load_plic(frame_number):
@@ -321,6 +335,9 @@ cax_PL = add_axes_in_inches(
 pl_frames = [load_pl(frame_number) for frame_number in PL_FRAMES]
 PL_VMIN = min(pl.min() for _, pl in pl_frames)
 PL_VMAX = max(pl.max() for _, pl in pl_frames)
+# PL_VMIN = 0
+# PL_VMAX = 100
+PL_TICKS = np.linspace(PL_VMIN, PL_VMAX, 5)
 
 im_PL = None
 for panel_idx, frame_number in enumerate(PL_FRAMES):
@@ -354,6 +371,7 @@ for panel_idx, frame_number in enumerate(PL_FRAMES):
     )
 
 cbar_PL = fig2.colorbar(im_PL, cax=cax_PL, orientation="vertical")
+cbar_PL.set_ticks(PL_TICKS)
 cbar_PL.ax.yaxis.set_major_formatter(FuncFormatter(cbar_tick_formatter))
 cbar_PL.ax.tick_params(pad=2.5)
 cbar_PL.set_label(PL_CBAR_LABEL, rotation=90, labelpad=4.0, fontsize=CBAR_LABEL_FONTSIZE)
@@ -373,9 +391,9 @@ VF_CBAR_LABEL = r"$\alpha$"
 VF_VMIN, VF_VMAX = 0.0, 1.0
 VF_TICKS = np.linspace(VF_VMIN, VF_VMAX, 5)
 
-VF_VIEW_XLIM = (-1.5, 1.5)
-VF_VIEW_YLIM = (-1.5, 1.5)
-VF_X_TICKS = [-1, 0, 1]
+VF_VIEW_XLIM = (-3, 3)
+VF_VIEW_YLIM = (-3, 3)
+VF_X_TICKS = [-2, 0, 2]
 VF_Y_TICKS = VF_X_TICKS
 
 

@@ -11,7 +11,7 @@ import pyvista as pv
 import yt
 
 parser = argparse.ArgumentParser()
-parser.add_argument("input", help="case identifier, e.g. NASG_relax_pTg")
+parser.add_argument("input", help="case identifier, e.g. wall_NASG_pTg")
 args = parser.parse_args()
 
 INPUT = args.input
@@ -22,10 +22,10 @@ FIELD = "VF"
 CBAR_LABEL = r"$\alpha$"
 VMIN, VMAX = 0.0, 1.0
 
-# View limits and all plotted coordinates are in cm (raw plotfile/vtp data is in meters).
-M_TO_CM = 100.0
-VIEW_XLIM = (-1.5, 1.5)
-VIEW_YLIM = (-1.5, 1.5)
+# View limits and all plotted coordinates are in mm (raw plotfile/vtp data is in meters).
+M_TO_MM = 1000.0
+VIEW_XLIM = (-3, 3)
+VIEW_YLIM = (-3, 3)
 
 CMAP = "jet"
 INTERFACE_COLOR = "white"
@@ -116,7 +116,7 @@ def extract_plic_segments(vtp_path: Path):
         if len(bottom_xy) >= 2:
             segments.append(bottom_xy[:2])
     segments = np.array(segments) if segments else np.empty((0, 2, 2))
-    return segments * M_TO_CM
+    return segments * M_TO_MM
 
 
 def load_frame(plt_path: Path, vtp_path: Path):
@@ -142,15 +142,15 @@ vtp_files = {frame_number(p): p for p in AMRVIZ_DIR.glob("plic_*.vtp")}
 frames = [(p, vtp_files[frame_number(p)]) for p in plt_files if frame_number(p) in vtp_files]
 
 t0, data0, segs0, le_m, re_m = load_frame(*frames[0])
-le = le_m * M_TO_CM
-re = re_m * M_TO_CM
+le = le_m * M_TO_MM
+re = re_m * M_TO_MM
 
 x_span = VIEW_XLIM[1] - VIEW_XLIM[0]
 y_span = VIEW_YLIM[1] - VIEW_YLIM[0]
 data_height_over_width = y_span / x_span
 extent = [le[0], re[0], le[1], re[1]]
-x_ticks = [-1, 0.0, 1]
-y_ticks = [-1, 0.0, 1]
+x_ticks = [-3, -2, -1, 0, 1, 2, 3]
+y_ticks = [-3, -2, -1, 0, 1, 2, 3]
 
 PLOT_WIDTH_IN = FIG_WIDTH_IN - LEFT_MARGIN_IN - RIGHT_MARGIN_IN - CBAR_GAP_IN - CBAR_WIDTH_IN
 PANEL_HEIGHT_IN = PLOT_WIDTH_IN * data_height_over_width
@@ -178,8 +178,8 @@ ax.set_yticks(y_ticks)
 ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
 ax.tick_params(which="both", top=True, right=True, pad=TICK_PAD_PT)
 
-ax.set_xlabel(r"$x\;\left(\mathrm{cm}\right)$", labelpad=5.0)
-ax.set_ylabel(r"$y\;\left(\mathrm{cm}\right)$", labelpad=-5.0)
+ax.set_xlabel(r"$x\;\left(\mathrm{mm}\right)$", labelpad=5.0)
+ax.set_ylabel(r"$y\;\left(\mathrm{mm}\right)$", labelpad=-5.0)
 title = ax.set_title(
     rf"$t = {f'{t0 * 1.0e6:.2f}'.rstrip('0').rstrip('.')}\;\mu\mathrm{{s}}$", fontsize=TITLE_FONTSIZE, pad=6.0
 )

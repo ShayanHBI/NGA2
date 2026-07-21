@@ -17,9 +17,10 @@ Shock location: 9.4
 Domain length:  20
 Wall BC:        slip
 
-# Relaxation (p, pT, pThybrid, ptg)
+# Relaxation (p, pT, pThybrid, pTg)
 Relaxation type: pTg
 Cavitation pressure threshold coefficient: 0.8
+Condensation temperature tolerance : 0.05
 
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####
@@ -76,11 +77,11 @@ Sutherland temperature: 0.073
 
 # Time integration
 Max dt:   2e-3
-!Initial dt: 1e-3
+! Initial dt: 1e-3
 Max CFL:  0.75
 Max time: 15
 
 # Output
 Output period:     0.1
 Checkpoint period: 1
-Restart from:      1.00011E+01
+Restart from:      1.01011E+01

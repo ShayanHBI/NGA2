@@ -23,10 +23,8 @@ CBAR_LABEL = r"$Y_v$"
 VMIN, VMAX = 0.0, 1.0
 
 # Case is non-dimensional -- plotted coordinates and time are used as-is.
-# VIEW_XLIM = (0.0, 11.0)
-VIEW_XLIM = (0.0, 7.5)
-# VIEW_YLIM = (-10.0, 10.0)
-VIEW_YLIM = (-2.5, 2.5)
+VIEW_XLIM = (0.0, 11.0)
+VIEW_YLIM = (-7, 7)
 
 CMAP = "jet"
 INTERFACE_COLOR = "white"
