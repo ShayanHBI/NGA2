@@ -1,0 +1,18 @@
+# What to run (shared by the NASG and SG blocks)
+Run single-cell test   : true
+Write saturation curve : false
+Write edge cases       : false
+
+# Single-cell pTg relaxation test state (shared by the NASG and SG blocks)
+Test pressure                        : 1e6
+Test temperature                     : 350
+Test initial liquid volume fraction  : 0
+Test initial vapor mass fraction     : 0
+
+# Saturation-curve sweep (shared by the NASG and SG blocks)
+Sweep pressure                       : 1e5
+Sweep initial liquid volume fraction : 0.5
+Sweep initial vapor mass fraction    : 0.5
+Sweep minimum temperature            : 300
+Sweep maximum temperature            : 500
+Sweep number of points               : 200

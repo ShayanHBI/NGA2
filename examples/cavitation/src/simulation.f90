@@ -52,9 +52,9 @@ module simulation
    real(WP) :: GammaV,qV,qpV,CvV,CpV
 
    !> EOS and relaxation
-   class(stiffened_gas), allocatable, target, save :: eosL          !< Liquid pure-substance EOS (SG or NASG)
-   type(igmix),                       target, save :: mixG          !< Gas mixture (vapor + air)
-   class(relax_igmix_sg), allocatable, target, save :: relax_model  !< Relaxation model (SG or NASG liquid)
+   class(stiffened_gas), allocatable,    target, save :: eosL         !< Liquid pure-substance EOS (SG or NASG)
+   type(igmix),                          target, save :: mixG         !< Gas mixture (vapor + air)
+   class(relax_igmix_nasg), allocatable, target, save :: relax_model  !< Relaxation model (SG or NASG liquid)
    character(len=str_medium), save :: liquid_eos_type,relaxation_type
    character(len=str_medium), save :: case_name
 
@@ -68,6 +68,7 @@ module simulation
    real(WP) :: U0,r0              !< Gaussian pulse radial profile: amplitude [1/s] and radius [m]
    real(WP) :: p_cav              !< Cavitation onset pressure threshold
    real(WP) :: Tctol              !< Condensation temperature tolerance
+   real(WP) :: VFratmax           !< Max per-relax-call VF change factor (relax_igmix_sg default: 10.0)
    real(WP) :: muG,muL            !< Dynamic viscosities
    real(WP) :: PrL,PrG            !< Prandtl numbers
 
@@ -95,11 +96,6 @@ contains
    function get_radial_velocity(r) result(Ur)
       real(WP), intent(in) :: r
       real(WP) :: Ur
-      ! Gaussian-pulse radial profile: u=Ur(r)*x/r, v=Ur(r)*y/r with Ur(r)=U0*r*exp(-(r/r0)^2)
-      ! is smooth and exactly zero at r=0 (no 0/0 direction singularity), while its divergence
-      ! div(u)=2*U0*exp(-(r/r0)^2)*(1-r^2/r0^2) is finite and maximal at r=0 (value 2*U0), decaying
-      ! smoothly outward. This concentrates the pressure drop at the center without the 1/r
-      ! divergence singularity that the old U_core offset introduced at r=0.
       Ur=U0*r*exp(-(r/r0)**2)
    end function get_radial_velocity
 
@@ -115,8 +111,12 @@ contains
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
       real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
       real(WP), dimension(2) :: y
-      integer, parameter :: ti=129,tj=133,tk=0
-      if (time%n.ne.1133) return
+      ! debug: nucleation onset, domain-center cell (i,j)=(128,128) at maxlvl=3 (Base nx=32 ->
+      ! 256 finest cells over Lx=0.03m -> center sits on the face between i,j=127 and 128),
+      ! n=6-16 spans first VF<1 in the monitor (n=7) through several relaxation steps, to check
+      ! whether PL/PG and TL/TG converge to equality (full pTg) or stay split (fallback path)
+      integer, parameter :: ti=128,tj=128,tk=0
+      if (time%n.lt.6.or.time%n.gt.16) return
       lvl=amr%maxlvl
       call amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
@@ -146,6 +146,54 @@ contains
       end do
       call amr%mfiter_destroy(mfi)
    end subroutine debug_probe
+
+   !> debug: scan for the interfacial cell with the smallest RHOG this step (the small-cell
+   !> noise culprit), then dump its own VF and its 4 face-neighbor VF plus whether any neighbor
+   !> qualifies as a merge_Q gas reservoir (VF<merge_VFhi) -- tests whether the noise correlates
+   !> with merge_Q's claimant search coming up empty (gpd=0 -> gclaim=.false. -> cell never rescued)
+   subroutine debug_scan_worst_gas()
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      implicit none
+      integer :: lvl,i,j,k,wi,wj,wk
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
+      real(WP) :: VFc,RHOG,wRHOG
+      logical :: hasRes
+      if (time%n.lt.7.or.time%n.gt.30) return
+      lvl=amr%maxlvl
+      wRHOG=huge(1.0_WP); wi=-huge(0); wj=-huge(0); wk=0
+      call amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>fs%VF%mf(lvl)%dataptr(mfi)
+         pQ =>fs%Q%mf(lvl)%dataptr(mfi)
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            VFc=pVF(i,j,k,1)
+            if (VFc.gt.0.0_WP.and.VFc.lt.1.0_WP.and.pQ(i,j,k,2).gt.0.0_WP) then
+               RHOG=pQ(i,j,k,2)/(1.0_WP-VFc)
+               if (RHOG.lt.wRHOG) then; wRHOG=RHOG; wi=i; wj=j; wk=k; end if
+            end if
+         end do; end do; end do
+      end do
+      call amr%mfiter_destroy(mfi)
+      if (wRHOG.eq.huge(1.0_WP)) return
+      ! Re-locate the worst cell to safely read its face neighbors (needs ghost access within
+      ! the same FAB/tile)
+      call amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>fs%VF%mf(lvl)%dataptr(mfi)
+         bx=mfi%tilebox()
+         if (wi.ge.bx%lo(1).and.wi.le.bx%hi(1).and.wj.ge.bx%lo(2).and.wj.le.bx%hi(2).and.wk.ge.bx%lo(3).and.wk.le.bx%hi(3)) then
+            hasRes=(pVF(wi-1,wj,wk,1).lt.fs%merge_VFhi).or.(pVF(wi+1,wj,wk,1).lt.fs%merge_VFhi).or.&
+            &      (pVF(wi,wj-1,wk,1).lt.fs%merge_VFhi).or.(pVF(wi,wj+1,wk,1).lt.fs%merge_VFhi)
+            print*,'WORSTGAS n=',time%n,' (i,j)=',wi,wj,' RHOG=',wRHOG,' VF=',pVF(wi,wj,wk,1),&
+            &      ' nbrVF(xm,xp,ym,yp)=',pVF(wi-1,wj,wk,1),pVF(wi+1,wj,wk,1),pVF(wi,wj-1,wk,1),pVF(wi,wj+1,wk,1),&
+            &      ' merge_VFhi=',fs%merge_VFhi,' hasReservoirNeighbor=',hasRes ! debug
+         end if
+      end do
+      call amr%mfiter_destroy(mfi)
+   end subroutine debug_scan_worst_gas
 
    !> Compute viscosity: constant gas and liquid, VF-weighted blend
    subroutine get_viscosities()
@@ -431,6 +479,7 @@ contains
          call param_read('Cavitation pressure threshold',p_cav,default=huge(1.0_WP))
          ! Condensation onset: nucleate only when vapor is subcooled by more than Tctol below Tsat
          call param_read('Condensation temperature tolerance',Tctol,default=0.0_WP)
+         call param_read('Max VF change factor',VFratmax,default=10.0_WP)
          ! Domain dimensions
          call param_read('Lx',Lx)
          call param_read('Ly',Ly)
@@ -444,9 +493,9 @@ contains
          ! Select liquid eos
          call param_read('Liquid EOS type',liquid_eos_type)
          select case (trim(liquid_eos_type))
-         case ('SG')
-            allocate(stiffened_gas  :: eosL)
-            allocate(relax_igmix_sg :: relax_model)
+         ! case ('SG')
+         !    allocate(stiffened_gas  :: eosL)
+         !    allocate(relax_igmix_sg :: relax_model)
          case ('NASG')
             allocate(nasg              :: eosL)
             allocate(relax_igmix_nasg  :: relax_model)
@@ -475,15 +524,6 @@ contains
          ! Gas mixture: species 1=vapor (transported), species 2=air (carrier)
          call mixG%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,qA],qp=[qpV,qpA], &
          &                     species_names=['vapor','air  '],name='gas')
-         ! Relaxation model: initialize then set cavitation/condensation thresholds and dispatch model
-         call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
-         relax_model%p_cav=p_cav
-         relax_model%Tctol=Tctol
-         select case (trim(relaxation_type))
-         case ('p');   relax_model%model=Prelax
-         case ('pT');  relax_model%model=PTrelax
-         case ('pTg'); relax_model%model=PTgrelax
-         end select
       end block init_eos_and_flow
 
       ! Initialize AMR grid
@@ -606,6 +646,26 @@ contains
                fs%V%lo_bc(3,:)=amrex_bc_foextrap;    fs%V%hi_bc(3,:)=amrex_bc_foextrap
             end if
          end select
+         ! Relaxation model: initialize then set cavitation/condensation thresholds and dispatch model
+         call relax_model%initialize(liq=eosL,gas=mixG,indV=1,indA=2)
+         relax_model%p_cav=p_cav
+         relax_model%Tctol=Tctol
+         select case (trim(relaxation_type))
+         case ('p');   relax_model%model=Prelax
+         case ('pT');  relax_model%model=PTrelax
+         case ('pTg'); relax_model%model=PTgrelax
+         end select
+         relax_model%RHOGmin=0.01_WP
+         relax_model%VFratmax=VFratmax
+         relax_model%vol=amr%cell_vol(amr%maxlvl)
+         fs%merge_sick=100.0_WP
+         ! fs%rho_floor=1.0e-3_WP
+         fs%Pmin_liq=-0.9_WP*eosL%pinf
+         fs%Tmin_liq=300.0_WP
+         fs%Pmin_gas=1.0e-4_WP
+         fs%Tmin_gas=0.1_WP
+         relax_model%Pmin_liq=fs%Pmin_liq; relax_model%Tmin_liq=fs%Tmin_liq
+         relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
       end block create_solver
 
       ! Initialize workspaces
@@ -873,6 +933,7 @@ contains
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%t)
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
+         call debug_scan_worst_gas()
          ! ======================================================================================
 
          ! Regrid if event triggers
@@ -893,7 +954,8 @@ contains
          call Mach%copy(src=Umag); call Mach%divide(src=fs%C)
 
          ! Visualization output
-         if (viz_evt%occurs()) call viz%write(time=time%t)
+         ! if (viz_evt%occurs()) call viz%write(time=time%t)
+         call viz%write(time=time%t)
 
          ! Checkpoint save
          if (save_evt%occurs()) then

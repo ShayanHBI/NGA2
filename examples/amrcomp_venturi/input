@@ -1,0 +1,55 @@
+# AMR grid
+Base nx   : 48
+Base ny   : 8
+Base nz   : 8
+Max level : 3
+
+# Regridding parameters
+Regrid nsteps        : 10
+Tag Reynolds value   : 100
+Tag density error    : 0.6
+Tag pressure error   : 0.3
+Tag Ducros value     : 0.5
+Tag cavitating cells : 1
+
+# Venturi geometry (Case B, Liu et al. 2026 / Long et al. 2017)
+Throat diameter : 0.01
+
+# Flow setup (Table 4 of Liu et al. 2026, T=293 K)
+Liquid temperature : 293.0
+Inlet pressure     : 4.0e5
+Pressure ratio     : 1e-3
+Relaxation type    : pTg
+Surface tension    : 0.07
+Cavitation pressure threshold coefficient : 0.8
+Condensation temperature tolerance        : 5
+
+# Fluid properties (Table 4)
+Liquid viscosity : 1.0e-3
+Gas viscosity    : 9.73e-6
+
+# EOS parameters
+Liquid specific heat capacity at constant volume : 3.8212e+03
+Liquid specific heat capacity ratio              : 1.1173e+00
+Liquid reference energy shift                    : -1.1711e+06
+Liquid reference entropy shift                   : 0
+Liquid stiffening pressure                       : 5.0017e+08
+Liquid co-volume                                 : 7.2341e-04
+Vapor specific heat capacity at constant volume  : 9.2906e+02
+Vapor specific heat capacity ratio               : 1.4963e+00
+Vapor reference energy shift                     : 2.1442e+06
+Vapor reference entropy shift                    : 1.9413e+04
+Air specific heat capacity at constant volume    : 718
+Air specific heat capacity ratio                 : 1.4
+
+# Time integration
+Use projection : true
+Max dt     : 1e-6
+!Initial dt : 1e-6
+Max CFL    : 0.8
+Max time   : 2e-5
+
+# Output
+Output period     : 1e-6
+!Checkpoint period : 1e-3
+!Restart from      : 3.00000E-03

@@ -2179,23 +2179,6 @@ contains
             myVflux(6:8)=vol_tot*bary_tot-myVflux(3:5)
          end if
 
-         ! debug: donor's VF0 is below the trustworthy-density threshold VFlo (same one
-         ! that gates the Q flux just below) -- previously the geometric PLIC volume flux
-         ! myVflux(1) was still moved unconditionally while myQflux(1) stayed at its
-         ! zero-init, so VF drifted away from Q(1) every timestep with nothing to stop it
-         ! (Q(1) bit-identical across steps while VF shrank, confirmed via
-         ! relax_igmix_sg_class apply()'s check_diag instrumentation). Reclassify the
-         ! untrustworthy sliver as the other phase instead of dropping it, so total
-         ! transported volume myVflux(1)+myVflux(2) is still conserved.
-         ! if (VF0.lt.VFlo) then
-         !    myVflux(2)=myVflux(2)+myVflux(1); myVflux(6:8)=myVflux(6:8)+myVflux(3:5)
-         !    myVflux(1)=0.0_WP; myVflux(3:5)=0.0_WP
-         ! end if
-         ! if (VF0.gt.VFhi) then
-         !    myVflux(1)=myVflux(1)+myVflux(2); myVflux(3:5)=myVflux(3:5)+myVflux(6:8)
-         !    myVflux(2)=0.0_WP; myVflux(6:8)=0.0_WP
-         ! end if
-
          ! Compute Q flux from Qold (guard may be needed at C/F boundaries)
          if (VF0.ge.VFlo) then
             myQflux(1)=myVflux(1)*pQold(i0,j0,k0,1)/VF0
@@ -2312,7 +2295,7 @@ contains
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
       real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
       real(WP), dimension(2) :: y
-      integer, dimension(2), parameter :: tis=[373,71],tjs=[951,1126] ! debug: amrcomp_impact cells A,B
+      integer, dimension(2), parameter :: tis=[0,0],tjs=[1092,1093] ! debug: TL/TG overshoot cells, t~10.5011
       integer :: tk,ic,ti,tj
       tk=0
       if (this%amr%clvl().lt.this%amr%maxlvl) return
@@ -2356,13 +2339,10 @@ contains
       real(WP), intent(in) :: time
       ! Call parent build_plic
       call this%amrmpflow%build_plic(time)
-      ! call this%debug_probe_cell('03a-post-parent-build_plic-PLIC-recon') ! debug
       ! Merge first
       call this%merge_Q(time)
-      ! call this%debug_probe_cell('03b-post-merge_Q') ! debug
       ! Clean up Q
       call this%clean_Q()
-      ! call this%debug_probe_cell('03c-post-clean_Q(1st,inside-build_plic)') ! debug
    end subroutine build_plic
    
    !> Clean up Q in pure cells
@@ -2372,6 +2352,8 @@ contains
       integer :: lvl,i,j,k
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
       real(WP) :: eref,rref,rstar,mold,eold,m0,dV
+      real(WP), dimension(this%liq%ns) :: yL
+      real(WP), dimension(this%gas%ns) :: yG
       logical :: valid
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx,bxv
@@ -2418,15 +2400,26 @@ contains
                m0=pQ(i,j,k,1)+pQ(i,j,k,2)
                if (this%Tmin_liq.gt.0.0_WP.and.this%Pmin_liq.gt.-1.0e29_WP.and.pVF(i,j,k,1).ge.VFlo) then
                   mold=pQ(i,j,k,1); eold=pQ(i,j,k,3)
-                  rstar=this%liq%get_rho_from_p_T(p=this%Pmin_liq,T=this%Tmin_liq,y=[1.0_WP])
+                  ! Cell's own liquid composition (falls back to pure carrier species if massless)
+                  if (this%liq%ns.gt.1) then
+                     if (pQ(i,j,k,1).gt.0.0_WP) then
+                        yL(1:this%liq%ns-1)=max(0.0_WP,min(pQ(i,j,k,this%Yl_lo:this%Yl_hi)/pQ(i,j,k,1),1.0_WP))
+                     else
+                        yL(1:this%liq%ns-1)=0.0_WP
+                     end if
+                     yL(this%liq%ns)=max(0.0_WP,1.0_WP-sum(yL(1:this%liq%ns-1)))
+                  else
+                     yL(1)=1.0_WP
+                  end if
+                  rstar=this%liq%get_rho_from_p_T(p=this%Pmin_liq,T=this%Tmin_liq,y=yL)
                   if (pQ(i,j,k,1).lt.rstar*pVF(i,j,k,1)) then
                      pQ(i,j,k,1)=rstar*pVF(i,j,k,1)
                      ! max(): the projection only ever ADDS energy (a hot cell keeps its content)
-                     pQ(i,j,k,3)=max(eold,pQ(i,j,k,1)*this%liq%get_e_from_p_rho(p=this%Pmin_liq,rho=rstar,y=[1.0_WP]))
+                     pQ(i,j,k,3)=max(eold,pQ(i,j,k,1)*this%liq%get_e_from_p_rho(p=this%Pmin_liq,rho=rstar,y=yL))
                   else
                      rref=pQ(i,j,k,1)/pVF(i,j,k,1)
-                     eref=max(this%liq%get_e_from_p_rho(p=this%Pmin_liq,rho=rref,y=[1.0_WP]), &
-                     &        this%liq%get_e_from_p_rho(p=this%liq%get_p_from_rho_T(rho=rref,T=this%Tmin_liq,y=[1.0_WP]),rho=rref,y=[1.0_WP]))
+                     eref=max(this%liq%get_e_from_p_rho(p=this%Pmin_liq,rho=rref,y=yL), &
+                     &        this%liq%get_e_from_p_rho(p=this%liq%get_p_from_rho_T(rho=rref,T=this%Tmin_liq,y=yL),rho=rref,y=yL))
                      if (pQ(i,j,k,3).lt.pQ(i,j,k,1)*eref) pQ(i,j,k,3)=pQ(i,j,k,1)*eref
                   end if
                   if (valid.and.(pQ(i,j,k,1).ne.mold.or.pQ(i,j,k,3).ne.eold)) then
@@ -2437,15 +2430,26 @@ contains
                end if
                if (this%Tmin_gas.gt.0.0_WP.and.this%Pmin_gas.gt.-1.0e29_WP.and.pVF(i,j,k,1).le.VFhi) then
                   mold=pQ(i,j,k,2); eold=pQ(i,j,k,4)
-                  rstar=this%gas%get_rho_from_p_T(p=this%Pmin_gas,T=this%Tmin_gas,y=[1.0_WP])
+                  ! Cell's own gas composition (falls back to pure carrier species if massless)
+                  if (this%gas%ns.gt.1) then
+                     if (pQ(i,j,k,2).gt.0.0_WP) then
+                        yG(1:this%gas%ns-1)=max(0.0_WP,min(pQ(i,j,k,this%Yg_lo:this%Yg_hi)/pQ(i,j,k,2),1.0_WP))
+                     else
+                        yG(1:this%gas%ns-1)=0.0_WP
+                     end if
+                     yG(this%gas%ns)=max(0.0_WP,1.0_WP-sum(yG(1:this%gas%ns-1)))
+                  else
+                     yG(1)=1.0_WP
+                  end if
+                  rstar=this%gas%get_rho_from_p_T(p=this%Pmin_gas,T=this%Tmin_gas,y=yG)
                   if (pQ(i,j,k,2).lt.rstar*(1.0_WP-pVF(i,j,k,1))) then
                      pQ(i,j,k,2)=rstar*(1.0_WP-pVF(i,j,k,1))
                      ! max(): the projection only ever ADDS energy (a hot cell keeps its content)
-                     pQ(i,j,k,4)=max(eold,pQ(i,j,k,2)*this%gas%get_e_from_p_rho(p=this%Pmin_gas,rho=rstar,y=[1.0_WP]))
+                     pQ(i,j,k,4)=max(eold,pQ(i,j,k,2)*this%gas%get_e_from_p_rho(p=this%Pmin_gas,rho=rstar,y=yG))
                   else
                      rref=pQ(i,j,k,2)/(1.0_WP-pVF(i,j,k,1))
-                     eref=max(this%gas%get_e_from_p_rho(p=this%Pmin_gas,rho=rref,y=[1.0_WP]), &
-                     &        this%gas%get_e_from_p_rho(p=this%gas%get_p_from_rho_T(rho=rref,T=this%Tmin_gas,y=[1.0_WP]),rho=rref,y=[1.0_WP]))
+                     eref=max(this%gas%get_e_from_p_rho(p=this%Pmin_gas,rho=rref,y=yG), &
+                     &        this%gas%get_e_from_p_rho(p=this%gas%get_p_from_rho_T(rho=rref,T=this%Tmin_gas,y=yG),rho=rref,y=yG))
                      if (pQ(i,j,k,4).lt.pQ(i,j,k,2)*eref) pQ(i,j,k,4)=pQ(i,j,k,2)*eref
                   end if
                   if (valid.and.(pQ(i,j,k,2).ne.mold.or.pQ(i,j,k,4).ne.eold)) then
@@ -2499,20 +2503,6 @@ contains
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
             VFc=pVF(i,j,k,1)
-            ! debug: check whether cell (48,956,0) has any valid gas partner (VF<merge_VFhi) among its
-            ! face neighbors, to see why merge_Q doesn't pool its small gas pocket before relax
-            ! if (i.eq.48.and.j.eq.956.and.k.eq.0.and.VFc.gt.0.99_WP.and.VFc.lt.1.0_WP) then
-            !    print*,'i=',i,' merge_Q check VFc=',VFc,' gpd=',gpd(i,j,k),' gclaim=',gclaim(i,j,k),&
-            !    &      ' neighVF(i-1,i+1,j-1,j+1)=',pVF(i-1,j,k,1),pVF(i+1,j,k,1),pVF(i,j-1,k,1),pVF(i,j+1,k,1) ! debug
-            ! end if
-            ! debug: amrcomp_impact cells A(373,951)/B(71,1126) -- is this cell currently a LIQUID
-            ! claimant under merge_VFlo=0.01 (VFc<merge_VFlo, or lsick vs its reservoir neighbor)?
-            ! raw rhoL is the pre-merge value that would reach relax if merge_Q didn't intervene.
-            ! if (((i.eq.373.and.j.eq.951).or.(i.eq.71.and.j.eq.1126)).and.k.eq.0) then
-            !    print*,'i=',i,' j=',j,' merge_Q PASS1 VFc=',VFc,' merge_VFlo=',this%merge_VFlo,&
-            !    &      ' lpd=',lpd(i,j,k),' lclaim=',lclaim(i,j,k),&
-            !    &      ' raw_rhoL=',merge(pQ(i,j,k,1)/VFc,-1.0_WP,VFc.gt.0.0_WP) ! debug
-            ! end if
             ! GAS pool: is this cell a gas reservoir?
             if (VFc.lt.this%merge_VFhi) then
                sM=pQ(i,j,k,2); sE=pQ(i,j,k,4); sVol=1.0_WP-VFc
@@ -2579,11 +2569,6 @@ contains
                   rhoG=pP(ia,ja,ka,1); eG=pP(ia,ja,ka,2); uG=pP(ia,ja,ka,3:5); gasm=.true.
                end if
             end if
-            ! debug: did the (48,956,0) claim actually get validated by its reservoir in pass 1?
-            ! if (i.eq.48.and.j.eq.956.and.k.eq.0.and.VFc.gt.0.99_WP.and.VFc.lt.1.0_WP) then
-            !    print*,'i=',i,' merge_Q pass2 VFc=',VFc,' pdir=',pdir,' gasm=',gasm,&
-            !    &      ' Q2_before=',pQ(i,j,k,2),' pP(partner,6)=',merge(pP(i+foff(1,max(pdir,1)),j+foff(2,max(pdir,1)),k+foff(3,max(pdir,1)),6),-1.0_WP,pdir.gt.0) ! debug
-            ! end if
             if (.not.gasm.and.pP(i,j,k,6).gt.0.5_WP) then
                rhoG=pP(i,j,k,1); eG=pP(i,j,k,2); uG=pP(i,j,k,3:5); gasm=.true.
             end if
@@ -2598,27 +2583,18 @@ contains
             if (.not.liqm.and.pP(i,j,k,12).gt.0.5_WP) then
                rhoL=pP(i,j,k,7); eL=pP(i,j,k,8); uL=pP(i,j,k,9:11); liqm=.true.
             end if
-            ! debug: amrcomp_impact cells A(373,951)/B(71,1126) -- did the liquid-claimant adoption
-            ! actually fire (liqm), and what rhoL got substituted for this cell's own raw value?
-            ! if (((i.eq.373.and.j.eq.951).or.(i.eq.71.and.j.eq.1126)).and.k.eq.0) then
-            !    print*,'i=',i,' j=',j,' merge_Q PASS2 VFc=',VFc,' pdir=',pdir,' liqm=',liqm,&
-            !    &      ' rhoL_pooled=',merge(rhoL,-1.0_WP,liqm),' Q1_before=',pQ(i,j,k,1) ! debug
-            ! end if
             ! Apply: set phase to pooled (rho*,e*) at own VF; keep the un-merged phase's momentum.
             ! Species partial masses are rescaled to the new phase mass (preserves mass fractions;
             ! composition is not pooled across the pair)
             if (liqm) then
                pQ(i,j,k,1)=rhoL*VFc; pQ(i,j,k,3)=rhoL*eL*VFc; lmom=pQ(i,j,k,1)*uL
                if (this%liq%ns.gt.1.and.M1.gt.0.0_WP) pQ(i,j,k,this%Yl_lo:this%Yl_hi)=pQ(i,j,k,this%Yl_lo:this%Yl_hi)*(pQ(i,j,k,1)/M1)
-               ! if (((i.eq.373.and.j.eq.951).or.(i.eq.71.and.j.eq.1126)).and.k.eq.0) &
-               ! &  print*,'i=',i,' j=',j,' merge_Q LIQUID MERGED VFc=',VFc,' Q1_after=',pQ(i,j,k,1) ! debug
             else
                lmom=M1*uC
             end if
             if (gasm) then
                pQ(i,j,k,2)=rhoG*(1.0_WP-VFc); pQ(i,j,k,4)=rhoG*eG*(1.0_WP-VFc); gmom=pQ(i,j,k,2)*uG
                if (this%gas%ns.gt.1.and.M2.gt.0.0_WP) pQ(i,j,k,this%Yg_lo:this%Yg_hi)=pQ(i,j,k,this%Yg_lo:this%Yg_hi)*(pQ(i,j,k,2)/M2)
-               ! if (i.eq.48.and.j.eq.956.and.k.eq.0) print*,'i=',i,' merge_Q GAS MERGED VFc=',VFc,' rhoG_pooled=',rhoG,' Q2_after=',pQ(i,j,k,2) ! debug
             else
                gmom=M2*uC
             end if
@@ -2751,12 +2727,8 @@ contains
 
             ! Check if mixture cell prior to relaxation
             oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
-            ! debug: focused trace on the re-condensation event at (i,j)=(129,133), t~3.345e-5,
-            ! to see exactly how pT_relax's equilibrium temperature comes out so high (cavitation case)
-            ! dbg_cell=(((i.eq.129.and.j.eq.133).or.(i.eq.124.and.j.eq.132)).and.k.eq.0)
-            ! debug: amrcomp_impact cells A(373,951) and B(71,1126), noisy TL/TG/PL/PG/RHOL/RHOG/VF
-            ! around t=10.0-10.01, per user ParaView probe
-            ! dbg_cell=(((i.eq.373.and.j.eq.951).or.(i.eq.71.and.j.eq.1126)).and.k.eq.0)
+            ! debug
+            dbg_cell=(i.eq.953.and.j.eq.1037.and.k.eq.0.and.time.ge.0.203_WP.and.time.le.0.204)
             dbg_i=i; dbg_j=j
             ! Apply user-provided relaxation model (modifies VF and Q)
             call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))

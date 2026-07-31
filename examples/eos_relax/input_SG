@@ -1,0 +1,15 @@
+Liquid specific heat capacity at constant volume : 1.9058e+03
+Liquid specific heat capacity ratio              : 2.2531e+00
+Liquid reference energy shift                    : -1.1810e+06
+Liquid reference entropy shift                   : 0
+Liquid stiffening pressure                       : 8.9675e+08
+Vapor specific heat capacity at constant volume  : 8.5675e+02
+Vapor specific heat capacity ratio               : 1.5372e+00
+Vapor reference energy shift                     : 2.1757e+06
+Vapor reference entropy shift                    : -2.0257e+04
+Air specific heat capacity at constant volume    : 718
+Air specific heat capacity ratio                 : 1.4
+Air reference energy shift                       : 0
+Air reference entropy shift                      : 0
+Cavitation pressure threshold                    : 1e30
+Condensation temperature tolerance               : 0

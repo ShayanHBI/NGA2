@@ -138,7 +138,7 @@ contains
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
       real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
       real(WP), dimension(2) :: y
-      integer, dimension(2), parameter :: tis=[373,71],tjs=[951,1126]
+      integer, dimension(2), parameter :: tis=[0,0],tjs=[1092,1093] ! debug: TL/TG overshoot cells, t~10.5011
       integer :: tk,ti,tj
       tk=0
       lvl=amr%maxlvl
@@ -566,9 +566,9 @@ contains
          time=timetracker(amRoot=amr%amRoot)
          call param_read('Max time',time%tmax)
          call param_read('Max dt',time%dtmax)
-         call param_read('Initial dt',dt_init,default=time%dtmax)
+         call param_read('Initial dt',dt_init)
          call param_read('Max CFL',time%cflmax)
-         time%dt=time%dtmax
+         time%dt=dt_init
          if (restarted) then
             call io%get_scalar('dt',time%dt)
             time%t=restart_time
@@ -602,6 +602,7 @@ contains
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
          relax_model%diss_P=200.0_WP
+         ! relax_model%Tratmax=5.0_WP
          fs%Pmin_liq=-0.98_WP*water%pinf
          fs%Tmin_liq=0.1_WP
          fs%Pmin_gas=1.0e-4_WP
@@ -961,6 +962,7 @@ contains
 
          ! Visualization output
          if (viz_evt%occurs()) call viz%write(time=time%t)
+         ! call viz%write(time=time%t)
 
          ! Checkpoint save
          if (save_evt%occurs()) then

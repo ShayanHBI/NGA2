@@ -22,6 +22,7 @@ Pulse radius                       : 0.001
 Boundary condition                 : wall   ! dirichlet=cavitation only, wall=cavitation+condensation
 Cavitation pressure threshold      : -1e8
 Condensation temperature tolerance : 5
+Max VF change factor               : 10
 Initial vapor mass fraction        : 0
 Surface tension                    : 0
 
@@ -50,12 +51,12 @@ Air reference energy shift                       : 0
 Air reference entropy shift                      : 0
 
 # Time integration
-Max dt     : 3e-8
+Max dt     : 5e-9
 Initial dt : 5e-9
 Max CFL    : 0.5
-Max time   : 3.75e-5
+Max time   : 4e-7
 
 # Output
 Output period     : 1e-6
 Checkpoint period : 1e-5
-Restart from      : 3.40209E-05
+Restart from      : !3.40209E-05

@@ -4,7 +4,7 @@
 !> References Pelanti 2022 https://doi.org/10.1016/j.ijmultiphaseflow.2022.104097
 module relax_igmix_nasg_class
    use precision,               only: WP
-   use relax_igmix_sg_class,    only: relax_igmix_sg,dbg_cell,dbg_i,dbg_j ! debug
+   use relax_igmix_sg_class,    only: relax_igmix_sg
    use stiffened_gas_class,     only: stiffened_gas
    use nasg_class,              only: nasg
    use igmix_class,             only: igmix
@@ -138,7 +138,6 @@ contains
       integer  :: iVQ
       ! Mechanical relaxation first (its own ierr is not propagated; pT owns the final verdict)
       call this%p_relax(dt,VF,Q,Pjump)
-      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax post-p_relax VF=',VF,' Q=',Q ! debug
       ! Skip if any conserved quantity is non-positive
       if (any(Q(1:4).le.0.0_WP)) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
       ! Frozen gas composition -> mixture-effective ideal-gas parameters
@@ -159,13 +158,10 @@ contains
       ombm=max(1.0_WP-bL*Q(1),1.0_WP-this%liq_nasg%brhomax)
       ! Thermal internal energy (formation energies removed); invariant under thermal relax
       Eth=Q(3)+Q(4)-Q(1)*this%liq%q-Q(2)*qG
-      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax coeffs Yv=',Yv,' cv1=',cv1,' cv2=',cv2,' g1=',g1,' g2=',g2,&
-      &                    ' pinf=',pinf,' R1=',R1,' R2=',R2,' bL=',bL,' ombm=',ombm,' Eth=',Eth,' qG=',qG ! debug
       ! Quadratic for liquid equilibrium pressure Peq (gas pressure Peq-Pjump), TL=TG, pinf_g=0
       a=ombm*(Q(1)*cv1+Q(2)*cv2)
       b=ombm*(Q(1)*cv1*g1*pinf+Q(2)*cv2*pinf-Pjump*(Q(1)*cv1+Q(2)*cv2))-Eth*(Q(1)*R1+Q(2)*R2)
       d=-ombm*Pjump*(Q(1)*cv1*g1*pinf+Q(2)*cv2*pinf)+Pjump*Eth*Q(1)*R1-Eth*Q(2)*R2*pinf
-      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax quadratic a=',a,' b=',b,' d=',d,' disc=',b**2-4.0_WP*a*d ! debug
       ! Equilibrium pressure
       if (b**2-4.0_WP*a*d.lt.0.0_WP) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
       Peq=(-b+sqrt(b**2-4.0_WP*a*d))/(2.0_WP*a)
@@ -174,14 +170,11 @@ contains
       if (Peq-Pjump.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_GAS; return; end if
       ! Equilibrium VF (strict bounds); co-volume floor b*Q(1) appears naturally
       VFeq=bL*Q(1)+ombm*Q(1)*R1*(Peq-Pjump)/(Q(1)*R1*(Peq-Pjump)+Q(2)*R2*(Peq+pinf))
-      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax Peq=',Peq,' VFeq=',VFeq ! debug
       if (VFeq.lt.0.0_WP.or.VFeq.gt.1.0_WP) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
       ! Update Q with the new equilibrium state (co-volume in liquid rhoe, formation energies re-added)
       Q(3)=(VFeq-bL*Q(1))*(Peq+g1*pinf)/(g1-1.0_WP)+Q(1)*this%liq%q
       Q(4)=(1.0_WP-VFeq)*(Peq-Pjump  )/(g2-1.0_WP)+Q(2)*qG
       VF=VFeq
-      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pT_relax FINAL VF=',VF,' Q3=',Q(3),' Q4=',Q(4),&
-      &                    ' TL_check=',(Q(3)/Q(1)-this%liq%q-pinf*ombm/(Q(1)/VF))/cv1 ! debug
       if (present(ierr)) ierr=RELAX_OK
    end subroutine pT_relax
 
