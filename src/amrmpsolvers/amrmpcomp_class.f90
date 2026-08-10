@@ -2728,7 +2728,8 @@ contains
             ! Check if mixture cell prior to relaxation
             oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
             ! debug
-            dbg_cell=(i.eq.953.and.j.eq.1037.and.k.eq.0.and.time.ge.0.203_WP.and.time.le.0.204)
+            dbg_cell=(i.eq.874.and.j.eq.1047.and.k.eq.0.and.time.ge.1.008_WP.and.time.le.1.010_WP) ! debug: upper bound needs slack -- accumulated time%t can land a few ULPs above the literal Max time
+            ! dbg_cell=.false.
             dbg_i=i; dbg_j=j
             ! Apply user-provided relaxation model (modifies VF and Q)
             call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))

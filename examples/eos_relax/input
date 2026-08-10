@@ -8,6 +8,21 @@ Test pressure                        : 1e6
 Test temperature                     : 350
 Test initial liquid volume fraction  : 0
 Test initial vapor mass fraction     : 0
+Test Pjump                           : 2.9735414544914399E-005
+
+# Raw-state override: when true, skip make_Q(p,T,VF_in,Yv_in) (which forces both
+# phases to start at the same p,T) and feed VF/Q(1:8) directly -- use to replay an
+# exact (possibly disequilibrium) cell state pulled from a real-run debug log.
+Use raw Q for single-cell test : true
+Raw VF : 4.4733302132516410E-008
+Raw Q1 : 6.1354779172902250E-006
+Raw Q2 : 0.33583989838916217
+Raw Q3 : 3.8569215430386435E-006
+Raw Q4 : 0.11181969648764851
+Raw Q5 : -0.23190636638398648
+Raw Q6 : 6.0605435818546823E-003
+Raw Q7 : -3.7152481844495389E-020
+Raw Q8 : 2.0778812903834492E-003
 
 # Saturation-curve sweep (shared by the NASG and SG blocks)
 Sweep pressure                       : 1e5

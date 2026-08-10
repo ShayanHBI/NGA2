@@ -6,7 +6,7 @@
 module relax_igmix_sg_class
    use precision,             only: WP
    use messager,              only: die
-   use thermorelax_class,     only: thermorelax,RELAX_OK,RELAX_FAILED,RELAX_BAD_LIQUID,RELAX_BAD_GAS,RELAX_VACUUM_GAS,RELAX_DEGENERATE,RELAX_NUC_FAILED,RELAX_VACUUM_VAPOR
+   use thermorelax_class,     only: thermorelax,RELAX_OK,RELAX_FAILED,RELAX_BAD_LIQUID,RELAX_BAD_GAS,RELAX_VACUUM_GAS,RELAX_DEGENERATE,RELAX_NUC_FAILED,RELAX_VACUUM_VAPOR,RELAX_PURE_PHASE
    use stiffened_gas_class,   only: stiffened_gas
    use igmix_class,           only: igmix
    implicit none
@@ -56,6 +56,8 @@ module relax_igmix_sg_class
       logical  :: do_nucleate=.true.       !< Seed opposite phase in near-pure metastable cells (cavitation/condensation)
       real(WP) :: p_cav=huge(1.0_WP)       !< Cavitation delay: nucleate only when pL < p_cav (default: nucleate at p_sat)
       real(WP) :: Tctol=0.0_WP             !< Condensation temperature tolerance: nucleate only when TG < Tsat-Tctol (default: nucleate at Tsat)
+      real(WP) :: dT_chem_max=0.05_WP      !< Max relative shared-T swing the chemical (step-3) solve may impose; mirrors dT_nuc_max
+      real(WP) :: dT_pT_max=0.1_WP         !< Max relative T swing pT_relax (steps 1-2) may impose on either phase's own entry T; beyond this, fall back to p_relax on the untouched input
       !> Dispatch
       integer  :: model=Prelax
       real(WP) :: Tratmax=10.0_WP          !< PThybrid: temperature contrast max(TG/TL,TL/TG) above which pT_relax is used
@@ -231,8 +233,8 @@ contains
                         &      ' Tratmax=',this%Tratmax,&
                         &      ' choice=',merge('pT_relax','p_relax ',TL.gt.0.0_WP.and.TG.gt.0.0_WP.and.max(TG/TL,TL/TG).gt.this%Tratmax) ! debug
                         ! &      ' choice=',merge('pT_relax','p_relax ',TL.gt.0.0_WP.and.TG.gt.0.0_WP) ! debug
-                        if (TL.gt.0.0_WP.and.TG.gt.0.0_WP.and.max(TG/TL,TL/TG).gt.this%Tratmax) then
-                        ! if (TL.gt.0.0_WP.and.TG.gt.0.0_WP) then
+                        ! if (TL.gt.0.0_WP.and.TG.gt.0.0_WP.and.max(TG/TL,TL/TG).gt.this%Tratmax) then
+                        if (TL.gt.0.0_WP.and.TG.gt.0.0_WP) then
                            if (dbg_cell) print*, 'Temperatures positive; running pT'
                            call this%pT_relax(dt,VF,Q,Pjump,ier)
                            if (dbg_cell) call this%debug_dump('POST-pT_relax',VF,Q,Pjump,ier)
@@ -510,7 +512,9 @@ contains
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
       real(WP), dimension(:), allocatable   :: Qin,Q0,y
+      real(WP), dimension(this%gas%ns)      :: y0
       real(WP) :: VFin,VF0,p,T,Yv,Yvin,Yv0
+      real(WP) :: Tchem0,TL0,TG0
       real(WP) :: rho0,rhoe0,rhoA0
       real(WP) :: RHOL,RHOG
       real(WP) :: cvG,cpG,qG,gammaG
@@ -583,7 +587,8 @@ contains
                Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
                Q(3)=Q(3)-de;   Q(4)=Q(4)+de
                Q(7+this%liq%ns+this%indV-1)=Q(7+this%liq%ns+this%indV-1)+drho
-               VF=VF-VF_nuc
+               ! VF=VF-VF_nuc
+               VF=Q(1)/rhoL_nuc
                nucleated=.true.; cavitated=.true.
             else
                if (dbg_cell) print*,'Near pure gas, attempting condensation nucleation'
@@ -622,28 +627,33 @@ contains
                Q(1)=Q(1)+drho; Q(2)=Q(2)-drho
                Q(3)=Q(3)+de;   Q(4)=Q(4)-de
                Q(7+this%liq%ns+this%indV-1)=Q(7+this%liq%ns+this%indV-1)-drho
-               VF=drho/rhoL_new
+               ! VF=drho/rhoL_new
+               VF=VF+drho/rhoL_new
                nucleated=.true.; condensed=.true.
             end if
          end block nucleation
          ! Proceed to next step only if the cell is either interfacial or successfully nucleated from a near pure state
-         if (.not.nucleated) then
+         if ((.not.nucleated).and.(VF.lt.VFlo.or.VF.gt.VFhi)) then
             if (present(ierr)) ierr=RELAX_NUC_FAILED
             return
          end if
       end if
       ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' post-nucleation-block nucleated=',nucleated,' VF=',VF,' Q1=',Q(1),' Q2=',Q(2) ! debug
       ! Steps 1+2: mechanical + thermal
+      ! Snapshot each phase's own entry T (pre-pT_relax) so we can tell, once pT_relax
+      ! converges, how large a swing it imposed on each phase individually -- see dT_pT_max
+      ! check below, right after the shared post-pT_relax T is recovered.
+      TL0=-1.0_WP; TG0=-1.0_WP
+      if (Q(1).gt.0.0_WP.and.Q(3).gt.0.0_WP) TL0=this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
+      if (Q(2).gt.0.0_WP.and.Q(4).gt.0.0_WP) then
+         Yv=Q(7+this%liq%ns+this%indV-1)/Q(2); Yv=max(Yvmin,min(Yvmax,Yv))
+         y0(this%indV)=Yv; y0(this%indA)=1.0_WP-Yv
+         TG0=this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y0)
+      end if
       call this%pT_relax(dt,VF,Q,Pjump,ier)
       if (ier.ne.RELAX_OK) then
-         ! if (present(ierr)) ierr=ier
-         ! Nucleated: pT_relax was only ever run on the nucleated state, not on VFin/Qin --
-         ! revert and let apply() retry pT_relax fresh on the original input (if interfacial).
-         ! Not nucleated: pT_relax's own failure path leaves Q exactly as p_relax left it (the
-         ! thermal step never touches Q before its own checks), so that IS the accepted answer;
-         ! report ier as-is and change nothing further.
          if (nucleated) then
-            VF=VFin; Q=Qin
+            call undo_nucleation()
             if (present(ierr)) ierr=RELAX_NUC_FAILED
          else
             if (present(ierr)) ierr=ier
@@ -670,8 +680,31 @@ contains
          p=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
          T=this%gas%get_T_from_p_rho(p=p,rho=Q(2)/(1.0_WP-VF),y=y)
       end if
-      ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg post-pT_relax VF=',VF,' p=',p,' TL=TG=',T,' Yv=',Yv,&
-      ! &                    ' RHOL=',Q(1)/VF,' RHOG=',merge(Q(2)/(1.0_WP-VF),-1.0_WP,VF.lt.1.0_WP),' Q=',Q ! debug
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg post-pT_relax VF=',VF,' p=',p,' TL=TG=',T,' Yv=',Yv,&
+      &                    ' RHOL=',Q(1)/VF,' RHOG=',merge(Q(2)/(1.0_WP-VF),-1.0_WP,VF.lt.1.0_WP),' Q=',Q ! debug
+      ! pT_relax's thermal equilibration is only trustworthy if it didn't swing either phase's
+      ! own T further than physically reasonable for how much of that phase is present. A phase
+      ! with almost no heat capacity will always snap nearly all the way to the other phase's T
+      ! in one call -- correct physics for a well-resolved droplet, but exactly the VF~0/1
+      ! clustering artifact when that phase is a numerically-thin trace amount (e.g. deposited
+      ! by advection, see log trace for i=880,j=1055). If either phase's swing exceeds
+      ! dT_pT_max, don't trust the thermal (or downstream chemical) equilibration this call --
+      ! fall back to mechanical-only relaxation on the untouched input, deferring thermal/
+      ! chemical treatment to a later step once more of that phase's mass has accumulated and
+      ! the relaxation is no longer ill-conditioned.
+      if (((TL0.gt.0.0_WP).and.(abs(T-TL0).gt.this%dT_pT_max*TL0)).or.((TG0.gt.0.0_WP).and.(abs(T-TG0).gt.this%dT_pT_max*TG0))) then
+      ! if (((TL0.gt.0.0_WP).and.(abs(T-TL0).gt.this%dT_pT_max*TL0))) then
+         if (dbg_cell) then
+            print*,'TL0=',TL0,'TL=',T
+            print*,'TG0=',TG0,'TG=',T
+            call this%debug_dump('reverting pT',VF,Q,Pjump,ier)
+         end if
+         call undo_nucleation() ! reverts to VFin/Qin -- discards pT_relax's result too, not just any seed
+         call this%p_relax(dt,VF,Q,Pjump,ier)
+         if (dbg_cell) call this%debug_dump('p_relax',VF,Q,Pjump,ier)
+         if (present(ierr)) ierr=ier
+         call dealloc(); return
+      end if
       ! Conserve totals
       VF0=VF
       allocate(Q0(size(Q))); Q0=Q
@@ -684,109 +717,59 @@ contains
       else
          Yv0=0.0_WP
       end if
-      ! Pure-phase admissibility tests (Caze et al. trigger). Only meaningful for near pure cells
-      if (near_pure.and.(.not.nucleated)) then
-         pure_phase_bounds: block
-            real(WP), parameter :: rhoA_small=1.0e-12_WP
-            real(WP) :: rhoL_pure,eL_pure,pL_pure,TL_pure,Tsat_pure
-            real(WP) :: rhoV_pure,eV_pure,pV_pure,TV_pure
-            real(WP) :: rhoV0,Yv_gas,pG_pure,TG_pure,xv_gas,pv_gas
-            integer  :: Tsat_it_pure
-            logical  :: conv_pure
-            if (rho0.le.0.0_WP.or.rhoe0.le.0.0_WP) exit pure_phase_bounds
-            if (rhoA0/rho0.le.rhoA_small) then
-               ! No air content: literal pure-liquid / pure-vapor tests
-               rhoL_pure=rho0; eL_pure=rhoe0/rho0
-               pL_pure=this%liq%get_p_from_rho_e(rho=rhoL_pure,e=eL_pure,y=[1.0_WP])
-               TL_pure=this%liq%get_T_from_p_rho(p=pL_pure,rho=rhoL_pure,y=[1.0_WP])
-               if (TL_pure.gt.0.0_WP) then
-                  call this%get_Tsat(pL_pure,pL_pure,TL_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-                  if (conv_pure.and.TL_pure.le.Tsat_pure*(1.0_WP+this%Tsat_tol)) then
-                     VF=1.0_WP
-                     Q(1)=rho0;     Q(2)=0.0_WP
-                     Q(3)=rhoe0;    Q(4)=0.0_WP
-                     Q(7+this%liq%ns+this%indV-1)=0.0_WP
-                     call dealloc(); return
-                  end if
-               end if
-               rhoV_pure=rho0; eV_pure=rhoe0/rho0
-               y=0.0_WP; y(this%indV)=1.0_WP
-               pV_pure=this%gas%get_p_from_rho_e(rho=rhoV_pure,e=eV_pure,y=y)
-               TV_pure=this%gas%get_T_from_p_rho(p=pV_pure,rho=rhoV_pure,y=y)
-               if (pV_pure.gt.p_eps.and.TV_pure.gt.0.0_WP) then
-                  call this%get_Tsat(pV_pure,pV_pure,TV_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-                  if (conv_pure.and.TV_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
-                     VF=0.0_WP
-                     Q(1)=0.0_WP;   Q(2)=rho0
-                     Q(3)=0.0_WP;   Q(4)=rhoe0
-                     Q(7+this%liq%ns+this%indV-1)=rho0
-                     call dealloc(); return
-                  end if
-               end if
-            else
-               ! With non-condensable air: only check all-water-as-vapor gas state
-               rhoV0=rho0-rhoA0
-               if (rhoV0.le.0.0_WP) exit pure_phase_bounds
-               Yv_gas=rhoV0/rho0; Yv_gas=max(Yvmin,min(Yvmax,Yv_gas))
-               y=0.0_WP; y(this%indV)=Yv_gas; y(this%indA)=1.0_WP-Yv_gas
-               pG_pure=this%gas%get_p_from_rho_e(rho=rho0,e=rhoe0/rho0,y=y)
-               TG_pure=this%gas%get_T_from_p_rho(p=pG_pure,rho=rho0,y=y)
-               if (pG_pure.gt.p_eps.and.TG_pure.gt.0.0_WP) then
-                  xv_gas=this%get_xv(Yv_gas); pv_gas=xv_gas*pG_pure
-                  if (pv_gas.gt.p_eps) then
-                     call this%get_Tsat(pG_pure,pv_gas,TG_pure,Tsat_pure,conv_pure,Tsat_it_pure)
-                     if (conv_pure.and.TG_pure.ge.Tsat_pure*(1.0_WP-this%Tsat_tol)) then
-                        VF=0.0_WP
-                        Q(1)=0.0_WP;   Q(2)=rho0
-                        Q(3)=0.0_WP;   Q(4)=rhoe0
-                        Q(7+this%liq%ns+this%indV-1)=rhoV0
-                        call dealloc(); return
-                     end if
-                  end if
-               end if
-            end if
-         end block pure_phase_bounds
-      end if
-      ! Decide if chemical relaxation should fire.
-      ! - Nucleated: Direction is known from which branch fired (cavitated or condensed). Check for enough phase availability.
-      ! - Not nucleated: Direction isn't known a priori here; defer the enough phase availability check until after the chemical solver converges.
       if (nucleated) then
-         chem_relax=.true.
          ! Liquid wants to cavitate but there is not enough of it
-         if (cavitated.and.(Qin(1)/rho0.lt.Y_small)) chem_relax=.false.
-         ! Vapor wants to condense but there is not enough of it
-         if (condensed.and.(Yvin.lt.Y_small))        chem_relax=.false.
+         ! Qin(1)/rho0 is dead: the cavitation branch (line ~572) already requires this exact
+         ! ratio to be >=Y_small before it ever sets cavitated=.true., so it can never fire here.
+         ! What we actually want to know is whether the *remaining* liquid, after the nucleation
+         ! seed was taken, is still enough -- that's Q0(1)/rho0 (post-transfer, pre-chemical),
+         ! the same quantity already used for the non-nucleated version of this check below.
+         ! if (cavitated.and.(Qin(1)/rho0.lt.Y_small)) then
+         if (cavitated.and.((Q0(1)/rho0.lt.Y_small).or.(Qin(1)/rho0.lt.Y_small))) then
+            chem_relax=.false.
+            ier=RELAX_NUC_FAILED
+            ! Vapor wants to condense but there is not enough of it
+            ! Yvin is dead for the same reason: the condensation branch (line ~597) already
+            ! requires Yv_nuc (==Yvin) >=Y_small before setting condensed=.true.. The meaningful
+            ! check is the post-transfer remaining vapor-in-gas fraction, Yv0.
+            ! else if (condensed.and.(Yvin.lt.Y_small)) then
+         else if (condensed.and.((Yv0.lt.Y_small).or.(Yvin.lt.Y_small))) then
+            chem_relax=.false.
+            ier=RELAX_NUC_FAILED
+         else
+            chem_relax=activate_chem(p,T,Yv)
+         end if
       else if ((VF.lt.VFlo).or.(VF.gt.VFhi)) then
          chem_relax=.false.
+         ! QUESTION: Do we need to set a flag or doing anything more here? Is there any ambigiouity here?
+         ! ANSWER: No. This branch is only reached when .not.nucleated, so ier is left at
+         ! pT_relax's success value (RELAX_OK) -- exactly the right signal below ("no
+         ! chemical work needed, accept pT_relax's result"). No ambiguity: RELAX_NUC_FAILED
+         ! is only ever set by the nucleated guards above, so it can't leak in here.
       else
          chem_relax=activate_chem(p,T,Yv)
       end if
       ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg activate_chem chem_relax=',chem_relax,' p=',p,' TL=TG=',T,' Yv=',Yv,&
       ! &                    ' nucleated=',nucleated,' cavitated=',cavitated,' condensed=',condensed,' RHOL=',Q(1)/VF ! debug
       if (.not.chem_relax) then
-         ! if (present(ierr)) ierr=ier
-         ! if (ier.eq.RELAX_OK) then
-         !    call dealloc(); return
-         ! end if
-         ! if (nucleated) then
-         !    VF=VFin; Q=Qin
-         ! else
-         !    call restore()
-         ! end if
-         ! Nucleated: the seed never got to justify itself (not enough of the reducing phase),
-         ! so undo it entirely rather than leaving it baked into the solution -- ier is always
-         ! RELAX_OK on this path (activate_chem, the only thing that can change it, only runs
-         ! when .not.nucleated), so report RELAX_NUC_FAILED explicitly instead.
-         if (nucleated) then
-            VF=VFin; Q=Qin
+         if (ier.eq.RELAX_OK) then
+            ! Already relaxed
+            call restore_pT_state()
+            if (present(ierr)) ierr=RELAX_OK
+         ! Nucleation happened but chemical relaxation cannot happen
+         else if (nucleated) then
+            call undo_nucleation()
             if (present(ierr)) ierr=RELAX_NUC_FAILED
+         ! Nucleation did not happen and chemical relaxation cannot happen; this is probably never reached
          else
+            call restore_pT_state()
             if (present(ierr)) ierr=ier
-            call restore()
          end if
+         ! Return here
          call dealloc(); return
       end if
       ! Solve chemical equilibrium for p, T, Yv (without modifying Q yet)
+      Tchem0=T ! shared post-pT_relax T, before solve_lv/solve_lvg mutates it in place
       if (Yv.gt.Yv_pure) then
          Yv=Yvmax
          y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
@@ -800,18 +783,16 @@ contains
       end if
       ! Skip if not converged
       if (.not.chem_relax) then
-         ! if (present(ierr)) ierr=RELAX_FAILED
-         ! Same nucleated-revert-vs-non-nucleated-restore split as the other chem-failure exits.
          if (nucleated) then
-            VF=VFin; Q=Qin
+            call undo_nucleation()
             if (present(ierr)) ierr=RELAX_NUC_FAILED
          else
+            call restore_pT_state()
             if (present(ierr)) ierr=RELAX_FAILED
-            call restore()
          end if
          call dealloc(); return
       end if
-      ! Update Q with the converged equilibrium state
+      ! Update densities and VF
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       cvG   =sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
       cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
@@ -828,43 +809,66 @@ contains
          if (VF.lt.VF0) then
             ! Liquid turned into vapor while initial liquid content was smaller than the threshold
             if (Q0(1)/rho0.lt.Y_small) then
+               call restore_pT_state(); call dealloc()
                if (present(ierr)) ierr=RELAX_FAILED
-               call restore(); call dealloc(); return
+               return
             end if
          else if (VF.gt.VF0) then
             ! Vapor turned into liquid while initial vapor content was smaller than the threshold
             if (Yv0.lt.Y_small) then
+               call restore_pT_state(); call dealloc()
                if (present(ierr)) ierr=RELAX_FAILED
-               call restore(); call dealloc(); return
+               return
             end if
          end if
       end if
+      ! Chemical relaxation shouldn't be allowed to swing the shared T further than physically
+      ! reasonable for how little of the reducing phase it's redistributing energy through --
+      ! mirrors the dT_nuc_max self-heating cap used in nucleation (line ~547), but for the
+      ! chemical solve itself. A sparse phase (small mass, small heat capacity) can satisfy the
+      ! saturation residual (Fsat->0) with only a small absolute energy transfer that still
+      ! produces a large relative T swing -- the mass-fraction check above (Y_small) doesn't
+      ! catch this, since a mass fraction well above Y_small can still have too little heat
+      ! capacity to absorb the equilibration without swinging T. This is the VF~0/1 clustering
+      ! issue: a cell can pass every existing guard and still overshoot in T.
+      ! if (abs(T-Tchem0).gt.this%dT_chem_max*Tchem0) then
+      !    if (nucleated) then
+      !       call undo_nucleation()
+      !       if (present(ierr)) ierr=RELAX_NUC_FAILED
+      !    else
+      !       call restore_pT_state()
+      !       if (present(ierr)) ierr=RELAX_FAILED
+      !    end if
+      !    call dealloc(); return
+      ! end if
+      ! Update Q with the converged equilibrium state
       Q(1)=(       VF)*RHOL
       Q(2)=(1.0_WP-VF)*RHOG
       Q(3)=Q(1)*this%liq%get_e_from_p_T(p=p,T=T,y=[1.0_WP])
       Q(4)=Q(2)*this%gas%get_e_from_p_T(p=p,T=T,y=y)
       Q(7+this%liq%ns+this%indV-1)=Q(2)*Yv
+      ! Evaluate conservation
       if (.not.check_cons()) then
-         ! if (present(ierr)) ierr=RELAX_FAILED
-         ! call restore(); call dealloc(); return
-         ! Same nucleated-revert-vs-non-nucleated-restore split as the chem_relax=.false. exit
-         ! above, for consistency: a converged-but-inconsistent solve is just as much a reason
-         ! to undo an unjustified nucleation seed as a non-converged one.
          if (nucleated) then
-            VF=VFin; Q=Qin
+            call undo_nucleation()
             if (present(ierr)) ierr=RELAX_NUC_FAILED
          else
+            call restore_pT_state()
             if (present(ierr)) ierr=RELAX_FAILED
-            call restore()
          end if
          call dealloc(); return
       end if
       call dealloc()
       if (present(ierr)) ierr=ier
    contains
-      subroutine restore()
+      subroutine restore_pT_state()
          VF=VF0; Q=Q0
-      end subroutine restore
+      end subroutine restore_pT_state
+      subroutine undo_nucleation()
+         ! Also (ab)used as a general revert-to-entry before falling back to p_relax when
+         ! pT_relax's swing exceeds dT_pT_max -- not just for undoing a nucleation seed.
+         VF=VFin; Q=Qin
+      end subroutine undo_nucleation
       subroutine dealloc()
          if (allocated(Q0)) deallocate(Q0)
          if (allocated(y))  deallocate(y)
