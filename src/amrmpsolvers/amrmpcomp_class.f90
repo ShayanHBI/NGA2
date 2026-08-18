@@ -16,6 +16,10 @@ module amrmpcomp_class
    ! Expose type and constants
    public :: amrmpcomp,VFlo,VFhi,BC_LIQ,BC_GAS,BC_REFLECT,BC_USER
 
+   ! cluster_relax split-back method selector
+   integer, parameter, public :: cap_redist=1  !< capacity-weighted VF split (legacy)
+   integer, parameter, public :: geo_redist=2  !< PLIC-geometric VF split
+
    !> AMR compressible multiphase solver type
    type, extends(amrmpflow) :: amrmpcomp
 
@@ -41,6 +45,12 @@ module amrmpcomp_class
       real(WP) :: merge_VFlo=0.01_WP    !< small-liquid bound: only VF below this may be merged (subgrid liquid)
       real(WP) :: merge_VFhi=0.99_WP    !< small-gas    bound: only VF above this may be merged (subgrid gas)
       real(WP) :: merge_sick=100.0_WP   !< One-sided deficit factor: a gas whose density or specific energy is this many times BELOW its fullest neighbour's merges at any VF
+
+      ! Pre-relaxation clustering
+      logical  :: cluster_on=.true.    !< enable cluster_relax (called from apply_relax, ahead of its per-cell relax loop)
+      real(WP) :: cluster_VFlo=0.05_WP  !< thin-liquid claimant bound for cluster_relax
+      real(WP) :: cluster_VFhi=0.95_WP  !< thin-gas    claimant bound for cluster_relax
+      integer  :: redist_method=geo_redist !< cluster_relax split-back method: cap_redist or geo_redist
 
       ! Phase rescue: user-specified minimal (P,T) per phase, enforced in clean_Q wherever the
       ! phase exists (all levels, every substep), by adding mass and/or energy toward the
@@ -80,6 +90,9 @@ module amrmpcomp_class
       type(amrdata) :: beta              !< Bulk viscosity
       type(amrdata) :: diffL,diffG       !< Phasic heat diffusivities (liquid, gas)
       real(WP) :: sigma                  !< Surface tension coefficient
+
+      ! Diagnostics
+      type(amrdata) :: cluster_idx       !< Per-cell cluster_relax pool id (0=unpooled), for viz
 
       ! CFL numbers
       real(WP) :: CFLst=0.0_WP                               !< Surface tension
@@ -145,6 +158,7 @@ module amrmpcomp_class
       procedure :: build_plic
       procedure :: clean_Q
       procedure :: merge_Q
+      procedure :: cluster_relax
       procedure :: debug_probe_cell ! debug
       procedure :: apply_relax
       procedure :: add_viscartif
@@ -354,6 +368,9 @@ contains
       call this%beta%initialize(amr,name='beta',ncomp=1,ng=this%nover); this%beta%parent=>this
       call this%diffL%initialize(amr,name='diffL',ncomp=1,ng=this%nover); this%diffL%parent=>this
       call this%diffG%initialize(amr,name='diffG',ncomp=1,ng=this%nover); this%diffG%parent=>this
+
+      ! Initialize diagnostics
+      call this%cluster_idx%initialize(amr,name='cluster_idx',ncomp=1,ng=this%nover); this%cluster_idx%parent=>this
       if (.not.amr%xper) then
          this%visc%lo_bc(1,1)=amrex_bc_foextrap; this%visc%hi_bc(1,1)=amrex_bc_foextrap
          this%beta%lo_bc(1,1)=amrex_bc_foextrap; this%beta%hi_bc(1,1)=amrex_bc_foextrap
@@ -415,6 +432,8 @@ contains
       call this%C%finalize()
       ! Physical properties
       call this%visc%finalize(); call this%beta%finalize(); call this%diffL%finalize(); call this%diffG%finalize()
+      ! Diagnostics
+      call this%cluster_idx%finalize()
       ! Nullify pointers
       nullify(this%user_init); nullify(this%user_tagging); nullify(this%user_bc); nullify(this%user_vofbc)
       nullify(this%liq); nullify(this%gas)
@@ -453,6 +472,7 @@ contains
       call this%beta%reset_level(lvl,ba,dm)
       call this%diffL%reset_level(lvl,ba,dm)
       call this%diffG%reset_level(lvl,ba,dm)
+      call this%cluster_idx%reset_level(lvl,ba,dm); call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
       ! Zero out everything
       call this%UVW%setval(val=0.0_WP,lvl=lvl)
       call this%RHOL%setval(val=0.0_WP,lvl=lvl); call this%RHOG%setval(val=0.0_WP,lvl=lvl)
@@ -468,6 +488,7 @@ contains
       call this%beta%setval(val=0.0_WP,lvl=lvl)
       call this%diffL%setval(val=0.0_WP,lvl=lvl)
       call this%diffG%setval(val=0.0_WP,lvl=lvl)
+      call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
    end subroutine on_init
 
    !> Override on_coarse: create new fine level from coarse using conservative interpolation
@@ -493,6 +514,7 @@ contains
       call this%beta%reset_level(lvl,ba,dm)
       call this%diffL%reset_level(lvl,ba,dm)
       call this%diffG%reset_level(lvl,ba,dm)
+      call this%cluster_idx%reset_level(lvl,ba,dm); call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
    end subroutine on_coarse
 
    !> Override on_remake: migrate data on regrid using conservative interpolation
@@ -518,6 +540,7 @@ contains
       call this%beta%reset_level(lvl,ba,dm)
       call this%diffL%reset_level(lvl,ba,dm)
       call this%diffG%reset_level(lvl,ba,dm)
+      call this%cluster_idx%reset_level(lvl,ba,dm); call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
    end subroutine on_remake
 
    !> Override on_clear: delete level
@@ -540,6 +563,7 @@ contains
       call this%beta%clear_level(lvl)
       call this%diffL%clear_level(lvl)
       call this%diffG%clear_level(lvl)
+      call this%cluster_idx%clear_level(lvl)
    end subroutine on_clear
 
    !> Override post_regrid: average down for C/F consistency
@@ -760,8 +784,18 @@ contains
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
                div=dxi*(pU(i+1,j,k,1)-pU(i,j,k,1))+dyi*(pV(i,j+1,k,1)-pV(i,j,k,1))+dzi*(pW(i,j,k+1,1)-pW(i,j,k,1))
                coeff=1.0_WP; if (present(mask)) coeff=pMask(i,j,k,1)
+               ! debug: confirm add_phasic_pressure's per-phase pdV split at the traced cell
+               ! if (lvl.eq.this%amr%maxlvl.and.i.eq.965.and.j.eq.1030.and.k.eq.0) then
+               !    print*,'ADD_PHASIC_PRESSURE i=',i,' j=',j,' VF=',pVF(i,j,k,1),' PL=',pPL(i,j,k,1),' PG=',pPG(i,j,k,1),&
+               !    &      ' div=',div,' dQ3=',-scale*coeff*(pVF(i,j,k,1))*pPL(i,j,k,1)*div,&
+               !    &      ' dQ4=',-scale*coeff*(1.0_WP-pVF(i,j,k,1))*pPG(i,j,k,1)*div,&
+               !    &      ' pre Q3=',pQ(i,j,k,3),' pre Q4=',pQ(i,j,k,4)
+               ! end if
                pQ(i,j,k,3)=pQ(i,j,k,3)-scale*coeff*(       pVF(i,j,k,1))*pPL(i,j,k,1)*div
                pQ(i,j,k,4)=pQ(i,j,k,4)-scale*coeff*(1.0_WP-pVF(i,j,k,1))*pPG(i,j,k,1)*div
+               ! if (lvl.eq.this%amr%maxlvl.and.i.eq.965.and.j.eq.1030.and.k.eq.0) then
+               !    print*,'ADD_PHASIC_PRESSURE i=',i,' j=',j,' post Q3=',pQ(i,j,k,3),' post Q4=',pQ(i,j,k,4)
+               ! end if
             end do; end do; end do
          end do
          call this%amr%mfiter_destroy(mfi)
@@ -1081,6 +1115,7 @@ contains
       use amrex_amr_module, only: amrex_mfiter,amrex_box
       use mpi_f08, only: MPI_Wtime
       use messager, only: die
+      use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j,dbg_k ! debug
       implicit none
       class(amrmpcomp), intent(inout) :: this
       type(amrdata), intent(in) :: Q
@@ -1121,6 +1156,7 @@ contains
             ! Loop over grown tiles
             bx=mfi%growntilebox(this%nover)
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               dbg_cell=(i.eq.dbg_i.and.j.eq.dbg_j.and.k.eq.dbg_k) ! debug
                ! Compute mixture velocity from momentum
                irho=1.0_WP/max(pQ(i,j,k,1)+pQ(i,j,k,2),this%rho_floor)
                pUVW(i,j,k,1)=pQ(i,j,k,5)*irho
@@ -1151,6 +1187,11 @@ contains
                   CL            =0.0_WP
                   if (this%liq%ns.gt.1) pYl(i,j,k,:)=0.0_WP
                end if
+               ! if (dbg_cell) then ! debug
+               !    print*,'--------------------------------------------------'
+               !    print*,'inside get_primitive, VF=',pVF(i,j,k,1),' Q1=',pQ(i,j,k,1),' Q3=',pQ(i,j,k,3)
+               !    print*,'   RHOL=',pRHOL(i,j,k,1),' IL=',pIL(i,j,k,1),' TL=',pTL(i,j,k,1)
+               ! end if
                ! Get gas primitive variables
                if (pVF(i,j,k,1).le.VFhi.and.pQ(i,j,k,2).gt.0.0_WP) then
                   pRHOG(i,j,k,1)=pQ(i,j,k,2)/(1.0_WP-pVF(i,j,k,1))
@@ -2282,10 +2323,11 @@ contains
 
    end subroutine get_dQdt
 
-   !> debug: print Q/RHOL/RHOG/PL/PG/TL/TG for one hardcoded target cell, unconditional
+   !> debug: print Q/RHOL/RHOG/PL/PG/TL/TG for the (dbg_i,dbg_j,dbg_k) target cell, unconditional
    !> (used to split build_plic's parent-reconstruction / merge_Q / clean_Q steps apart)
    subroutine debug_probe_cell(this,label)
       use amrex_amr_module, only: amrex_mfiter,amrex_box
+      use relax_igmix_sg_class, only: dbg_i,dbg_j,dbg_k ! debug
       implicit none
       class(amrmpcomp), intent(inout) :: this
       character(len=*), intent(in) :: label
@@ -2295,9 +2337,6 @@ contains
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
       real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
       real(WP), dimension(2) :: y
-      integer, dimension(2), parameter :: tis=[0,0],tjs=[1092,1093] ! debug: TL/TG overshoot cells, t~10.5011
-      integer :: tk,ic,ti,tj
-      tk=0
       if (this%amr%clvl().lt.this%amr%maxlvl) return
       lvl=this%amr%maxlvl
       call this%amr%mfiter_build(lvl,mfi)
@@ -2305,29 +2344,30 @@ contains
          pVF=>this%VF%mf(lvl)%dataptr(mfi)
          pQ =>this%Q%mf(lvl)%dataptr(mfi)
          bx=mfi%tilebox()
-         do ic=1,2
-            ti=tis(ic); tj=tjs(ic)
-         if (ti.ge.bx%lo(1).and.ti.le.bx%hi(1).and.tj.ge.bx%lo(2).and.tj.le.bx%hi(2).and.tk.ge.bx%lo(3).and.tk.le.bx%hi(3)) then
-            VFc=pVF(ti,tj,tk,1)
+         if (dbg_i.ge.bx%lo(1).and.dbg_i.le.bx%hi(1).and.dbg_j.ge.bx%lo(2).and.dbg_j.le.bx%hi(2).and. &
+         &   dbg_k.ge.bx%lo(3).and.dbg_k.le.bx%hi(3)) then
+            VFc=pVF(dbg_i,dbg_j,dbg_k,1)
             RHOL=-1.0_WP; RHOG=-1.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP
-            if (VFc.gt.0.0_WP.and.pQ(ti,tj,tk,1).gt.0.0_WP) then
-               RHOL=pQ(ti,tj,tk,1)/VFc
-               eL=pQ(ti,tj,tk,3)/pQ(ti,tj,tk,1)
+            if (VFc.gt.0.0_WP.and.pQ(dbg_i,dbg_j,dbg_k,1).gt.0.0_WP) then
+               RHOL=pQ(dbg_i,dbg_j,dbg_k,1)/VFc
+               eL=pQ(dbg_i,dbg_j,dbg_k,3)/pQ(dbg_i,dbg_j,dbg_k,1)
                PL=this%liq%get_p_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
                TL=this%liq%get_T_from_p_rho(p=PL,rho=RHOL,y=[1.0_WP])
             end if
-            if (VFc.lt.1.0_WP.and.pQ(ti,tj,tk,2).gt.0.0_WP) then
-               RHOG=pQ(ti,tj,tk,2)/(1.0_WP-VFc)
-               eG=pQ(ti,tj,tk,4)/pQ(ti,tj,tk,2)
-               Yv=pQ(ti,tj,tk,8)/pQ(ti,tj,tk,2)
+            if (VFc.lt.1.0_WP.and.pQ(dbg_i,dbg_j,dbg_k,2).gt.0.0_WP) then
+               RHOG=pQ(dbg_i,dbg_j,dbg_k,2)/(1.0_WP-VFc)
+               eG=pQ(dbg_i,dbg_j,dbg_k,4)/pQ(dbg_i,dbg_j,dbg_k,2)
+               Yv=pQ(dbg_i,dbg_j,dbg_k,8)/pQ(dbg_i,dbg_j,dbg_k,2)
                y=[Yv,1.0_WP-Yv]
                PG=this%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=y)
                TG=this%gas%get_T_from_p_rho(p=PG,rho=RHOG,y=y)
             end if
-            print*,'PROBE[',trim(label),'] i=',ti,' j=',tj,' VF=',VFc,' Q=',pQ(ti,tj,tk,1:8),&
-            &      ' RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG ! debug
+            print*,'--------------------------------------------------'
+            print*,'inside debug_probe_cell, ',trim(label)
+            print*,'   i=',dbg_i,' j=',dbg_j,' k=',dbg_k,' VF=',VFc
+            print*,'   Q=',pQ(dbg_i,dbg_j,dbg_k,1:8)
+            print*,'   RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG
          end if
-         end do
       end do
       call this%amr%mfiter_destroy(mfi)
    end subroutine debug_probe_cell
@@ -2681,13 +2721,657 @@ contains
       end function lclaim
    end subroutine merge_Q
 
+   subroutine cluster_relax(this,dt,time,cskip)
+      use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
+      use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j,dbg_k ! debug
+      use amrvof_geometry, only: get_plane_dist,cut_hex_vol
+      use messager, only: die
+      implicit none
+      class(amrmpcomp), intent(inout) :: this
+      real(WP), intent(in) :: dt,time
+      type(amrex_multifab), intent(inout) :: cskip
+      integer :: lvl,i,j,k,f,d,ia,ja,ka,ierr,npay,nc,nmem,msk
+      integer, dimension(3,6) :: foff
+      integer, dimension(6)   :: fopp
+      type(amrex_mfiter) :: mfi
+      type(amrex_box)    :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pP,pS,pI,pCidx,pPLIC
+      type(amrex_multifab) :: pool,idpool
+      logical, dimension(6) :: acc
+      real(WP), dimension(6) :: mVF,wlf,rawcapf ! old capacity-weight scheme -- unused now, kept for reference (see below)
+      real(WP), dimension(this%nQ,6) :: mQ
+      real(WP) :: VFpool0,VFpool1,dVF,Pjpool,rawVFsum,rawGFsum,nM,wl0,s,newVF
+      real(WP) :: rawcap0,rawcapsum
+      real(WP) :: Mtot,KEtot,KEpool,Ediss,cid
+      real(WP), dimension(3) :: u_pool
+      real(WP), dimension(this%nQ) :: Qpool0,Qpool1,dQ,newQ
+      integer :: nclust_events,nclust_cells,local_id ! debug: activation counters
+      logical :: dbg ! debug: trace one cluster in detail
+      real(WP) :: RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_ ! debug: pool thermo trace
+      ! Cluster's post-relax intensive state -- shared by every member on redistribution (see
+      ! redist below) so that every cell of the pool ends up at the SAME TL,PL,RHOL and
+      ! TG,PG,RHOG as the cluster, not merely conserving the pool's totals under independent
+      ! mass/energy weighting.
+      real(WP) :: RHOL_c,RHOG_c,eL_c,eG_c
+      real(WP), dimension(this%liq%ns-1) :: Yl_c
+      real(WP), dimension(this%gas%ns-1) :: Yg_c
+      ! Geometric redistribution: each pool member's own PLIC (normal+offset, from this%plic) and
+      ! cell box, used to find the ONE shared physical interface displacement (delta) that
+      ! reproduces the pool's exact VF change -- see geo_split/eval_VFnew below.
+      real(WP) :: dx,dy,dz,cell_vol
+      real(WP), dimension(3) :: nrm0
+      real(WP) :: d0
+      logical :: valid0
+      real(WP), dimension(3,8) :: hex0
+      real(WP), dimension(3,6) :: nrmf
+      real(WP), dimension(6) :: df
+      logical, dimension(6) :: validf
+      real(WP), dimension(3,8,6) :: hexf
+      real(WP) :: delta
+      nclust_events=0; nclust_cells=0; local_id=0 ! debug
+      ! Return if disabled
+      if (.not.this%cluster_on) return
+      if (.not.associated(this%relax)) return
+      ! Finest level only (mixture cells live there)
+      if (this%amr%clvl().lt.this%amr%maxlvl) return
+      lvl=this%amr%maxlvl
+      dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl); cell_vol=this%amr%cell_vol(lvl)
+      foff(:,1)=[-1,0,0]; foff(:,2)=[1,0,0]; foff(:,3)=[0,-1,0]; foff(:,4)=[0,1,0]; foff(:,5)=[0,0,-1]; foff(:,6)=[0,0,1]
+      fopp=[2,1,4,3,6,5]
+      ! Pooled-state field: 1 own slot + 6 face slots, each (nQ+1) reals (Q then VF), plus 1 acceptance bitmask
+      npay=this%nQ+1; nc=7*npay+1
+      call this%amr%mfab_build(lvl,pool,ncomp=nc,nover=1,atface=[.false.,.false.,.false.])
+      call pool%setval(0.0_WP)
+      ! idpool: per-slot pool id (0=unpooled), 1 own + 6 face slots, mirrors pool's slot layout
+      call this%amr%mfab_build(lvl,idpool,ncomp=7,nover=1,atface=[.false.,.false.,.false.])
+      call idpool%setval(0.0_WP)
+      ! ---- Pass 1: each eligible reservoir pools with its accepted claimants and solves once ----
+      call this%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
+         pCurv=>this%curv%dataptr(mfi); pP=>pool%dataptr(mfi); pI=>idpool%dataptr(mfi)
+         pPLIC=>this%plic%dataptr(mfi)
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            ! reservoir-eligible cells build a pool; a thin-liquid claimant paired with a
+            ! thin-gas neighbour (pair_leader) may also lead one -- see pair_leader above
+            if (claimant(i,j,k).and..not.pair_leader(i,j,k)) cycle
+            VFpool0=pVF(i,j,k,1); Qpool0=pQ(i,j,k,1:this%nQ); Pjpool=this%sigma*pCurv(i,j,k,1); nmem=0
+            ! Own cell's PLIC (normal,offset) and cell box -- geometric redistribution below
+            nrm0=pPLIC(i,j,k,1:3); d0=pPLIC(i,j,k,4); valid0=(abs(d0).lt.1.0e9_WP)
+            call build_hex([this%amr%xlo+real(i,WP)*dx,this%amr%ylo+real(j,WP)*dy,this%amr%zlo+real(k,WP)*dz], &
+            &              [this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz],hex0)
+            do f=1,6
+               acc(f)=.false.
+               ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
+               if (claimant(ia,ja,ka).and.partner_dir(ia,ja,ka).eq.fopp(f)) then
+                  acc(f)=.true.; nmem=nmem+1
+                  mVF(f)=pVF(ia,ja,ka,1); mQ(:,f)=pQ(ia,ja,ka,1:this%nQ)
+                  VFpool0=VFpool0+mVF(f); Qpool0=Qpool0+mQ(:,f); Pjpool=Pjpool+this%sigma*pCurv(ia,ja,ka,1)
+                  ! Member's own PLIC (normal,offset) and cell box -- geometric redistribution below
+                  nrmf(:,f)=pPLIC(ia,ja,ka,1:3); df(f)=pPLIC(ia,ja,ka,4); validf(f)=(abs(df(f)).lt.1.0e9_WP)
+                  call build_hex([this%amr%xlo+real(ia,WP)*dx,this%amr%ylo+real(ja,WP)*dy,this%amr%zlo+real(ka,WP)*dz], &
+                  &              [this%amr%xlo+real(ia+1,WP)*dx,this%amr%ylo+real(ja+1,WP)*dy,this%amr%zlo+real(ka+1,WP)*dz], &
+                  &              hexf(:,:,f))
+               end if
+            end do
+            ! dbg_cell: does this pool (reservoir i,j,k + its accepted members) touch the debug
+            ! target (dbg_i,dbg_j,dbg_k), either as the reservoir itself or as an accepted member?
+            dbg_cell=(i.eq.dbg_i.and.j.eq.dbg_j.and.k.eq.dbg_k) ! debug
+            do f=1,6
+               if (acc(f).and.i+foff(1,f).eq.dbg_i.and.j+foff(2,f).eq.dbg_j.and.k+foff(3,f).eq.dbg_k) dbg_cell=.true. ! debug
+            end do
+            if (nmem.eq.0) cycle
+            nclust_events=nclust_events+1; nclust_cells=nclust_cells+nmem+1 ! debug
+            ! dbg=(this%amr%rank.eq.0.and.nclust_events.eq.1) ! debug: trace only the first pool on rank 0
+            ! if (dbg) then
+            !    print*,'CLUSTER reservoir i=',i,' j=',j,' k=',k,' VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
+            !    do f=1,6
+            !       if (acc(f)) print*,'CLUSTER member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f),&
+            !       &                  ' VF=',mVF(f),' Q=',mQ(:,f)
+            !    end do
+            ! end if
+            if (dbg_cell) then ! debug
+               print*,'--------------------------------------------------'
+               print*,'inside cluster_relax, reservoir i=',i,' j=',j,' k=',k
+               print*,'   this cell is part of a CLUSTER of',nmem+1,' cells (this reservoir + ',nmem,' accepted member(s))'
+               print*,'   VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
+               do f=1,6
+                  if (acc(f)) then
+                     print*,'   member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
+                     print*,'   VF=',mVF(f),' Q=',mQ(:,f)
+                  end if
+               end do
+            end if
+            ! debug: reservoir-alone diagnostic -- relax this reservoir's own (unpooled) state on a
+            ! throwaway copy, to see whether the overshoot is already present before pooling
+            if (dbg_cell) then
+               block
+                  real(WP) :: VFdiag,TLd0,TGd0,TLd1,TGd1,RHOLd,RHOGd,PLd,PGd,eLd,eGd,Yvd
+                  real(WP), dimension(this%nQ) :: Qdiag
+                  integer :: ierrd
+                  logical :: dbg_save
+                  VFdiag=pVF(i,j,k,1); Qdiag=pQ(i,j,k,1:this%nQ)
+                  call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd0,TGd0,eLd,eGd,Yvd)
+                  dbg_save=dbg_cell; dbg_cell=.false.
+                  call this%relax%apply(dt=dt,VF=VFdiag,Q=Qdiag,Pjump=this%sigma*pCurv(i,j,k,1),ierr=ierrd)
+                  dbg_cell=dbg_save
+                  call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd1,TGd1,eLd,eGd,Yvd)
+                  print*,'   [diag] reservoir ALONE (unpooled), pre : VF=',pVF(i,j,k,1),' TL=',TLd0,' TG=',TGd0
+                  print*,'   [diag] reservoir ALONE (unpooled), post: VF=',VFdiag,' TL=',TLd1,' TG=',TGd1,' ierr=',ierrd
+               end block
+            end if
+            local_id=local_id+1; cid=real(this%amr%rank,WP)*1.0e4_WP+real(local_id,WP)
+            pI(i,j,k,1)=cid
+            do f=1,6
+               if (acc(f)) pI(i,j,k,f+1)=cid
+            end do
+            nM=real(nmem+1,WP)
+            ! Pool velocity and mixing dissipation, computed from raw (un-normalized) sums before
+            ! dividing by nM. u_pool is the pool's TOTAL-mass-weighted velocity (own+claimants,
+            ! each member's own u_m=Q_m(5:7)/(Q_m(1)+Q_m(2))); since Qpool0(5:7) is already the raw
+            ! sum of every member's own momentum at this point, Qpool0(5:7)/[Qpool0(1)+Qpool0(2)]
+            ! *is* that mass-weighted average -- no extra loop needed. Forcing every member to this
+            ! one shared velocity (see redist) loses kinetic energy (mixing dissipation, mirroring
+            ! merge_Q's eG=(sE+0.5*(sKE-|sMom|^2/sM))/sM); that lost KE is added to the pool's
+            ! internal energy (split by mass fraction) so apply()'s energy conservation isn't
+            ! silently violated by pooling itself.
+            Mtot=Qpool0(1)+Qpool0(2)
+            u_pool=Qpool0(5:7)/Mtot
+            KEtot=sum(pQ(i,j,k,5:7)**2)/(pQ(i,j,k,1)+pQ(i,j,k,2))
+            do f=1,6
+               if (acc(f)) KEtot=KEtot+sum(mQ(5:7,f)**2)/(mQ(1,f)+mQ(2,f))
+            end do
+            KEpool=sum(Qpool0(5:7)**2)/Mtot
+            Ediss=max(0.0_WP,0.5_WP*(KEtot-KEpool))
+            Qpool0(3)=Qpool0(3)+Ediss*(Qpool0(1)/Mtot)
+            Qpool0(4)=Qpool0(4)+Ediss*(Qpool0(2)/Mtot)
+            VFpool0=VFpool0/nM; Qpool0=Qpool0/nM; Pjpool=Pjpool/nM
+            ! if (dbg) print*,'CLUSTER pool nM=',nM,' u_pool=',u_pool,' Ediss=',Ediss,' PRE  VF=',VFpool0,' Q=',Qpool0
+            if (dbg_cell) then ! debug
+               call get_thermo(VFpool0,Qpool0,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   pool nM=',nM,' u_pool=',u_pool,' Ediss=',Ediss
+               print*,'   PRE VF=',VFpool0,' Q=',Qpool0
+               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+            end if
+            VFpool1=VFpool0; Qpool1=Qpool0
+            if (dbg_cell) print*,'   relax%apply below runs on the POOLED cluster state, not on this cell alone' ! debug
+            call this%relax%apply(dt=dt,VF=VFpool1,Q=Qpool1,Pjump=Pjpool,ierr=ierr) ! debug: dbg_cell already set above, gates apply()'s own trace
+            dVF=VFpool1-VFpool0; dQ=Qpool1-Qpool0
+            ! Cluster's post-relax intensive state, shared by every member below
+            RHOL_c=0.0_WP; eL_c=0.0_WP
+            if (VFpool1.gt.0.0_WP.and.Qpool1(1).gt.0.0_WP) then
+               RHOL_c=Qpool1(1)/VFpool1; eL_c=Qpool1(3)/Qpool1(1)
+            end if
+            RHOG_c=0.0_WP; eG_c=0.0_WP
+            if (VFpool1.lt.1.0_WP.and.Qpool1(2).gt.0.0_WP) then
+               RHOG_c=Qpool1(2)/(1.0_WP-VFpool1); eG_c=Qpool1(4)/Qpool1(2)
+            end if
+            if (this%liq%ns.gt.1.and.Qpool1(1).gt.0.0_WP) Yl_c=Qpool1(this%Yl_lo:this%Yl_hi)/Qpool1(1)
+            if (this%gas%ns.gt.1.and.Qpool1(2).gt.0.0_WP) Yg_c=Qpool1(this%Yg_lo:this%Yg_hi)/Qpool1(2)
+            ! if (dbg) print*,'CLUSTER pool ierr=',ierr,' POST VF=',VFpool1,' Q=',Qpool1,' dVF=',dVF,' dQ=',dQ
+            if (dbg_cell) then ! debug
+               call get_thermo(VFpool1,Qpool1,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   pool ierr=',ierr
+               print*,'   POST VF=',VFpool1,' Q=',Qpool1,' dVF=',dVF,' dQ=',dQ
+               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+            end if
+            ! ---- Solve this pool's redistribution, per this%redist_method (apply_redist below
+            ! dispatches each member's actual VF/Q rebuild to the matching subroutine) ----
+            select case (this%redist_method)
+            case (cap_redist)
+               ! Split-back weights, capacity-based: give more of the pool's delta to whichever
+               ! member has more room in the direction the pool is moving -- remaining gas volume
+               ! (1-VF) when condensing (dVF>=0), remaining liquid volume (VF) when evaporating
+               ! (dVF<0). One weight per member governs its VF share; redist() (called from
+               ! apply_redist below) rebuilds that member's liquid and gas Q directly from the
+               ! shared cluster state, so there is no separate gas-side weight to track.
+               if (dVF.ge.0.0_WP) then; rawcap0=1.0_WP-pVF(i,j,k,1); else; rawcap0=pVF(i,j,k,1); end if
+               rawcapsum=rawcap0
+               rawcapf=0.0_WP
+               do f=1,6
+                  if (.not.acc(f)) cycle
+                  if (dVF.ge.0.0_WP) then; rawcapf(f)=1.0_WP-mVF(f); else; rawcapf(f)=mVF(f); end if
+                  rawcapsum=rawcapsum+rawcapf(f)
+               end do
+               if (rawcapsum.gt.0.0_WP) then; wl0=rawcap0/rawcapsum; else; wl0=1.0_WP/nM; end if
+               do f=1,6
+                  if (.not.acc(f)) cycle
+                  if (rawcapsum.gt.0.0_WP) then; wlf(f)=rawcapf(f)/rawcapsum; else; wlf(f)=1.0_WP/nM; end if
+               end do
+               ! Safety scale: the weight factor nM*w_m applied to a dominant member (large w_m)
+               ! is NOT bounded by 1 -- e.g. a 7-member group's dominant reservoir can have w_m
+               ! close to 1, so it would receive up to nM (7x) the pool's raw change, easily
+               ! pushing its own VF far outside [0,1]. s in [0,1] is the largest common (whole-
+               ! group, so conservation is preserved for ANY s) fraction of the pooled VF change
+               ! that keeps every member's VF in [0,1]
+               s=1.0_WP
+               call bound_scale(pVF(i,j,k,1),wl0,s)
+               do f=1,6
+                  if (acc(f)) call bound_scale(mVF(f),wlf(f),s)
+               end do
+               if (dbg_cell) print*,'   weights wl0=',wl0,' wlf=',wlf,' s=',s ! debug
+            case (geo_redist)
+               ! Geometric redistribution: find the ONE shared physical interface displacement
+               ! (delta) that, applied along each pool member's OWN fixed PLIC normal, reproduces
+               ! the pool's exact VF change (geo_split/eval_VFnew below). Unlike cap_redist, this
+               ! is a genuine root-find to the exact target, so mass/energy conservation is exact
+               ! for any pool (not just when no member needed bound_scale's clipping), and VF
+               ! boundedness comes from the interface's own geometric saturation at VF=0/1, not an
+               ! artificial linear clamp.
+               call geo_split(delta)
+               if (dbg_cell) print*,'   geo delta=',delta,' own valid0=',valid0 ! debug
+            case default
+               call die('[cluster_relax] unknown redist_method')
+            end select
+            ! Own (reservoir) share
+            call apply_redist(pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),valid0,hex0,nrm0,d0,wl0,newVF,newQ)
+            if (dbg_cell) then ! debug
+               call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   own redist i=',i,' j=',j,' k=',k
+               print*,'   newVF=',newVF,' newQ=',newQ
+               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+            end if
+            pP(i,j,k,1:this%nQ)=newQ; pP(i,j,k,this%nQ+1)=newVF
+            msk=0
+            do f=1,6
+               if (.not.acc(f)) cycle
+               ! dbg_cell already announced 'inside cluster_relax' above if this pool touches the
+               ! target -- print every member of the cluster here, not just the traced one, so the
+               ! whole cluster's post-redistribution state is visible together
+               if (dbg_cell) then ! debug
+                  print*,'   PRE member redist f=',f,' reservoir=(',i,j,k,')'
+                  print*,'   mVF=',mVF(f),' mQ1=',mQ(1,f),' mQ3=',mQ(3,f),' validf=',validf(f)
+               end if
+               call apply_redist(mVF(f),mQ(:,f),validf(f),hexf(:,:,f),nrmf(:,f),df(f),wlf(f),newVF,newQ)
+               if (dbg_cell) then ! debug
+                  call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+                  print*,'   member redist f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
+                  print*,'   newVF=',newVF,' newQ=',newQ
+                  print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+                  print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+               end if
+               pP(i,j,k,f*npay+1:f*npay+this%nQ)=newQ; pP(i,j,k,f*npay+this%nQ+1)=newVF
+               msk=ibset(msk,f)
+            end do
+            pP(i,j,k,nc)=real(msk,WP)
+            ! Clean summary: final individual (VF,Q,thermo) of every cell in this cluster,
+            ! read back from pP (already holds each cell's post-redistribution share), all
+            ! together in one place instead of scattered across the weight/redist steps above
+            if (dbg_cell) then ! debug
+               print*,'--------------------------------------------------'
+               print*,'inside cluster_relax, final state of every cell in this cluster:'
+               call get_thermo(pP(i,j,k,this%nQ+1),pP(i,j,k,1:this%nQ),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   reservoir i=',i,' j=',j,' k=',k
+               print*,'   VF=',pP(i,j,k,this%nQ+1),' Q=',pP(i,j,k,1:this%nQ)
+               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+               do f=1,6
+                  if (.not.acc(f)) cycle
+                  call get_thermo(pP(i,j,k,f*npay+this%nQ+1),pP(i,j,k,f*npay+1:f*npay+this%nQ), &
+                  &               RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+                  print*,'   member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
+                  print*,'   VF=',pP(i,j,k,f*npay+this%nQ+1),' Q=',pP(i,j,k,f*npay+1:f*npay+this%nQ)
+                  print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+                  print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+               end do
+            end if
+         end do; end do; end do
+      end do
+      call this%amr%mfiter_destroy(mfi)
+      call pool%fill_boundary(this%amr%geom(lvl))
+      call idpool%fill_boundary(this%amr%geom(lvl))
+      ! ---- Pass 2: every touched cell adopts its share (claimant <- reservoir's slot; reservoir <- own slot) ----
+      call this%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
+         pP=>pool%dataptr(mfi); pS=>cskip%dataptr(mfi); pI=>idpool%dataptr(mfi)
+         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi)
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            dbg_cell=(i.eq.dbg_i.and.j.eq.dbg_j.and.k.eq.dbg_k) ! debug
+            if (dbg_cell) then ! debug
+               print*,'--------------------------------------------------'
+               print*,'inside cluster_relax, pass2 claimant=',claimant(i,j,k),' VF=',pVF(i,j,k,1)
+               print*,'   own pP(nc)=',nint(pP(i,j,k,nc))
+               if (nint(pP(i,j,k,nc)).eq.0.and.claimant(i,j,k)) then
+                  ! this cell did not lead a pool of its own (own pP(nc)=0) and needs a
+                  ! reservoir partner to adopt into -- that check reads the PARTNER's pool bit
+                  d=partner_dir(i,j,k)
+                  print*,'   partner_dir=',d
+                  ! debug: dump every face neighbour's VF against the cluster_VFlo/VFhi bounds
+                  ! partner_dir searches against, to see why none (or one) qualified
+                  print*,'   cluster_VFlo=',this%cluster_VFlo,' cluster_VFhi=',this%cluster_VFhi
+                  do f=1,6
+                     ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
+                     print*,'   neighbour f=',f,' i=',ia,' j=',ja,' k=',ka,' VF=',pVF(ia,ja,ka,1)
+                  end do
+                  if (d.gt.0) then
+                     ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
+                     print*,'   partner i=',ia,' j=',ja,' k=',ka,' partner VF=',pVF(ia,ja,ka,1)
+                     print*,'   partner pP(nc)=',nint(pP(ia,ja,ka,nc)),' bit f=',f
+                     print*,'   partner accepted this cell=',btest(nint(pP(ia,ja,ka,nc)),f)
+                  else
+                     print*,'   no qualifying reservoir neighbour found -- will NOT be adopted'
+                  end if
+               end if
+            end if
+            ! Own pP(nc)!=0 covers BOTH a normal (non-claimant) reservoir and a claimant that
+            ! led a pool as pair_leader (see pass 1) -- either way this cell's own slot holds
+            ! its post-relax share directly. Only a claimant that did NOT lead falls through to
+            ! looking up its partner's slot.
+            if (nint(pP(i,j,k,nc)).ne.0) then
+               pQ(i,j,k,1:this%nQ)=pP(i,j,k,1:this%nQ)
+               pVF(i,j,k,1)=pP(i,j,k,this%nQ+1)
+               pS(i,j,k,1)=1.0_WP
+               pCidx(i,j,k,1)=pI(i,j,k,1)
+               if (dbg_cell) then ! debug
+                  print*,'   pass2 adopted own reservoir/pair-leader share'
+                  print*,'   newVF=',pVF(i,j,k,1),' newQ=',pQ(i,j,k,1:this%nQ),' cidx=',pCidx(i,j,k,1)
+               end if
+            else if (claimant(i,j,k)) then
+               d=partner_dir(i,j,k)
+               if (d.gt.0) then
+                  ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
+                  if (btest(nint(pP(ia,ja,ka,nc)),f)) then
+                     pQ(i,j,k,1:this%nQ)=pP(ia,ja,ka,f*npay+1:f*npay+this%nQ)
+                     pVF(i,j,k,1)=pP(ia,ja,ka,f*npay+this%nQ+1)
+                     pS(i,j,k,1)=1.0_WP
+                     pCidx(i,j,k,1)=pI(ia,ja,ka,f+1)
+                     if (dbg_cell) then ! debug
+                        print*,'   pass2 adopted from reservoir i=',ia,' j=',ja,' k=',ka
+                        print*,'   newVF=',pVF(i,j,k,1),' newQ=',pQ(i,j,k,1:this%nQ),' cidx=',pCidx(i,j,k,1)
+                     end if
+                  end if
+               end if
+            end if
+         end do; end do; end do
+      end do
+      call this%amr%mfiter_destroy(mfi)
+      call amrex_multifab_destroy(pool)
+      call amrex_multifab_destroy(idpool)
+      ! if (nclust_events.gt.0) print*,'cluster_relax: t=',time,' events=',nclust_events,' cells=',nclust_cells ! debug
+   contains
+      !> Thin-liquid claimant: too little liquid, needs a liquid-rich partner
+      logical function lclaim(ci,cj,ck)
+         integer, intent(in) :: ci,cj,ck
+         real(WP) :: myVF
+         myVF=pVF(ci,cj,ck,1)
+         lclaim=(myVF.ge.VFlo.and.myVF.lt.this%cluster_VFlo)
+      end function lclaim
+      !> Thin-gas claimant: too little gas, needs a gas-rich partner
+      logical function gclaim(ci,cj,ck)
+         integer, intent(in) :: ci,cj,ck
+         real(WP) :: myVF
+         myVF=pVF(ci,cj,ck,1)
+         gclaim=(myVF.gt.this%cluster_VFhi.and.myVF.le.VFhi)
+      end function gclaim
+      !> Claimant predicate: thin liquid or thin gas by cluster_relax's own bounds, excludes pure cells
+      logical function claimant(ci,cj,ck)
+         integer, intent(in) :: ci,cj,ck
+         claimant=lclaim(ci,cj,ck).or.gclaim(ci,cj,ck)
+      end function claimant
+      !> A thin-liquid claimant may still LEAD pass 1's gathering if its best partner (by
+      !> partner_dir) is itself a thin-gas claimant: the liquid-starved cell has gas to
+      !> offer, the gas-starved cell has liquid to offer, so the pair is healthy together
+      !> even though neither qualifies as a reservoir alone. Only the liquid side is granted
+      !> this extra eligibility (never the gas side), so a mutual pair is never led from both ends.
+      logical function pair_leader(ci,cj,ck)
+         integer, intent(in) :: ci,cj,ck
+         integer :: d
+         pair_leader=.false.
+         if (.not.lclaim(ci,cj,ck)) return
+         d=partner_dir(ci,cj,ck)
+         if (d.eq.0) return
+         pair_leader=gclaim(ci+foff(1,d),cj+foff(2,d),ck+foff(3,d))
+      end function pair_leader
+      !> Best-partner direction for a claimant: liquid reservoir (highest VF) if thin liquid,
+      !> gas reservoir (lowest VF) if thin gas; 0 if not a claimant or no qualifying neighbour
+      integer function partner_dir(ci,cj,ck) result(d)
+         integer, intent(in) :: ci,cj,ck
+         integer :: g; real(WP) :: vc,vm,vv
+         d=0; vc=pVF(ci,cj,ck,1)
+         if (vc.lt.this%cluster_VFlo) then
+            vm=this%cluster_VFlo
+            do g=1,6
+               vv=pVF(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
+               if (vv.gt.this%cluster_VFlo.and.vv.gt.vm) then; vm=vv; d=g; end if
+            end do
+         else if (vc.gt.this%cluster_VFhi) then
+            vm=this%cluster_VFhi
+            do g=1,6
+               vv=pVF(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
+               if (vv.lt.this%cluster_VFhi.and.vv.lt.vm) then; vm=vv; d=g; end if
+            end do
+         end if
+      end function partner_dir
+      !> Shrink the common scale s (in [0,1]) as needed so this member's post-redistribution VF
+      !> stays in [0,1] (host-associated: nM, dVF). Q(1),Q(2) need no separate guard here: redist()
+      !> below rebuilds them as VFnew*RHOL_c and (1-VFnew)*RHOG_c, so they are automatically
+      !> non-negative for any VFnew in [0,1]. Also refuses (s=0) to push a member that started
+      !> OUTSIDE the "fragile sliver" band (0,eps_safe) into it: get_dQdt's barycenter-projection
+      !> (amrmpcomp_class.f90:~1893-1904) divides by the cell's ABSOLUTE phasic volume there and
+      !> can blow up on roundoff noise even though its own guard only checks the FRACTIONAL VF
+      !> against the much tighter vol_eps -- landing a member just above vol_eps but still far
+      !> below eps_safe is exactly the dangerous case. A member that already STARTED inside the
+      !> band is exempt from this veto -- it can't be pushed further in by clustering, and vetoing
+      !> it would zero out the whole pool's (possibly rescuing) change via the shared s, for a
+      !> member clustering can't make worse. eps_safe is chosen well above vol_eps (so this band
+      !> is genuinely avoided) and well below cluster_VFlo (so ordinary, well-resolved clustering
+      !> is unaffected).
+      subroutine bound_scale(VFold,wl,s)
+         real(WP), intent(in) :: VFold,wl
+         real(WP), intent(inout) :: s
+         real(WP), parameter :: eps_safe=1.0e-4_WP
+         real(WP) :: A,VFtarget
+         logical :: already_fragile
+         A=nM*wl*dVF
+         if (A.gt.0.0_WP) then; s=min(s,(1.0_WP-VFold)/A); else if (A.lt.0.0_WP) then; s=min(s,-VFold/A); end if
+         VFtarget=VFold+A
+         already_fragile=(VFold.gt.0.0_WP.and.VFold.lt.eps_safe).or.(VFold.gt.1.0_WP-eps_safe.and.VFold.lt.1.0_WP)
+         if (.not.already_fragile.and.((VFtarget.gt.0.0_WP.and.VFtarget.lt.eps_safe).or. &
+         &   (VFtarget.gt.1.0_WP-eps_safe.and.VFtarget.lt.1.0_WP))) s=0.0_WP
+         s=max(s,0.0_WP)
+      end subroutine bound_scale
+      !> Split a member's pre-pool VFold into its post-pool VF share, given its own liquid-volume
+      !> weight wl and the common safety scale s (host-associated: nM, dVF, u_pool), then rebuild
+      !> its liquid/gas Q directly from the CLUSTER's shared post-relax intensive state
+      !> (RHOL_c,eL_c,Yl_c / RHOG_c,eG_c,Yg_c; host-associated) so every member ends up at the SAME
+      !> TL,PL,RHOL and TG,PG,RHOG as the cluster -- not merely conserving the pool's totals under
+      !> an independent mass/energy split, which can decouple a member's own mass and energy
+      !> changes and spike its temperature.
+      subroutine redist(VFold,Qold,wl,s,VFnew,Qnew)
+         real(WP), intent(in) :: VFold,wl,s
+         real(WP), dimension(this%nQ), intent(in) :: Qold
+         real(WP), intent(out) :: VFnew
+         real(WP), dimension(this%nQ), intent(out) :: Qnew
+         real(WP) :: dm
+         VFnew=VFold+nM*wl*s*dVF
+         Qnew=Qold
+         Qnew(1)=VFnew*RHOL_c; Qnew(3)=Qnew(1)*eL_c
+         if (this%liq%ns.gt.1) Qnew(this%Yl_lo:this%Yl_hi)=Qnew(1)*Yl_c
+         Qnew(2)=(1.0_WP-VFnew)*RHOG_c; Qnew(4)=Qnew(2)*eG_c
+         if (this%gas%ns.gt.1) Qnew(this%Yg_lo:this%Yg_hi)=Qnew(2)*Yg_c
+         ! Transferred mass carries u_pool; dm sums to zero across the pool (apply conserves mass)
+         dm=(Qnew(1)-Qold(1))+(Qnew(2)-Qold(2))
+         Qnew(5:7)=Qold(5:7)+dm*u_pool
+      end subroutine redist
+      !> debug: liquid/gas thermo state (RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv) from a pooled (VF,Q) pair
+      subroutine get_thermo(VFc,Qc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv)
+         real(WP), intent(in) :: VFc
+         real(WP), dimension(this%nQ), intent(in) :: Qc
+         real(WP), intent(out) :: RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
+         real(WP), dimension(2) :: y
+         RHOL=0.0_WP; RHOG=0.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP; eL=0.0_WP; eG=0.0_WP; Yv=0.0_WP
+         if (VFc.gt.0.0_WP.and.Qc(1).gt.0.0_WP) then
+            RHOL=Qc(1)/VFc
+            eL=Qc(3)/Qc(1)
+            PL=this%liq%get_p_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
+            TL=this%liq%get_T_from_p_rho(p=PL,rho=RHOL,y=[1.0_WP])
+         end if
+         if (VFc.lt.1.0_WP.and.Qc(2).gt.0.0_WP) then
+            RHOG=Qc(2)/(1.0_WP-VFc)
+            eG=Qc(4)/Qc(2)
+            Yv=Qc(8)/Qc(2)
+            y=[Yv,1.0_WP-Yv]
+            PG=this%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=y)
+            TG=this%gas%get_T_from_p_rho(p=PG,rho=RHOG,y=y)
+         end if
+      end subroutine get_thermo
+      !> Dispatch one pool member's redistribution to whichever method this%redist_method selects
+      !> -- cap_redist (capacity-weight + bound_scale's shared s, via redist) or geo_redist (this
+      !> member's own PLIC advanced by geo_split's shared delta, via eval_VFnew+redist_geo).
+      !> Host-associated: s (cap_redist's shared scale), delta (geo_redist's shared displacement).
+      subroutine apply_redist(VFold,Qold,valid,hexm,nrmm,dm_,wl,VFnew,Qnew)
+         real(WP), intent(in) :: VFold,wl,dm_
+         real(WP), dimension(this%nQ), intent(in) :: Qold
+         logical, intent(in) :: valid
+         real(WP), dimension(3,8), intent(in) :: hexm
+         real(WP), dimension(3), intent(in) :: nrmm
+         real(WP), intent(out) :: VFnew
+         real(WP), dimension(this%nQ), intent(out) :: Qnew
+         select case (this%redist_method)
+         case (cap_redist)
+            call redist(VFold,Qold,wl,s,VFnew,Qnew)
+         case (geo_redist)
+            VFnew=eval_VFnew(valid,hexm,nrmm,dm_,delta,VFold)
+            call redist_geo(Qold,VFnew,Qnew)
+         case default
+            call die('[cluster_relax] unknown redist_method')
+         end select
+      end subroutine apply_redist
+      !> Build an axis-aligned cell's 8 hex corners from its (lo,hi) box, in the vertex ordering
+      !> cut_hex_vol expects (matching apply_relax's own hex construction for the per-cell PLIC
+      !> reposition, amrmpcomp_class.f90:~3308)
+      subroutine build_hex(clo,chi,hexout)
+         real(WP), dimension(3), intent(in) :: clo,chi
+         real(WP), dimension(3,8), intent(out) :: hexout
+         hexout(:,1)=[clo(1),clo(2),clo(3)]; hexout(:,2)=[chi(1),clo(2),clo(3)]
+         hexout(:,3)=[chi(1),chi(2),clo(3)]; hexout(:,4)=[clo(1),chi(2),clo(3)]
+         hexout(:,5)=[clo(1),clo(2),chi(3)]; hexout(:,6)=[chi(1),clo(2),chi(3)]
+         hexout(:,7)=[chi(1),chi(2),chi(3)]; hexout(:,8)=[clo(1),chi(2),chi(3)]
+      end subroutine build_hex
+      !> Sum of VF over every geometrically-mobile pool member (valid PLIC) with each one's own
+      !> interface plane advanced by delta_ along its own fixed normal; members with no valid
+      !> interface (pure cells) don't appear here -- their VF is fixed, folded into geo_split's
+      !> target instead. Host-associated: valid0,hex0,nrm0,d0 (own), acc,validf,hexf,nrmf,df
+      !> (members), cell_vol.
+      real(WP) function mobile_VF_sum(delta_) result(vsum)
+         real(WP), intent(in) :: delta_
+         real(WP) :: vl,vg
+         real(WP), dimension(3) :: bl,bg
+         integer :: ff
+         vsum=0.0_WP
+         if (valid0) then
+            call cut_hex_vol(hex0,[nrm0(1),nrm0(2),nrm0(3),d0+delta_],vl,vg,bl,bg)
+            vsum=vsum+vl/cell_vol
+         end if
+         do ff=1,6
+            if (acc(ff).and.validf(ff)) then
+               call cut_hex_vol(hexf(:,:,ff),[nrmf(1,ff),nrmf(2,ff),nrmf(3,ff),df(ff)+delta_],vl,vg,bl,bg)
+               vsum=vsum+vl/cell_vol
+            end if
+         end do
+      end function mobile_VF_sum
+      !> Solve for the ONE shared physical interface displacement delta such that advancing every
+      !> geometrically-mobile member's own PLIC plane by delta reproduces the pool's required
+      !> total VF change exactly (bisection on mobile_VF_sum, monotonic since advancing any
+      !> member's plane along its own normal can only increase its own VF, by construction of
+      !> get_plane_dist/cut_hex_vol's shared "vol_liq" convention). Members with no valid
+      !> interface keep their own VF fixed; their contribution is removed from the target before
+      !> solving (fixed_sum below). Host-associated: nM, VFpool1, dx,dy,dz (bisection bracket),
+      !> plus everything mobile_VF_sum needs.
+      subroutine geo_split(delta_out)
+         real(WP), intent(out) :: delta_out
+         real(WP) :: target_mobile,fixed_sum,Lmax,dlo,dhi,dmid,fmid
+         integer :: ff,iter
+         logical :: any_mobile
+         real(WP), parameter :: tol_VF=1.0e-10_WP ! bisection exits once the VF-sum residual, relative to
+         ! target_mobile itself (the standard |error|/|reference| form), drops below this. Near
+         ! target_mobile=0 the threshold shrinks toward zero too and the loop just runs its full
+         ! course -- appropriate (a near-zero target deserves tight absolute precision), not a bug.
+         fixed_sum=0.0_WP; any_mobile=valid0
+         if (.not.valid0) fixed_sum=fixed_sum+pVF(i,j,k,1)
+         do ff=1,6
+            if (.not.acc(ff)) cycle
+            if (validf(ff)) then; any_mobile=.true.; else; fixed_sum=fixed_sum+mVF(ff); end if
+         end do
+         ! No member has a real interface to move -- nothing to solve, apply no VF change at all
+         ! (extremely rare: only fires if EVERY member of the pool, including all claimants, is
+         ! somehow a pure/sentinel-PLIC cell; own-share/member-share application below then leaves
+         ! VF untouched for every member, only snapping Q to the cluster's intensive state)
+         if (.not.any_mobile) then; delta_out=0.0_WP; return; end if
+         target_mobile=nM*VFpool1-fixed_sum
+         Lmax=2.0_WP*sqrt(dx**2+dy**2+dz**2)
+         dlo=-Lmax; dhi=Lmax
+         delta_out=0.5_WP*(dlo+dhi) ! fallback if the loop below exits without ever setting it (can't happen, dhi>dlo)
+         do iter=1,60
+            dmid=0.5_WP*(dlo+dhi)
+            fmid=mobile_VF_sum(dmid)
+            delta_out=dmid
+            if (abs(fmid-target_mobile).lt.tol_VF*abs(target_mobile)) exit ! converged -- no need to keep bisecting
+            if (fmid.lt.target_mobile) then; dlo=dmid; else; dhi=dmid; end if
+         end do
+      end subroutine geo_split
+      !> This member's new VF: geometric (interface advanced by delta_ along its own normal) if it
+      !> has a valid PLIC, else unchanged (pure cell, no interface to move). Also snaps a result
+      !> that lands in the "fragile sliver" band (0,eps_safe)/(1-eps_safe,1) to the nearer exact
+      !> boundary, unless the member already started there -- same danger the old bound_scale's
+      !> docstring above describes (get_dQdt's barycenter projection dividing by a near-zero
+      !> absolute phasic volume), but resolved here by rounding to completion rather than vetoing
+      !> the whole pool's change, since the geometric solve (unlike the old linear scheme) has no
+      !> single shared "s" left to zero out.
+      real(WP) function eval_VFnew(valid,hexm,nrmm,dm_,delta_,VFold) result(VFnew)
+         logical, intent(in) :: valid
+         real(WP), dimension(3,8), intent(in) :: hexm
+         real(WP), dimension(3), intent(in) :: nrmm
+         real(WP), intent(in) :: dm_,delta_,VFold
+         real(WP), parameter :: eps_safe=1.0e-4_WP
+         real(WP) :: vl,vg
+         real(WP), dimension(3) :: bl,bg
+         logical :: already_fragile
+         if (valid) then
+            call cut_hex_vol(hexm,[nrmm(1),nrmm(2),nrmm(3),dm_+delta_],vl,vg,bl,bg)
+            VFnew=vl/cell_vol
+         else
+            VFnew=VFold
+         end if
+         already_fragile=(VFold.gt.0.0_WP.and.VFold.lt.eps_safe).or.(VFold.gt.1.0_WP-eps_safe.and.VFold.lt.1.0_WP)
+         if (.not.already_fragile) then
+            if (VFnew.gt.0.0_WP.and.VFnew.lt.eps_safe) VFnew=0.0_WP
+            if (VFnew.gt.1.0_WP-eps_safe.and.VFnew.lt.1.0_WP) VFnew=1.0_WP
+         end if
+      end function eval_VFnew
+      !> Rebuild a member's Q from its geometrically-determined VFnew and the CLUSTER's shared
+      !> post-relax intensive state (RHOL_c,eL_c,Yl_c / RHOG_c,eG_c,Yg_c; host-associated), exactly
+      !> as the old redist() above did -- this part of the design is unchanged, only the source of
+      !> VFnew is different now (geometric, not capacity-weight+s)
+      subroutine redist_geo(Qold,VFnew,Qnew)
+         real(WP), dimension(this%nQ), intent(in) :: Qold
+         real(WP), intent(in) :: VFnew
+         real(WP), dimension(this%nQ), intent(out) :: Qnew
+         real(WP) :: dm
+         Qnew=Qold
+         Qnew(1)=VFnew*RHOL_c; Qnew(3)=Qnew(1)*eL_c
+         if (this%liq%ns.gt.1) Qnew(this%Yl_lo:this%Yl_hi)=Qnew(1)*Yl_c
+         Qnew(2)=(1.0_WP-VFnew)*RHOG_c; Qnew(4)=Qnew(2)*eG_c
+         if (this%gas%ns.gt.1) Qnew(this%Yg_lo:this%Yg_hi)=Qnew(2)*Yg_c
+         dm=(Qnew(1)-Qold(1))+(Qnew(2)-Qold(2))
+         Qnew(5:7)=Qold(5:7)+dm*u_pool
+      end subroutine redist_geo
+   end subroutine cluster_relax
+
    !> Apply relaxation to mixture cells
    subroutine apply_relax(this,dt,time)
       use mpi_f08, only: MPI_Wtime
       use amrvof_geometry, only: get_plane_dist,cut_hex_vol
       use mathtools, only: normalize
       use random, only: random_uniform
-      use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j ! debug
+      use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j,dbg_k ! debug
+      use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
       implicit none
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: dt
@@ -2696,7 +3380,8 @@ contains
       real(WP) :: t0
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC,pS
+      type(amrex_multifab) :: cskip
       logical :: oldmix,newmix
       real(WP) :: dx,dy,dz,cell_vol,vol_liq,vol_gas
       real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas,rand_dir
@@ -2712,6 +3397,22 @@ contains
       lvl=this%amr%maxlvl
       dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl)
       cell_vol=this%amr%cell_vol(lvl)
+      ! Cluster relaxation: pool thin-VF cells with a neighbour before the per-cell loop below.
+      ! cskip: comp 1 = 1.0 for a cell already relaxed by cluster_relax this stage (skip it below),
+      !        comp 2 = VF snapshot from BEFORE cluster_relax ran (so oldmix below reflects true
+      !        entry state even for a cell cluster_relax just changed)
+      call this%amr%mfab_build(lvl,cskip,ncomp=2,nover=0,atface=[.false.,.false.,.false.])
+      call cskip%setval(0.0_WP)
+      call this%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>this%VF%mf(lvl)%dataptr(mfi); pS=>cskip%dataptr(mfi)
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            pS(i,j,k,2)=pVF(i,j,k,1)
+         end do; end do; end do
+      end do
+      call this%amr%mfiter_destroy(mfi)
+      call this%cluster_relax(dt=dt,time=time,cskip=cskip)
       call this%amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
          ! Get pointers to data
@@ -2721,18 +3422,26 @@ contains
          pCG  =>this%CG%dataptr(mfi)
          pCurv=>this%curv%dataptr(mfi)
          pPLIC=>this%plic%dataptr(mfi)
+         pS   =>cskip%dataptr(mfi)
          ! Loop over valid cells
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
 
             ! Check if mixture cell prior to relaxation
-            oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
-            ! debug
-            dbg_cell=(i.eq.874.and.j.eq.1047.and.k.eq.0.and.time.ge.1.008_WP.and.time.le.1.010_WP) ! debug: upper bound needs slack -- accumulated time%t can land a few ULPs above the literal Max time
-            ! dbg_cell=.false.
-            dbg_i=i; dbg_j=j
-            ! Apply user-provided relaxation model (modifies VF and Q)
-            call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
+            ! oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
+            oldmix=(pS(i,j,k,2).ge.VFlo.and.pS(i,j,k,2).le.VFhi)
+            dbg_cell=(i.eq.dbg_i.and.j.eq.dbg_j.and.k.eq.dbg_k) ! debug
+            if (dbg_cell) then ! debug
+               print*,'--------------------------------------------------'
+               if (pS(i,j,k,1).lt.0.5_WP) then
+                  print*,'inside apply_relax, relax%apply below runs on THIS CELL ALONE (not clustered)'
+               else
+                  print*,'inside apply_relax, this cell was already relaxed as part of a CLUSTER by cluster_relax above'
+                  print*,'   skipping the standalone relax%apply call below'
+               end if
+            end if
+            ! Apply user-provided relaxation model (modifies VF and Q), unless cluster_relax already did
+            if (pS(i,j,k,1).lt.0.5_WP) call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=this%sigma*pCurv(i,j,k,1))
             ! Check if mixture cell after relaxation
             newmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
 
@@ -2788,6 +3497,7 @@ contains
          end do; end do; end do
       end do
       call this%amr%mfiter_destroy(mfi)
+      call amrex_multifab_destroy(cskip)
       ! Sync and apply BC
       call this%VF%average_down(); call this%fill(lvl=this%amr%maxlvl,time=time)
       call this%Q%average_down(); call this%Q%fill(time=time)
@@ -3050,6 +3760,9 @@ contains
          integer, dimension(:,:,:,:), contiguous, pointer :: pMask
          real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pRHOL,pRHOG,pIL,pIG,pPL,pPG,pTL,pTG,pYl,pYg
          integer :: i,j,k,n
+         real(WP) :: dPloc ! debug: local (this rank) running max |PL-PG|, for locating the dPmax cell
+         integer :: dPl,dPi,dPj,dPk ! debug
+         dPloc=-1.0_WP; dPl=-1; dPi=0; dPj=0; dPk=0 ! debug
          ! Initialize extrema
          this%RHOLmin=huge(1.0_WP); this%RHOLmax=-huge(1.0_WP); this%RHOGmin=huge(1.0_WP); this%RHOGmax=-huge(1.0_WP)
          this%ILmin=huge(1.0_WP); this%ILmax=-huge(1.0_WP); this%IGmin=huge(1.0_WP); this%IGmax=-huge(1.0_WP)
@@ -3112,6 +3825,9 @@ contains
                   ! Pressure gap in mixed cells
                   if (pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi) then
                      this%dPmax=max(this%dPmax,abs(pPL(i,j,k,1)-pPG(i,j,k,1)))
+                     if (abs(pPL(i,j,k,1)-pPG(i,j,k,1)).gt.dPloc) then ! debug
+                        dPloc=abs(pPL(i,j,k,1)-pPG(i,j,k,1)); dPl=lvl; dPi=i; dPj=j; dPk=k ! debug
+                     end if ! debug
                   end if
                end do; end do; end do
             end do
@@ -3128,6 +3844,9 @@ contains
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%PGmin  ,1,MPI_REAL_WP,MPI_MIN,this%amr%comm,ierr); call MPI_ALLREDUCE(MPI_IN_PLACE,this%PGmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%TGmin  ,1,MPI_REAL_WP,MPI_MIN,this%amr%comm,ierr); call MPI_ALLREDUCE(MPI_IN_PLACE,this%TGmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
          call MPI_ALLREDUCE(MPI_IN_PLACE,this%dPmax  ,1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)
+         ! if (dPl.ge.0.and.abs(dPloc-this%dPmax).le.1.0e-12_WP*max(1.0_WP,abs(this%dPmax))) then ! debug
+         !    print*,'DPMAX_LOC rank=',this%amr%rank,' lvl=',dPl,' i=',dPi,' j=',dPj,' k=',dPk,' dP=',this%dPmax ! debug
+         ! end if ! debug
          if (this%liq%ns.gt.1) then
             call MPI_ALLREDUCE(MPI_IN_PLACE,this%Ylmin,this%liq%ns-1,MPI_REAL_WP,MPI_MIN,this%amr%comm,ierr)
             call MPI_ALLREDUCE(MPI_IN_PLACE,this%Ylmax,this%liq%ns-1,MPI_REAL_WP,MPI_MAX,this%amr%comm,ierr)

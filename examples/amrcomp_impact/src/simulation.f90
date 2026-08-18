@@ -125,52 +125,60 @@ contains
       G=r_perturbed-r
    end function sphere_levelset
 
-   !> debug: print Q, RHOL/RHOG, PL/PG, TL/TG for cells A(373,951) and B(71,1126) at a given
-   !> pipeline stage, over the whole (short, t=10.0011-10.01) run -- no time%n gate needed since
-   !> this run window is deliberately short. Mirrors the cavitation-case debug_probe/debug_probe_cell.
+   !> debug: print Q, RHOL/RHOG, PL/PG, TL/TG for the (dbg_i,dbg_j,dbg_k) target cell at a given
+   !> pipeline stage. Mirrors the cavitation-case debug_probe/debug_probe_cell.
    subroutine debug_probe(label)
       use amrex_amr_module, only: amrex_mfiter,amrex_box
+      use relax_igmix_sg_class, only: dbg_i,dbg_j,dbg_k ! debug
       implicit none
       character(len=*), intent(in) :: label
-      integer :: lvl,ic
+      integer :: lvl
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ
-      real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pU,pV,pW,pPLs,pPGs
+      real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv,Yv_raw,curv,Pjump,divU,dxi,dyi,dzi
       real(WP), dimension(2) :: y
-      integer, dimension(2), parameter :: tis=[0,0],tjs=[1092,1093] ! debug: TL/TG overshoot cells, t~10.5011
-      integer :: tk,ti,tj
-      tk=0
       lvl=amr%maxlvl
+      dxi=1.0_WP/amr%dx(lvl); dyi=1.0_WP/amr%dy(lvl); dzi=1.0_WP/amr%dz(lvl)
       call amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
          pVF=>fs%VF%mf(lvl)%dataptr(mfi)
          pQ =>fs%Q%mf(lvl)%dataptr(mfi)
+         pCurv=>fs%curv%dataptr(mfi)
+         pU=>fs%U%mf(lvl)%dataptr(mfi); pV=>fs%V%mf(lvl)%dataptr(mfi); pW=>fs%W%mf(lvl)%dataptr(mfi)
+         pPLs=>fs%PL%mf(lvl)%dataptr(mfi); pPGs=>fs%PG%mf(lvl)%dataptr(mfi)
          bx=mfi%tilebox()
-         do ic=1,2
-            ti=tis(ic); tj=tjs(ic)
-         if (ti.ge.bx%lo(1).and.ti.le.bx%hi(1).and.tj.ge.bx%lo(2).and.tj.le.bx%hi(2).and.tk.ge.bx%lo(3).and.tk.le.bx%hi(3)) then
-            VFc=pVF(ti,tj,tk,1)
-            RHOL=-1.0_WP; RHOG=-1.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP
-            if (VFc.gt.0.0_WP.and.pQ(ti,tj,tk,1).gt.0.0_WP) then
-               RHOL=pQ(ti,tj,tk,1)/VFc
-               eL=pQ(ti,tj,tk,3)/pQ(ti,tj,tk,1)
+         if (dbg_i.ge.bx%lo(1).and.dbg_i.le.bx%hi(1).and.dbg_j.ge.bx%lo(2).and.dbg_j.le.bx%hi(2).and. &
+         &   dbg_k.ge.bx%lo(3).and.dbg_k.le.bx%hi(3)) then
+            VFc=pVF(dbg_i,dbg_j,dbg_k,1)
+            RHOL=-1.0_WP; RHOG=-1.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP; Yv_raw=0.0_WP
+            if (VFc.gt.0.0_WP.and.pQ(dbg_i,dbg_j,dbg_k,1).gt.0.0_WP) then
+               RHOL=pQ(dbg_i,dbg_j,dbg_k,1)/VFc
+               eL=pQ(dbg_i,dbg_j,dbg_k,3)/pQ(dbg_i,dbg_j,dbg_k,1)
                PL=fs%liq%get_p_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
-               TL=fs%liq%get_T_from_p_rho(p=PL,rho=RHOL,y=[1.0_WP])
+               TL=fs%liq%get_T_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
             end if
-            if (VFc.lt.1.0_WP.and.pQ(ti,tj,tk,2).gt.0.0_WP) then
-               RHOG=pQ(ti,tj,tk,2)/(1.0_WP-VFc)
-               eG=pQ(ti,tj,tk,4)/pQ(ti,tj,tk,2)
-               Yv=pQ(ti,tj,tk,8)/pQ(ti,tj,tk,2)
-               y=[Yv,1.0_WP-Yv]
+            if (VFc.lt.1.0_WP.and.pQ(dbg_i,dbg_j,dbg_k,2).gt.0.0_WP) then
+               RHOG=pQ(dbg_i,dbg_j,dbg_k,2)/(1.0_WP-VFc)
+               eG=pQ(dbg_i,dbg_j,dbg_k,4)/pQ(dbg_i,dbg_j,dbg_k,2)
+               ! Clamp Yv exactly as get_primitive does (pYg=max(0,min(Q8/Q2,1))) -- Q8 can exceed
+               ! Q2 when the gas phase is nearly vanished (VF->1), so this is NOT a no-op guard
+               Yv_raw=pQ(dbg_i,dbg_j,dbg_k,8)/pQ(dbg_i,dbg_j,dbg_k,2)
+               Yv=max(0.0_WP,min(Yv_raw,1.0_WP))
+               y=[Yv,max(0.0_WP,1.0_WP-Yv)]
                PG=fs%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=y)
-               TG=fs%gas%get_T_from_p_rho(p=PG,rho=RHOG,y=y)
+               TG=fs%gas%get_T_from_rho_e(rho=RHOG,e=eG,y=y)
             end if
-            print*,'PROBE[',trim(label),'] n=',time%n,' t=',time%t,' i=',ti,' j=',tj,' VF=',VFc,&
-            &      ' Q=',pQ(ti,tj,tk,1:8),' RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,&
-            &      ' TL=',TL,' TG=',TG,' U=',pQ(ti,tj,tk,5:7) ! debug
+            curv=pCurv(dbg_i,dbg_j,dbg_k,1); Pjump=fs%sigma*curv
+            divU=dxi*(pU(dbg_i+1,dbg_j,dbg_k,1)-pU(dbg_i,dbg_j,dbg_k,1))+dyi*(pV(dbg_i,dbg_j+1,dbg_k,1)-pV(dbg_i,dbg_j,dbg_k,1))+dzi*(pW(dbg_i,dbg_j,dbg_k+1,1)-pW(dbg_i,dbg_j,dbg_k,1))
+            print*,'--------------------------------------------------'
+            print*,'inside debug_probe, ',trim(label)
+            print*,'   n=',time%n,' t=',time%t,' i=',dbg_i,' j=',dbg_j,' k=',dbg_k,' VF=',VFc
+            print*,'   Q=',pQ(dbg_i,dbg_j,dbg_k,1:8)
+            print*,'   RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG
+            print*,'   U=',pQ(dbg_i,dbg_j,dbg_k,5:7),' dP=',PL-PG,' curv=',curv,' Pjump=',Pjump
+            print*,'   divU=',divU,' PLs=',pPLs(dbg_i,dbg_j,dbg_k,1),' PGs=',pPGs(dbg_i,dbg_j,dbg_k,1),' Yv_raw=',Yv_raw
          end if
-         end do
       end do
       call amr%mfiter_destroy(mfi)
    end subroutine debug_probe
@@ -530,6 +538,7 @@ contains
          ! Build materials: gas = igmix (vapor + air); liquid = NASG water
          call gas%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,0.0_WP],qp=[qpV,0.0_WP],species_names=['vapor','air  '],name='gas')
          call water%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=0.0_WP,qp=qpL,name='water')
+         water%brhomax=1e10_WP
          ! Viscous parameters
          call param_read('Reynolds number',Reynolds)
          call param_read('Prandtl number',Prandtl)
@@ -728,6 +737,7 @@ contains
          call viz%add_scalar(Umag,1,'Umag')
          call viz%add_scalar(Mach,1,'Mach')
          call viz%add_scalar(fs%Yg,1,'Yv')
+         call viz%add_scalar(fs%cluster_idx,1,'cluster_idx')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -873,6 +883,7 @@ contains
 
          ! Remember old state
          call fs%store_old()
+         call fs%cluster_idx%setval(val=0.0_WP,lvl=fs%amr%maxlvl)
          ! call debug_probe('00-start-of-step-Qold') ! debug
 
          ! ======================= RK2 Stage 1: Q*=Q[n]+dt/2*dQdt(t,Q[n]) =======================
@@ -974,6 +985,7 @@ contains
 
          ! Perform and output monitoring
          call fs%get_info()
+         ! call debug_probe('21-post-get_info') ! debug
          relax_census: block
             use mpi_f08,  only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
             use parallel, only: MPI_REAL_WP

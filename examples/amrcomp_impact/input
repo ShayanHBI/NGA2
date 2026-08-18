@@ -20,7 +20,7 @@ Wall BC:        slip
 # Relaxation (p, pT, pThybrid, pTg)
 Relaxation type: pTg
 Cavitation pressure threshold coefficient: 0.8
-Condensation temperature tolerance : 0.075
+Condensation temperature tolerance : 0.1
 
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####
@@ -79,9 +79,9 @@ Sutherland temperature: 0.073
 Max dt:   1e-3
 Initial dt: 1e-3
 Max CFL:  0.75
-Max time: 1.01000E+00
+Max time: 15
 
 # Output
-Output period:     1e-3
+Output period:     0.1
 Checkpoint period: 1
-Restart from:      1.00900E+00
+Restart from:      

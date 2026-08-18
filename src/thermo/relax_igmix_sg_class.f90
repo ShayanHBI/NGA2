@@ -6,7 +6,7 @@
 module relax_igmix_sg_class
    use precision,             only: WP
    use messager,              only: die
-   use thermorelax_class,     only: thermorelax,RELAX_OK,RELAX_FAILED,RELAX_BAD_LIQUID,RELAX_BAD_GAS,RELAX_VACUUM_GAS,RELAX_DEGENERATE,RELAX_NUC_FAILED,RELAX_VACUUM_VAPOR,RELAX_PURE_PHASE
+   use thermorelax_class,     only: thermorelax,RELAX_OK,RELAX_FAILED,RELAX_BAD_LIQUID,RELAX_BAD_GAS,RELAX_VACUUM_GAS,RELAX_DEGENERATE,RELAX_NUC_FAILED,RELAX_VACUUM_VAPOR
    use stiffened_gas_class,   only: stiffened_gas
    use igmix_class,           only: igmix
    implicit none
@@ -15,11 +15,11 @@ module relax_igmix_sg_class
    public :: relax_igmix_sg
    public :: Prelax,PTrelax,PTgrelax,PThybrid
    public :: Mv,Ma
-   ! debug: set true by the caller right before apply() for one target cell, to gate
-   ! trace prints inside apply() without changing its interface
+   ! debug: single target cell (dbg_i,dbg_j,dbg_k); caller sets dbg_cell before apply()
    logical, public :: dbg_cell=.false.
-   integer, public :: dbg_i=-1 ! debug: which i triggered dbg_cell, for multi-cell traces
-   integer, public :: dbg_j=-1 ! debug: which j triggered dbg_cell
+   integer, public :: dbg_i=-1
+   integer, public :: dbg_j=-1
+   integer, public :: dbg_k=-1000
 
    !> Molar masses of vapor and air [kg/mol]
    real(WP), parameter :: Mv=0.0180153_WP
@@ -56,8 +56,6 @@ module relax_igmix_sg_class
       logical  :: do_nucleate=.true.       !< Seed opposite phase in near-pure metastable cells (cavitation/condensation)
       real(WP) :: p_cav=huge(1.0_WP)       !< Cavitation delay: nucleate only when pL < p_cav (default: nucleate at p_sat)
       real(WP) :: Tctol=0.0_WP             !< Condensation temperature tolerance: nucleate only when TG < Tsat-Tctol (default: nucleate at Tsat)
-      real(WP) :: dT_chem_max=0.05_WP      !< Max relative shared-T swing the chemical (step-3) solve may impose; mirrors dT_nuc_max
-      real(WP) :: dT_pT_max=0.1_WP         !< Max relative T swing pT_relax (steps 1-2) may impose on either phase's own entry T; beyond this, fall back to p_relax on the untouched input
       !> Dispatch
       integer  :: model=Prelax
       real(WP) :: Tratmax=10.0_WP          !< PThybrid: temperature contrast max(TG/TL,TL/TG) above which pT_relax is used
@@ -139,18 +137,20 @@ contains
       RHOG=0.0_WP; PG=0.0_WP; TG=0.0_WP; Yv=0.0_WP
       if (VF.lt.1.0_WP.and.Q(2).gt.0.0_WP) then
          iVQ=7+this%liq%ns+this%indV-1
-         Yv=Q(iVQ)/Q(2)
+         ! Yv=Q(iVQ)/Q(2)
+         Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
          y=0.0_WP; y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
          RHOG=Q(2)/(1.0_WP-VF)
          PG=this%gas%get_p_from_rho_e(rho=RHOG,e=Q(4)/Q(2),y=y)
          TG=this%gas%get_T_from_rho_e(rho=RHOG,e=Q(4)/Q(2),y=y)
       end if
-      if (present(ier)) then
-         print*,'i=',dbg_i,', j=',dbg_j,', ',trim(label),', ier=',ier,', VF=',VF,', Q=',Q
-      else
-         print*,'i=',dbg_i,', j=',dbg_j,', ',trim(label),', VF=',VF,', Q=',Q
-      end if
-      print*,'   Pjump=',Pjump,', RHOL=',RHOL,', PL=',PL,', TL=',TL,', RHOG=',RHOG,', PG=',PG,', TG=',TG,', Yv=',Yv
+      print*,trim(label)
+      print*,'   i=',dbg_i,' j=',dbg_j
+      if (present(ier)) print*,'   ier=',ier
+      print*,'   VF=',VF,' Pjump=',Pjump
+      print*,'   Q=',Q
+      print*,'   RHOL=',RHOL,' PL=',PL,' TL=',TL
+      print*,'   RHOG=',RHOG,' PG=',PG,' TG=',TG,' Yv=',Yv
    end subroutine debug_dump
 
    subroutine apply(this,dt,VF,Q,Pjump,ierr)
@@ -181,7 +181,8 @@ contains
       ! supercritical and mixes into the liquid; conserves cell totals exactly, the cell
       ! becomes pure liquid, and the caller's pure-cell snap completes the PLIC reset
       if (this%diss_P.lt.1.0e30_WP.and.Q(2).gt.0.0_WP.and.Q(4).gt.0.0_WP) then
-         Yv=Q(iVQ)/Q(2)
+         ! Yv=Q(iVQ)/Q(2)
+         Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
          y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
          PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
          if (PG.gt.this%diss_P) then
@@ -210,7 +211,8 @@ contains
                if (this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP]).le.0.0_WP) run_pTg=.false.
             end if
             if (Q(2).gt.0.0_WP.and.Q(4).gt.0.0_WP) then
-               Yv=Q(iVQ)/Q(2)
+               ! Yv=Q(iVQ)/Q(2)
+               Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
                y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
                if (this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y).le.0.0_WP) run_pTg=.false.
             end if
@@ -224,14 +226,14 @@ contains
                      if (dbg_cell) print*, 'Nucleation failure'
                      if (all(Q(1:4).gt.0.0_WP)) then
                         if (dbg_cell) print*, 'all Q(1:4) are positive'
-                        Yv=Q(iVQ)/Q(2)
+                        ! Yv=Q(iVQ)/Q(2)
+                        Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
                         y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
                         TL=this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
                         TG=this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
-                        if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' NUC_FAILED-fallback TL=',TL,' TG=',TG,&
-                        &      ' ratio=',merge(max(TG/TL,TL/TG),-1.0_WP,TL.gt.0.0_WP.and.TG.gt.0.0_WP),&
-                        &      ' Tratmax=',this%Tratmax,&
-                        &      ' choice=',merge('pT_relax','p_relax ',TL.gt.0.0_WP.and.TG.gt.0.0_WP.and.max(TG/TL,TL/TG).gt.this%Tratmax) ! debug
+                        if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' NUC_FAILED-fallback TL=',TL,' TG=',TG ! debug
+                        if (dbg_cell) print*,'   ratio=',merge(max(TG/TL,TL/TG),-1.0_WP,TL.gt.0.0_WP.and.TG.gt.0.0_WP),' Tratmax=',this%Tratmax ! debug
+                        if (dbg_cell) print*,'   choice=',merge('pT_relax','p_relax ',TL.gt.0.0_WP.and.TG.gt.0.0_WP.and.max(TG/TL,TL/TG).gt.this%Tratmax) ! debug
                         ! &      ' choice=',merge('pT_relax','p_relax ',TL.gt.0.0_WP.and.TG.gt.0.0_WP) ! debug
                         ! if (TL.gt.0.0_WP.and.TG.gt.0.0_WP.and.max(TG/TL,TL/TG).gt.this%Tratmax) then
                         if (TL.gt.0.0_WP.and.TG.gt.0.0_WP) then
@@ -269,7 +271,8 @@ contains
          if (any(Q(1:4).le.0.0_WP)) then
             call this%p_relax(dt,VF,Q,Pjump,ier)
          else
-            Yv=Q(iVQ)/Q(2)
+            ! Yv=Q(iVQ)/Q(2)
+            Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
             y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
             TL=this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
             TG=this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
@@ -303,7 +306,8 @@ contains
          return
       end if
       ! Gas composition
-      Yv=Q(iVQ)/Q(2)
+      ! Yv=Q(iVQ)/Q(2)
+      Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
       y=0.0_WP; y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       cvG   =sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
       cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
@@ -348,20 +352,20 @@ contains
             this%acc(6)=this%acc(6)+(Q(3)-Eold)*this%vol
          end if
          PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
-         if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR pre  PG=',PG,' RHOG=',Q(2)/(1.0_WP-VF),&
-         &      ' Q2=',Q(2),' Q4=',Q(4),' VF=',VF ! debug
+         if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR pre  PG=',PG,' RHOG=',Q(2)/(1.0_WP-VF) ! debug
+         if (dbg_cell) print*,'   Q2=',Q(2),' Q4=',Q(4),' VF=',VF ! debug
          Ptar=-1.0e30_WP
          if (this%Pmin_gas.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_gas)
          if (this%Tmin_gas.gt.0.0_WP) Ptar=max(Ptar,this%gas%get_p_from_rho_T(rho=Q(2)/(1.0_WP-VF),T=this%Tmin_gas,y=y))
-         if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR Ptar=',Ptar,' Pmin_gas=',this%Pmin_gas,&
-         &      ' Tmin_gas=',this%Tmin_gas,' will_floor=',(PG.lt.Ptar) ! debug
+         if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR Ptar=',Ptar,' Pmin_gas=',this%Pmin_gas ! debug
+         if (dbg_cell) print*,'   Tmin_gas=',this%Tmin_gas,' will_floor=',(PG.lt.Ptar) ! debug
          if (PG.lt.Ptar) then
             Eold=Q(4)
             Q(4)=(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar,rho=Q(2)/(1.0_WP-VF),y=y)
             this%acc(5)=this%acc(5)+1.0_WP
             this%acc(6)=this%acc(6)+(Q(4)-Eold)*this%vol
-            if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR post PG=',Ptar,' RHOG=',Q(2)/(1.0_WP-VF),&
-            &      ' Q4_new=',Q(4) ! debug
+            if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR post PG=',Ptar,' RHOG=',Q(2)/(1.0_WP-VF) ! debug
+            if (dbg_cell) print*,'   Q4_new=',Q(4) ! debug
          end if
       end if
       ! Final verdict: Prelax/PTrelax/PThybrid are always left in a consistent state by the
@@ -392,7 +396,8 @@ contains
       real(WP) :: Yv
       ! Vapor mass fraction (from Q layout)
       if (Q(2).gt.0.0_WP) then
-         Yv=Q(7+this%liq%ns+this%indV-1)/Q(2)
+         ! Yv=Q(7+this%liq%ns+this%indV-1)/Q(2)
+         Yv=max(0.0_WP,min(Q(7+this%liq%ns+this%indV-1)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave species mass>Q(2))
       else
          Yv=0.0_WP
       end if
@@ -411,9 +416,15 @@ contains
       if (PL.le.-this%liq%pinf) then
          print*,"*** LIQUID CLIPPED!",PL,VF,Q
          VF=0.0_WP
+         ! All flashed liquid mass becomes vapor (matches pTg_relax's pure-gas branch
+         ! pattern Q(8)=Q(1)+Q(8)), not the old vapor fraction spread over the new total
+         ! mass -- old code zeroed Q(1) before using it below, so it couldn't do that right
+         ! Q(2)=sum(Q(1:2)); Q(1)=0.0_WP
+         ! Q(4)=sum(Q(3:4)); Q(3)=0.0_WP
+         ! Q(7+this%liq%ns+this%indV-1)=Yv*Q(2)
+         Q(7+this%liq%ns+this%indV-1)=Q(1)+Q(7+this%liq%ns+this%indV-1)
          Q(2)=sum(Q(1:2)); Q(1)=0.0_WP
          Q(4)=sum(Q(3:4)); Q(3)=0.0_WP
-         Q(7+this%liq%ns+this%indV-1)=Yv*Q(2)
          deallocate(y); if (present(ierr)) ierr=RELAX_BAD_LIQUID; return
       end if
       if (PG.le.0.0_WP) then
@@ -465,7 +476,8 @@ contains
       call this%p_relax(dt,VF,Q,Pjump)
       ! Step 2: thermal
       if (Q(2).gt.0.0_WP) then
-         Yv=Q(7+this%liq%ns+this%indV-1)/Q(2)
+         ! Yv=Q(7+this%liq%ns+this%indV-1)/Q(2)
+         Yv=max(0.0_WP,min(Q(7+this%liq%ns+this%indV-1)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave species mass>Q(2))
       else
          Yv=0.0_WP
       end if
@@ -512,11 +524,10 @@ contains
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
       real(WP), dimension(:), allocatable   :: Qin,Q0,y
-      real(WP), dimension(this%gas%ns)      :: y0
       real(WP) :: VFin,VF0,p,T,Yv,Yvin,Yv0
-      real(WP) :: Tchem0,TL0,TG0
+      real(WP) :: Tchem0
       real(WP) :: rho0,rhoe0,rhoA0
-      real(WP) :: RHOL,RHOG
+      real(WP) :: rhoL,rhoG
       real(WP) :: cvG,cpG,qG,gammaG
       real(WP), parameter :: p_eps=1.0e-10_WP,Yvmin=0.0_WP,Yvmax=1.0_WP
       real(WP), parameter :: Y_small=0.001_WP,Yv_pure=0.999_WP,Y_seed=0.01_WP
@@ -525,10 +536,158 @@ contains
       logical :: chem_relax,near_pure,nucleated,cavitated,condensed
       integer :: ier
       if (dbg_cell) then
-         print*,'Inside pTg_relax, VF=',VF
+         print*,'--------------------------------------------------'
+         print*,'inside pTg_relax, VF=',VF
       end if
+      allocate(y(this%gas%ns))
       ! Default to success
       ier=RELAX_OK
+      ! Check if pure phase is already stable
+      pure_phase_stability: block
+         real(WP) :: TL,pL,eL
+         real(WP) :: TG,pG,eG
+         real(WP) :: pV,eV,Tsat,pVsat
+         real(WP) :: VFT ! VF try
+         real(WP), dimension(size(Q)) :: QT ! Q try
+         real(WP), dimension(size(y)) :: yVpure
+         logical  :: conv
+         integer  :: it,ierT
+         if (VF.lt.0.5_WP) then
+            if (dbg_cell) print*,'attempting pure gas'
+            ! Transfer all liquid mass and energy to gas
+            rhoG=Q(1)+Q(2)
+            eG=(Q(3)+Q(4))/rhoG
+            Yv=(Q(1)+Q(8))/rhoG
+            ! Calculate gas state
+            y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+            pG=this%gas%get_p_from_rho_e(rho=rhoG,e=eG,y=y)
+            TG=this%gas%get_T_from_rho_e(rho=rhoG,e=eG,y=y)
+            pV=this%get_xv(Yv)*pG
+            ! Check pure gas stability
+            call this%get_Tsat(pG,pV,TG,Tsat,conv,it)
+            if (dbg_cell) then
+               print*,'rhoG=',rhoG,'eG=',eG,'TG=',TG,', pG=',pG,', pV=',pV,', Yv=',Yv
+               print*,'Tsat=',Tsat,', conv=',conv,', it=',it
+            end if
+            if (conv.and.TG.ge.Tsat) then
+               VF=0.0_WP
+               Q(2)=Q(1)+Q(2)
+               Q(8)=Q(1)+Q(8)
+               Q(1)=0.0_WP
+               Q(4)=Q(3)+Q(4)
+               Q(3)=0.0_WP
+               if (present(ierr)) ierr=RELAX_OK
+               if (dbg_cell) print*,'pure gas is stable'
+               return
+            else
+               if (dbg_cell) print*,'pure gas not stable: conv=',conv,' TG=',TG,' Tsat=',Tsat
+            end if
+         else
+            ! Gas phase does not contain inert gas
+            if (Q(8).eq.Q(2)) then
+               if (dbg_cell) print*,'attempting pure liquid'
+               ! Transfer all vapor mass and energy to liquid
+               rhoL=Q(1)+Q(2)
+               eL=(Q(3)+Q(4))/rhoL
+               ! Calculate liquid state
+               pL=this%liq%get_p_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
+               TL=this%liq%get_T_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
+               ! Check pure liquid stability
+               pVsat=this%get_pvsat(pL,TL)
+               if (pL.ge.pVsat) then
+                  VF=1.0_WP
+                  Q(1)=Q(1)+Q(2)
+                  Q(2)=0.0_WP
+                  Q(8)=0.0_WP
+                  Q(3)=Q(3)+Q(4)
+                  Q(4)=0.0_WP
+                  if (present(ierr)) ierr=RELAX_OK
+                  if (dbg_cell) print*,'pure liquid is stable'
+                  return
+               else
+                  if (dbg_cell) print*,'pure liquid not stable: pL=',pL,' pVsat=',pVsat
+               end if
+            else
+               if (dbg_cell) print*,'attempting pure liquid-inert gas'
+               ! Gas phase contains inert gas
+               ! Yv=Q(8)/Q(2)
+               Yv=max(Yvmin,min(Yvmax,Q(8)/Q(2))) ! debug: clamp (near-total VF collapse can leave Q(8)>Q(2)), same convention as below
+               y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+               yVpure(this%indV)=1.0_WP; yVpure(this%indA)=0.0_WP
+               rhoG=Q(2)/(1.0_WP-VF)
+               eG=Q(4)/Q(2)
+               TG=this%gas%get_T_from_rho_e(rho=rhoG,e=eG,y=y)
+               pG=this%gas%get_p_from_rho_e(rho=rhoG,e=eG,y=y)
+               eV=this%gas%get_e_from_p_rho(p=pG,rho=rhoG,y=yVpure)
+               ! The system of euqations would reduce into a 2x2 system for p and T, which would be independent of VF. So, VFT input
+               ! value is just used as a placeholder. VFT=VF is physically incorrect and not used for the final root at all.
+               VFT=VF
+               QT=Q
+               ! Transfer all vapor mass and energy to liquid
+               QT(1)=QT(1)+QT(8)
+               QT(2)=QT(2)-QT(8)
+               QT(3)=QT(3)+QT(8)*eV
+               QT(4)=QT(4)-QT(8)*eV
+               QT(8)=0.0_WP
+               ! Thermo-mechanical relaxation for the resulting liquid-gas cell
+               call this%pT_relax(dt,VFT,QT,Pjump,ierT)
+               if (ierT.eq.RELAX_OK) then
+                  ! Calculate liquid state
+                  rhoL=QT(1)/VFT
+                  eL=QT(3)/QT(1)
+                  TL=this%liq%get_T_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
+                  pL=this%liq%get_p_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
+                  ! Check liquid stability
+                  pVsat=this%get_pvsat(pL,TL)
+                  ! debug: margin on the stability test, printed on BOTH branches -- this test is a
+                  ! hard binary gate (pure-liquid Q(8)=0 vs. falling through to the vapor-generating
+                  ! solve below), so a near-zero margin here means the branch choice is noise-driven
+                  if (dbg_cell) print*,'pure liquid-inert gas margin: pL=',pL,' pVsat=',pVsat,' pL-pVsat=',pL-pVsat,' TL=',TL
+                  if (pL.ge.pVsat) then
+                     ! Mechanically stable does NOT mean Yv=0 is the true equilibrium: with inert gas
+                     ! present, liquid-air alone isn't a valid coexistence state, only liquid-vapor-air
+                     ! is (Raoult/Dalton: p_vapor=pVsat at equilibrium). Forcing Q(8)=0 here (old code,
+                     ! kept below, commented) discarded that and produced a hard 0-vs-solved discontinuity
+                     ! in the Yv field cell-to-cell. Instead, inject the analytic equilibrium vapor
+                     ! content implied by the pVsat already computed above (closed-form, no iteration),
+                     ! then re-relax once to restore exact mechanical/thermal equilibrium for it.
+                     ! VF=VFT
+                     ! Q=QT
+                     ! if (present(ierr)) ierr=RELAX_OK
+                     ! if (dbg_cell) print*,'pure liquid-inert gas is stable'
+                     ! return
+                     equilibrium_vapor: block
+                        real(WP) :: xv_eq,Yv_eq,dm,dVF,eV_eq
+                        xv_eq=pVsat/pL
+                        Yv_eq=xv_eq*Mv/(xv_eq*Mv+(1.0_WP-xv_eq)*Ma)
+                        eV_eq=this%gas%cv(this%indV)*TL+this%gas%q(this%indV)
+                        dm=Yv_eq*QT(2)/(1.0_WP-Yv_eq)
+                        dVF=dm/rhoL
+                        QT(1)=QT(1)-dm; QT(3)=QT(3)-dm*eL
+                        QT(2)=QT(2)+dm; QT(4)=QT(4)+dm*eV_eq
+                        QT(8)=dm
+                        VFT=VFT-dVF
+                        if (dbg_cell) print*,'pure liquid-inert gas: injecting equilibrium Yv=',Yv_eq,' dm=',dm,' xv=',xv_eq
+                     end block equilibrium_vapor
+                     call this%pT_relax(dt,VFT,QT,Pjump,ierT)
+                     if (ierT.eq.RELAX_OK) then
+                        VF=VFT
+                        Q=QT
+                        if (present(ierr)) ierr=RELAX_OK
+                        if (dbg_cell) print*,'pure liquid-inert gas is stable (with equilibrium Yv)'
+                        return
+                     else
+                        if (dbg_cell) print*,'pure liquid-inert gas: post-injection pT_relax failed ierT=',ierT
+                     end if
+                  else
+                     if (dbg_cell) print*,'pure liquid-inert gas not stable: pL=',pL,' pVsat=',pVsat
+                  end if
+               else
+                  if (dbg_cell) print*,'pure liquid-inert gas check: pT_relax failed ierT=',ierT
+               end if
+            end if
+         end if
+      end block pure_phase_stability
       ! Store input
       VFin=VF
       allocate(Qin(size(Q))); Qin=Q
@@ -568,21 +727,53 @@ contains
                rhoL_nuc=Q(1)/VF
                pL_nuc=this%liq%get_p_from_rho_e(rho=rhoL_nuc,e=Q(3)/Q(1),y=[1.0_WP])
                TL_nuc=this%liq%get_T_from_p_rho(p=pL_nuc,rho=rhoL_nuc,y=[1.0_WP])
-               if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) exit nucleation
+               if (dbg_cell) then
+                  print*,'rhoL_nuc=',rhoL_nuc,', pL_nuc=',pL_nuc,', TL_nuc=',TL_nuc
+               end if
+               ! if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) exit nucleation ! debug
+               if (pL_nuc.le.-this%liq%pinf.or.TL_nuc.le.0.0_WP) then
+                  if (dbg_cell) print*,'cavitation rejected: liquid state unphysical (pL_nuc<=-pinf or TL_nuc<=0)'
+                  exit nucleation
+               end if
                pv_sat=this%get_pvsat(pL_nuc,TL_nuc)
-               if (pv_sat.le.pL_nuc) exit nucleation  ! stable
-               if (pL_nuc.gt.this%p_cav) exit nucleation  ! metastable but not deep enough to nucleate
+               if (dbg_cell) then
+                  print*,'pv_sat=',pv_sat,', p_cav=',this%p_cav
+               end if
+               ! if (pv_sat.le.pL_nuc) exit nucleation  ! stable ! debug
+               if (pv_sat.le.pL_nuc) then
+                  if (dbg_cell) print*,'cavitation rejected: liquid already stable (pv_sat<=pL_nuc, not superheated)'
+                  exit nucleation
+               end if
+               ! if (pL_nuc.gt.this%p_cav) exit nucleation  ! metastable but not deep enough to nucleate ! debug
+               if (pL_nuc.gt.this%p_cav) then
+                  if (dbg_cell) print*,'cavitation rejected: metastable but pL_nuc>p_cav, not deep enough yet'
+                  exit nucleation
+               end if
                ! Skip if too little liquid
-               if (Q(1)/sum(Q(1:2)).lt.Y_small) exit nucleation
+               if (Q(1)/sum(Q(1:2)).lt.Y_small) then
+                  if (dbg_cell) print*,'too little liquid, rejecting cavitation.'
+                  exit nucleation
+               end if
                ! Superheated: estimate nucleated vapor state
                y_nuc=0.0_WP; y_nuc(this%indV)=1.0_WP
                rhoV_nuc=this%gas%get_rho_from_p_T(p=pv_sat,T=TL_nuc,y=y_nuc)
                eV_nuc  =this%gas%get_e_from_p_T  (p=pv_sat,T=TL_nuc,y=y_nuc)
                drho=VF_nuc*rhoV_nuc
+               if (dbg_cell) then
+                  print*,'rhoV_nuc=',rhoV_nuc,', eV_nuc=',eV_nuc,', drho=',drho
+               end if
                drho=min(drho,0.5_WP*Q(1))
+               if (dbg_cell) print*,'capped drho=',drho
                ! Cap further so the seed's own latent-heat release can't overheat a sparse liquid phase
-               if ((Q(3)/Q(1)).gt.eV_nuc) drho=min(drho,dT_nuc_max*TL_nuc*this%liq%cv*Q(1)/(Q(3)/Q(1)-eV_nuc))
-               if (drho.le.0.0_WP) exit nucleation
+               if ((Q(3)/Q(1)).gt.eV_nuc) then
+                  drho=min(drho,dT_nuc_max*TL_nuc*this%liq%cv*Q(1)/(Q(3)/Q(1)-eV_nuc))
+                  if (dbg_cell) print*,'further capped drho=',drho
+               end if
+               ! if (drho.le.0.0_WP) exit nucleation ! debug
+               if (drho.le.0.0_WP) then
+                  if (dbg_cell) print*,'cavitation rejected: capped nucleation mass drho<=0, nothing to seed'
+                  exit nucleation
+               end if
                de=drho*eV_nuc
                Q(1)=Q(1)-drho; Q(2)=Q(2)+drho
                Q(3)=Q(3)-de;   Q(4)=Q(4)+de
@@ -590,39 +781,78 @@ contains
                ! VF=VF-VF_nuc
                VF=Q(1)/rhoL_nuc
                nucleated=.true.; cavitated=.true.
+               if (dbg_cell) print*,'Cavitating: drho=',drho,', de=',de
             else
                if (dbg_cell) print*,'Near pure gas, attempting condensation nucleation'
                ! Near-pure gas: check condensation
-               if (Q(2).le.0.0_WP) exit nucleation
+               ! if (Q(2).le.0.0_WP) exit nucleation ! debug
+               if (Q(2).le.0.0_WP) then
+                  if (dbg_cell) print*,'condensation rejected: no gas mass present (Q(2)<=0)'
+                  exit nucleation
+               end if
                Yv_nuc=Q(7+this%liq%ns+this%indV-1)/Q(2); Yv_nuc=max(Yvmin,min(Yvmax,Yv_nuc))
                ! Skip if too little vapor
                Yv_hi_nuc=min(Yvmax,1.0_WP-(1.0_WP-Yv_nuc)*Q(2)/(Q(1)+Q(2)))
                if (dbg_cell) print*,'Yv_nuc=',Yv_nuc,', Yv_hi_nuc=',Yv_hi_nuc
-               if ((Yv_nuc.lt.Y_small).or.(Yv_hi_nuc.lt.Y_small)) exit nucleation
+               ! if ((Yv_nuc.lt.Y_small).or.(Yv_hi_nuc.lt.Y_small)) exit nucleation ! debug
+               if ((Yv_nuc.lt.Y_small).or.(Yv_hi_nuc.lt.Y_small)) then
+                  if (dbg_cell) print*,'condensation rejected: too little vapor headroom (Yv_nuc or Yv_hi_nuc < Y_small)'
+                  exit nucleation
+               end if
                y_nuc(this%indV)=Yv_nuc; y_nuc(this%indA)=1.0_WP-Yv_nuc
                rhoG_nuc=Q(2)/max(1.0_WP-VF,tiny(1.0_WP))
                pG_nuc=this%gas%get_p_from_rho_e(rho=rhoG_nuc,e=Q(4)/Q(2),y=y_nuc)
                TG_nuc=this%gas%get_T_from_p_rho(p=pG_nuc,rho=rhoG_nuc,y=y_nuc)
                if (dbg_cell) print*,'rhoG_nuc=',rhoG_nuc,', pG_nuc=',pG_nuc,', TG_nuc=',TG_nuc
-               if (pG_nuc.le.0.0_WP.or.TG_nuc.le.0.0_WP) exit nucleation
+               ! if (pG_nuc.le.0.0_WP.or.TG_nuc.le.0.0_WP) exit nucleation ! debug
+               if (pG_nuc.le.0.0_WP.or.TG_nuc.le.0.0_WP) then
+                  if (dbg_cell) print*,'condensation rejected: gas state unphysical (pG_nuc<=0 or TG_nuc<=0)'
+                  exit nucleation
+               end if
                xv_nuc=this%get_xv(Yv_nuc); pv_nuc=xv_nuc*pG_nuc
                if (dbg_cell) print*,'xv_nuc=',xv_nuc,', pv_nuc=',pv_nuc
-               if (.not.check_pv(pv_nuc)) exit nucleation
+               ! if (.not.check_pv(pv_nuc)) exit nucleation ! debug
+               if (.not.check_pv(pv_nuc)) then
+                  if (dbg_cell) print*,'condensation rejected: vapor partial pressure pv_nuc too small (check_pv failed)'
+                  exit nucleation
+               end if
                call this%get_Tsat(pG_nuc,pv_nuc,TG_nuc,Tsat_nuc,conv_nuc,Tsat_it_nuc)
                if (dbg_cell) print*,'saturation calculation: Tsat_nuc=',Tsat_nuc,', conv_nuc=',conv_nuc,', Tsat_it_nuc=',Tsat_it_nuc
-               if (.not.conv_nuc) exit nucleation
-               if (TG_nuc.ge.Tsat_nuc) exit nucleation  ! stable pure vapor/gas
-               if (TG_nuc.gt.Tsat_nuc-this%Tctol) exit nucleation  ! metastable but not deep enough to nucleate
+               ! if (.not.conv_nuc) exit nucleation ! debug
+               if (.not.conv_nuc) then
+                  if (dbg_cell) print*,'condensation rejected: get_Tsat saturation solve did not converge'
+                  exit nucleation
+               end if
+               ! if (TG_nuc.ge.Tsat_nuc) exit nucleation  ! stable pure vapor/gas ! debug
+               if (TG_nuc.ge.Tsat_nuc) then
+                  if (dbg_cell) print*,'condensation rejected: gas already stable (TG_nuc>=Tsat_nuc, not supersaturated)'
+                  exit nucleation
+               end if
+               ! if (TG_nuc.gt.Tsat_nuc-this%Tctol) exit nucleation  ! metastable but not deep enough to nucleate ! debug
+               if (TG_nuc.gt.Tsat_nuc-this%Tctol) then
+                  if (dbg_cell) print*,'condensation rejected: metastable but within Tctol of Tsat, not deep enough yet'
+                  exit nucleation
+               end if
                ! Supersaturated: nucleate tiny liquid
                rhoL_new=this%liq%get_rho_from_p_T(p=pG_nuc,T=TG_nuc,y=[1.0_WP])
                eL_new  =this%liq%get_e_from_p_T  (p=pG_nuc,T=TG_nuc,y=[1.0_WP])
                eG_nuc  =this%gas%get_e_from_p_T  (p=pG_nuc,T=TG_nuc,y=y_nuc)
                cvG_nuc =sum(y_nuc(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
                drho=VF_nuc*rhoL_new
+               if (dbg_cell) print*,'drho=',drho
                drho=min(drho,0.5_WP*Q(7+this%liq%ns+this%indV-1),0.5_WP*Q(2))
+               if (dbg_cell) then
+                  print*,'drho capped=',drho,', rhoL_new=',rhoL_new,', eL_new=',eL_new,', eG_nuc=',eG_nuc
+               end if
                ! Cap further so the seed's own latent-heat release can't overheat a sparse vapor phase
-               if (eG_nuc.gt.eL_new) drho=min(drho,dT_nuc_max*TG_nuc*cvG_nuc*Q(2)/(eG_nuc-eL_new))
-               if (drho.le.0.0_WP) exit nucleation
+               if (eG_nuc.gt.eL_new) then
+                  drho=min(drho,dT_nuc_max*TG_nuc*cvG_nuc*Q(2)/(eG_nuc-eL_new))
+                  if (dbg_cell) print*,'capping further, drho=',drho
+               end if
+               if (drho.le.0.0_WP) then
+                  if (dbg_cell) print*,'drho negative; drho=',drho
+                  exit nucleation
+               end if
                de=drho*eL_new
                Q(1)=Q(1)+drho; Q(2)=Q(2)-drho
                Q(3)=Q(3)+de;   Q(4)=Q(4)-de
@@ -630,28 +860,19 @@ contains
                ! VF=drho/rhoL_new
                VF=VF+drho/rhoL_new
                nucleated=.true.; condensed=.true.
+               if (dbg_cell) print*,'Condensing: drho=',drho,', de=',de
             end if
          end block nucleation
          ! Proceed to next step only if the cell is either interfacial or successfully nucleated from a near pure state
          if ((.not.nucleated).and.(VF.lt.VFlo.or.VF.gt.VFhi)) then
+            if(dbg_cell) print*,'Pure cell nucleation failed, returning.'
             if (present(ierr)) ierr=RELAX_NUC_FAILED
             return
          end if
       end if
-      ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' post-nucleation-block nucleated=',nucleated,' VF=',VF,' Q1=',Q(1),' Q2=',Q(2) ! debug
-      ! Steps 1+2: mechanical + thermal
-      ! Snapshot each phase's own entry T (pre-pT_relax) so we can tell, once pT_relax
-      ! converges, how large a swing it imposed on each phase individually -- see dT_pT_max
-      ! check below, right after the shared post-pT_relax T is recovered.
-      TL0=-1.0_WP; TG0=-1.0_WP
-      if (Q(1).gt.0.0_WP.and.Q(3).gt.0.0_WP) TL0=this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
-      if (Q(2).gt.0.0_WP.and.Q(4).gt.0.0_WP) then
-         Yv=Q(7+this%liq%ns+this%indV-1)/Q(2); Yv=max(Yvmin,min(Yvmax,Yv))
-         y0(this%indV)=Yv; y0(this%indA)=1.0_WP-Yv
-         TG0=this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y0)
-      end if
       call this%pT_relax(dt,VF,Q,Pjump,ier)
       if (ier.ne.RELAX_OK) then
+         if(dbg_cell) print*,'pT_relax failed ier=',ier
          if (nucleated) then
             call undo_nucleation()
             if (present(ierr)) ierr=RELAX_NUC_FAILED
@@ -662,11 +883,11 @@ contains
       end if
       ! Step 3: chemical (phase change)
       if (Q(2).gt.0.0_WP) then
-         Yv=Q(7+this%liq%ns+this%indV-1)/Q(2)
+         ! Yv=Q(7+this%liq%ns+this%indV-1)/Q(2)
+         Yv=max(Yvmin,min(Yvmax,Q(7+this%liq%ns+this%indV-1)/Q(2))) ! debug: clamp (near-total VF collapse can leave species mass>Q(2))
       else
          Yv=0.0_WP
       end if
-      allocate(y(this%gas%ns))
       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       cvG   =sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
       cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
@@ -680,31 +901,8 @@ contains
          p=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
          T=this%gas%get_T_from_p_rho(p=p,rho=Q(2)/(1.0_WP-VF),y=y)
       end if
-      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg post-pT_relax VF=',VF,' p=',p,' TL=TG=',T,' Yv=',Yv,&
-      &                    ' RHOL=',Q(1)/VF,' RHOG=',merge(Q(2)/(1.0_WP-VF),-1.0_WP,VF.lt.1.0_WP),' Q=',Q ! debug
-      ! pT_relax's thermal equilibration is only trustworthy if it didn't swing either phase's
-      ! own T further than physically reasonable for how much of that phase is present. A phase
-      ! with almost no heat capacity will always snap nearly all the way to the other phase's T
-      ! in one call -- correct physics for a well-resolved droplet, but exactly the VF~0/1
-      ! clustering artifact when that phase is a numerically-thin trace amount (e.g. deposited
-      ! by advection, see log trace for i=880,j=1055). If either phase's swing exceeds
-      ! dT_pT_max, don't trust the thermal (or downstream chemical) equilibration this call --
-      ! fall back to mechanical-only relaxation on the untouched input, deferring thermal/
-      ! chemical treatment to a later step once more of that phase's mass has accumulated and
-      ! the relaxation is no longer ill-conditioned.
-      if (((TL0.gt.0.0_WP).and.(abs(T-TL0).gt.this%dT_pT_max*TL0)).or.((TG0.gt.0.0_WP).and.(abs(T-TG0).gt.this%dT_pT_max*TG0))) then
-      ! if (((TL0.gt.0.0_WP).and.(abs(T-TL0).gt.this%dT_pT_max*TL0))) then
-         if (dbg_cell) then
-            print*,'TL0=',TL0,'TL=',T
-            print*,'TG0=',TG0,'TG=',T
-            call this%debug_dump('reverting pT',VF,Q,Pjump,ier)
-         end if
-         call undo_nucleation() ! reverts to VFin/Qin -- discards pT_relax's result too, not just any seed
-         call this%p_relax(dt,VF,Q,Pjump,ier)
-         if (dbg_cell) call this%debug_dump('p_relax',VF,Q,Pjump,ier)
-         if (present(ierr)) ierr=ier
-         call dealloc(); return
-      end if
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg post-pT_relax VF=',VF,' p=',p,' TL=TG=',T,' Yv=',Yv ! debug
+      if (dbg_cell) print*,'   RHOL=',Q(1)/VF,' RHOG=',merge(Q(2)/(1.0_WP-VF),-1.0_WP,VF.lt.1.0_WP),' Q=',Q ! debug
       ! Conserve totals
       VF0=VF
       allocate(Q0(size(Q))); Q0=Q
@@ -719,23 +917,17 @@ contains
       end if
       if (nucleated) then
          ! Liquid wants to cavitate but there is not enough of it
-         ! Qin(1)/rho0 is dead: the cavitation branch (line ~572) already requires this exact
-         ! ratio to be >=Y_small before it ever sets cavitated=.true., so it can never fire here.
-         ! What we actually want to know is whether the *remaining* liquid, after the nucleation
-         ! seed was taken, is still enough -- that's Q0(1)/rho0 (post-transfer, pre-chemical),
-         ! the same quantity already used for the non-nucleated version of this check below.
          ! if (cavitated.and.(Qin(1)/rho0.lt.Y_small)) then
          if (cavitated.and.((Q0(1)/rho0.lt.Y_small).or.(Qin(1)/rho0.lt.Y_small))) then
             chem_relax=.false.
             ier=RELAX_NUC_FAILED
+            if (dbg_cell) print*,'Liquid wants to cavitate but there is not enough of it'
             ! Vapor wants to condense but there is not enough of it
-            ! Yvin is dead for the same reason: the condensation branch (line ~597) already
-            ! requires Yv_nuc (==Yvin) >=Y_small before setting condensed=.true.. The meaningful
-            ! check is the post-transfer remaining vapor-in-gas fraction, Yv0.
             ! else if (condensed.and.(Yvin.lt.Y_small)) then
          else if (condensed.and.((Yv0.lt.Y_small).or.(Yvin.lt.Y_small))) then
             chem_relax=.false.
             ier=RELAX_NUC_FAILED
+            if (dbg_cell) print*,'Vapor wants to condense but there is not enough of it'
          else
             chem_relax=activate_chem(p,T,Yv)
          end if
@@ -801,7 +993,8 @@ contains
       RHOL=this%liq%get_rho_from_p_T(p=p,T=T,y=[1.0_WP])
       RHOG=this%gas%get_rho_from_p_T(p=p,T=T,y=y)
       VF=(rho0-RHOG)/(RHOL-RHOG)
-      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg converged: RHOL=',RHOL,', RHOG=',RHOG,', VF=',VF,', p=',p,', T',T
+      if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg converged: RHOL=',RHOL,', RHOG=',RHOG
+      if (dbg_cell) print*,'   VF=',VF,', p=',p,', T=',T
       if (VF.lt.0.0_WP) then; VF=0.0_WP; p=max(p,-this%liq%pinf); end if
       if (VF.gt.1.0_WP) then; VF=1.0_WP; p=max(p,0.0_WP);         end if
       ! Confirm we had enough of the reducing phase to begin with
@@ -822,25 +1015,6 @@ contains
             end if
          end if
       end if
-      ! Chemical relaxation shouldn't be allowed to swing the shared T further than physically
-      ! reasonable for how little of the reducing phase it's redistributing energy through --
-      ! mirrors the dT_nuc_max self-heating cap used in nucleation (line ~547), but for the
-      ! chemical solve itself. A sparse phase (small mass, small heat capacity) can satisfy the
-      ! saturation residual (Fsat->0) with only a small absolute energy transfer that still
-      ! produces a large relative T swing -- the mass-fraction check above (Y_small) doesn't
-      ! catch this, since a mass fraction well above Y_small can still have too little heat
-      ! capacity to absorb the equilibration without swinging T. This is the VF~0/1 clustering
-      ! issue: a cell can pass every existing guard and still overshoot in T.
-      ! if (abs(T-Tchem0).gt.this%dT_chem_max*Tchem0) then
-      !    if (nucleated) then
-      !       call undo_nucleation()
-      !       if (present(ierr)) ierr=RELAX_NUC_FAILED
-      !    else
-      !       call restore_pT_state()
-      !       if (present(ierr)) ierr=RELAX_FAILED
-      !    end if
-      !    call dealloc(); return
-      ! end if
       ! Update Q with the converged equilibrium state
       Q(1)=(       VF)*RHOL
       Q(2)=(1.0_WP-VF)*RHOG
@@ -865,8 +1039,6 @@ contains
          VF=VF0; Q=Q0
       end subroutine restore_pT_state
       subroutine undo_nucleation()
-         ! Also (ab)used as a general revert-to-entry before falling back to p_relax when
-         ! pT_relax's swing exceeds dT_pT_max -- not just for undoing a nucleation seed.
          VF=VFin; Q=Qin
       end subroutine undo_nucleation
       subroutine dealloc()
@@ -888,20 +1060,26 @@ contains
          real(WP), intent(in)    :: p_,T_
          real(WP), intent(inout) :: Yv_
          real(WP) :: xv,pv_,Fsat
+         if (dbg_cell) print*,'--------------------------------------------------'
+         if (dbg_cell) print*,'inside activate_chem'
          ! Default to false
          activate_chem=.false.
          ! Get vapor mole fraction and partial pressure
          xv=this%get_xv(Yv_); pv_=xv*p_
          if (pv_.lt.this%pv_min) then
+            if (dbg_cell) print*,'pv too small'
             pv_=exp(this%AS+(this%BS+this%ES*p_)/T_)*T_**this%CS*(p_+this%liq%pinf)**this%DS
             if (pv_.lt.this%pv_min) then
                ier=RELAX_VACUUM_VAPOR
+               if (dbg_cell) print*,'RELAX_VACUUM_VAPOR. failure'
                return
             else if (pv_.ge.p_) then
+               if (dbg_cell) print*,'Too much vapor pressure, seeding Yv=',Y_seed
                Yv_=Y_seed
             else
                xv=pv_/p_; Yv_=xv*Mv/(xv*Mv+(1.0_WP-xv)*Ma)
                if (Yv_.lt.Y_small) then
+                  if (dbg_cell) print*,'Too little Yv, seeding Yv=',Y_seed
                   Yv_=Y_seed
                end if
             end if
@@ -909,9 +1087,13 @@ contains
          else
             ! Direct saturation residual
             Fsat=this%pTsat(p_,pv_,T_)
+            if (dbg_cell) print*,'pv normal, Fsat=',Fsat
             if (abs(Fsat).lt.this%F1_tol) then
                ier=RELAX_OK
+               if (dbg_cell) print*,'Already saturated, no phase change needed, RELAX_OK.'
                return
+            else
+               if (dbg_cell) print*,'Everything is fine and heading to chemical relaxation.'
             end if
          end if
          ! Chemical relaxation should fire
@@ -942,8 +1124,15 @@ contains
       end function get_dTdp_lv
       real(WP) function rhoe_res_lvg(p_,T_,Yv_)
          real(WP), intent(in) :: p_,T_,Yv_
+         real(WP), dimension(this%gas%ns) :: y_
+         ! debug: composition must be indexed by this%indV/this%indA -- species order is not
+         ! guaranteed to be [vapor,air], and this%gas%ns may exceed 2. Old hardcoded literal:
+         ! rhoe_res_lvg=(rho0*(1.0_WP-Yv_)-rhoA0)*this%liq%get_e_from_p_T(p=p_,T=T_,y=[1.0_WP])+&
+         ! &             rhoA0*this%gas%get_e_from_p_T(p=p_,T=T_,y=[Yv_,1.0_WP-Yv_])           -&
+         ! &             rhoe0*(1.0_WP-Yv_)
+         y_(this%indV)=Yv_; y_(this%indA)=1.0_WP-Yv_
          rhoe_res_lvg=(rho0*(1.0_WP-Yv_)-rhoA0)*this%liq%get_e_from_p_T(p=p_,T=T_,y=[1.0_WP])+&
-         &             rhoA0*this%gas%get_e_from_p_T(p=p_,T=T_,y=[Yv_,1.0_WP-Yv_])           -&
+         &             rhoA0*this%gas%get_e_from_p_T(p=p_,T=T_,y=y_)                          -&
          &             rhoe0*(1.0_WP-Yv_)
       end function rhoe_res_lvg
       real(WP) function dlnxvdYv(Yv_)
@@ -1013,6 +1202,8 @@ contains
          real(WP) :: Yv_max_phys,Yv_hi
          integer  :: it,lsit
          logical  :: accepted
+         ! if (dbg_cell) print*,'--------------------------------------------------'
+         ! if (dbg_cell) print*,'inside solve_lvg, p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
          Yv_max_phys=1.0_WP-(rhoA0/rho0)
          Yv_hi=min(Yvmax,Yv_max_phys)
          conv=.false.
@@ -1020,29 +1211,30 @@ contains
          do it=1,this%NR_itmax
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
             if (T_eq.le.0.0_WP) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-A T_eq<=0 it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
+               ! if (dbg_cell) print*,'EXIT-A T_eq<=0 it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
                return
             end if
             xv=this%get_xv(Yv_eq); pv=xv*p_eq
             if (.not.check_pv(pv)) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-B check_pv(pv) it=',it,' pv=',pv ! debug
+               ! if (dbg_cell) print*,'EXIT-B check_pv(pv) it=',it,' pv=',pv ! debug
                return
             end if
             F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
             res0=sqrt(F1**2+F2**2)
-            ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg ITER-START it=',it,' p_eq=',p_eq,' T_eq=',T_eq,&
-            ! &      ' Yv_eq=',Yv_eq,' xv=',xv,' pv=',pv,' F1=',F1,' F2=',F2,' res0=',res0,&
-            ! &      ' rho0=',rho0,' rhoA0=',rhoA0,' rhoe0=',rhoe0 ! debug
+            ! if (dbg_cell) print*,'ITER-START it=',it
+            ! if (dbg_cell) print*,'   p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
+            ! if (dbg_cell) print*,'   xv=',xv,' pv=',pv,' F1=',F1,' F2=',F2,' res0=',res0
+            ! if (dbg_cell) print*,'   rho0=',rho0,' rhoA0=',rhoA0,' rhoe0=',rhoe0
             ! d/dlnp via forward difference
             lnp_pert=log(p_eq)+fd_eps; p_pert=exp(lnp_pert); pv_pert=xv*p_pert
             if (.not.check_pv(pv_pert)) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-C check_pv(pv_pert,lnp) it=',it,' pv_pert=',pv_pert ! debug
+               ! if (dbg_cell) print*,'EXIT-C check_pv(pv_pert,lnp) it=',it,' pv_pert=',pv_pert ! debug
                return
             end if
             T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0)
             if (T_pert.le.0.0_WP) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-D T_pert<=0(lnp) it=',it,' p_pert=',p_pert ! debug
+               ! if (dbg_cell) print*,'EXIT-D T_pert<=0(lnp) it=',it,' p_pert=',p_pert ! debug
                return
             end if
             F2p=rhoe_res_lvg(p_pert,T_pert,Yv_eq)/rhoe0
@@ -1054,18 +1246,18 @@ contains
             if (Yv_pert.gt.Yv_hi-fd_eps) Yv_pert=Yv_eq-fd_eps
             if (Yv_pert.lt.Yvmin+fd_eps) Yv_pert=Yv_eq+fd_eps
             if ((Yv_pert.le.Yvmin+fd_eps).or.(Yv_pert.ge.Yv_hi-fd_eps)) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-E Yv_pert out of [Yvmin,Yv_hi] it=',it,&
-               ! &      ' Yv_eq=',Yv_eq,' Yv_pert=',Yv_pert,' Yvmin=',Yvmin,' Yv_hi=',Yv_hi ! debug
+               ! if (dbg_cell) print*,'EXIT-E Yv_pert out of [Yvmin,Yv_hi] it=',it
+               ! if (dbg_cell) print*,'   Yv_eq=',Yv_eq,' Yv_pert=',Yv_pert,' Yvmin=',Yvmin,' Yv_hi=',Yv_hi
                return
             end if
             xv_pert=this%get_xv(Yv_pert); pv_pert=xv_pert*p_eq
             if (.not.check_pv(pv_pert)) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-F check_pv(pv_pert,Yv) it=',it,' pv_pert=',pv_pert ! debug
+               ! if (dbg_cell) print*,'EXIT-F check_pv(pv_pert,Yv) it=',it,' pv_pert=',pv_pert ! debug
                return
             end if
             T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0)
             if (T_pert.le.0.0_WP) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-G T_pert<=0(Yv) it=',it,' Yv_pert=',Yv_pert ! debug
+               ! if (dbg_cell) print*,'EXIT-G T_pert<=0(Yv) it=',it,' Yv_pert=',Yv_pert ! debug
                return
             end if
             F2Y=rhoe_res_lvg(p_eq,T_pert,Yv_pert)/rhoe0
@@ -1074,15 +1266,16 @@ contains
             dF2dYv=(F2Y-F2)/(Yv_pert-Yv_eq)
             ! 2x2 Newton
             detJ=dF1dlnp*dF2dYv-dF1dYv*dF2dlnp
-            ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg JACOBIAN it=',it,' dF1dlnp=',dF1dlnp,' dF1dYv=',dF1dYv,&
-            ! &      ' dF2dlnp=',dF2dlnp,' dF2dYv=',dF2dYv,' detJ=',detJ ! debug
+            ! if (dbg_cell) print*,'JACOBIAN it=',it
+            ! if (dbg_cell) print*,'   dF1dlnp=',dF1dlnp,' dF1dYv=',dF1dYv
+            ! if (dbg_cell) print*,'   dF2dlnp=',dF2dlnp,' dF2dYv=',dF2dYv,' detJ=',detJ
             if (abs(detJ).lt.1.0e-30_WP) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-H detJ singular it=',it,' detJ=',detJ ! debug
+               ! if (dbg_cell) print*,'EXIT-H detJ singular it=',it,' detJ=',detJ ! debug
                exit
             end if
             dlnp_nr=-( dF2dYv *F1-dF1dYv  *F2)/detJ
             dYv_nr =-(-dF2dlnp*F1+dF1dlnp*F2)/detJ
-            ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg NR-STEP-RAW it=',it,' dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr ! debug
+            ! if (dbg_cell) print*,'NR-STEP-RAW it=',it,' dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr ! debug
             ! Direction-preserving step limiter
             step_limit: block
                real(WP) :: ms,lnp_up,lnp_dn
@@ -1097,15 +1290,15 @@ contains
                end if
                ms=max(0.0_WP,min(1.0_WP,ms))
                dlnp_nr=dlnp_nr*ms; dYv_nr=dYv_nr*ms
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg NR-STEP-LIMITED it=',it,' ms=',ms,&
-               ! &      ' dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr ! debug
+               ! if (dbg_cell) print*,'NR-STEP-LIMITED it=',it,' ms=',ms
+               ! if (dbg_cell) print*,'   dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr
             end block step_limit
             ! Damped update with line search
             pOld=p_eq; YvOld=Yv_eq; lnpOld=log(pOld); alpha=1.0_WP; lsit=0
             if ((abs(F1).lt.F_line_search_tol).and.(abs(F2).lt.F_line_search_tol)) then
                p_eq=exp(lnpOld+dlnp_nr); Yv_eq=YvOld+dYv_nr
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg FULL-STEP(no-line-search) it=',it,&
-               ! &      ' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
+               ! if (dbg_cell) print*,'FULL-STEP(no-line-search) it=',it
+               ! if (dbg_cell) print*,'   p_eq=',p_eq,' Yv_eq=',Yv_eq
             else
                accepted=.false.
                do while (alpha.gt.1.0e-8_WP)
@@ -1125,17 +1318,17 @@ contains
                   F1_try=this%pTsat(p_try,pv_try,T_try)
                   F2_try=rhoe_res_lvg(p_try,T_try,Yv_try)/rhoe0
                   res_try=sqrt(F1_try**2+F2_try**2)
-                  ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg LINESEARCH it=',it,' lsit=',lsit,' alpha=',alpha,&
-                  ! &      ' p_try=',p_try,' Yv_try=',Yv_try,' T_try=',T_try,' F1_try=',F1_try,' F2_try=',F2_try,&
-                  ! &      ' res_try=',res_try,' res0=',res0 ! debug
+                  ! if (dbg_cell) print*,'LINESEARCH it=',it,' lsit=',lsit,' alpha=',alpha
+                  ! if (dbg_cell) print*,'   p_try=',p_try,' Yv_try=',Yv_try,' T_try=',T_try
+                  ! if (dbg_cell) print*,'   F1_try=',F1_try,' F2_try=',F2_try,' res_try=',res_try,' res0=',res0
                   if (res_try.lt.res0) then
                      p_eq=p_try; Yv_eq=Yv_try; T_eq=T_try; accepted=.true.; exit
                   end if
                   alpha=0.5_WP*alpha
                end do
                if (.not.accepted) then
-                  ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-I line search not accepted it=',it,&
-                  ! &      ' lsit=',lsit,' alpha=',alpha,' res0=',res0 ! debug
+                  ! if (dbg_cell) print*,'EXIT-I line search not accepted it=',it
+                  ! if (dbg_cell) print*,'   lsit=',lsit,' alpha=',alpha,' res0=',res0
                   exit
                end if
             end if
@@ -1143,26 +1336,26 @@ contains
             Yv_err=abs(Yv_eq-YvOld)
             xv=this%get_xv(Yv_eq); pv=xv*p_eq
             if (.not.check_pv(pv)) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-J check_pv(pv,post-step) it=',it,' pv=',pv ! debug
+               ! if (dbg_cell) print*,'EXIT-J check_pv(pv,post-step) it=',it,' pv=',pv ! debug
                return
             end if
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
             if (T_eq.le.0.0_WP) then
-               ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-K T_eq<=0(post-step) it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
+               ! if (dbg_cell) print*,'EXIT-K T_eq<=0(post-step) it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
                return
             end if
             F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
-            ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg ITER-END it=',it,' p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq,&
-            ! &      ' p_err=',p_err,' p_tol=',this%p_tol,' Yv_err=',Yv_err,&
-            ! &      ' Yv_tol_eff=',this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq)),&
-            ! &      ' F1=',F1,' F1_tol=',this%F1_tol,' F2=',F2,' F2_tol=',this%F2_tol ! debug
+            ! if (dbg_cell) print*,'ITER-END it=',it,' p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
+            ! if (dbg_cell) print*,'   p_err=',p_err,' p_tol=',this%p_tol,' Yv_err=',Yv_err
+            ! if (dbg_cell) print*,'   Yv_tol_eff=',this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq))
+            ! if (dbg_cell) print*,'   F1=',F1,' F1_tol=',this%F1_tol,' F2=',F2,' F2_tol=',this%F2_tol
             if ((p_err.lt.this%p_tol).and.Yv_err.lt.this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq)).and.(abs(F1).lt.this%F1_tol).and.(abs(F2).lt.this%F2_tol)) then
                conv=.true.; exit
             end if
          end do
-         ! if (dbg_cell.and..not.conv) print*,'i=',dbg_i,' j=',dbg_j,' solve_lvg EXIT-L exhausted NR_itmax=',this%NR_itmax,&
-         ! &      ' final it=',it-1,' p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq,' p_err=',p_err,' Yv_err=',Yv_err ! debug
+         if (dbg_cell.and..not.conv) print*,'EXIT-L exhausted NR_itmax=',this%NR_itmax,' final it=',it-1
+         if (dbg_cell.and..not.conv) print*,'   p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq,' p_err=',p_err,' Yv_err=',Yv_err
       end subroutine solve_lvg
    end subroutine pTg_relax
 

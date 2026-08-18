@@ -4,7 +4,7 @@
 !> References Pelanti 2022 https://doi.org/10.1016/j.ijmultiphaseflow.2022.104097
 module relax_igmix_nasg_class
    use precision,               only: WP
-   use relax_igmix_sg_class,    only: relax_igmix_sg
+   use relax_igmix_sg_class,    only: relax_igmix_sg,dbg_cell ! debug
    use stiffened_gas_class,     only: stiffened_gas
    use nasg_class,              only: nasg
    use igmix_class,             only: igmix
@@ -74,7 +74,9 @@ contains
       if (Q(2)/(1.0_WP-VF).lt.this%RHOGmin) then; if (present(ierr)) ierr=RELAX_VACUUM_GAS; return; end if
       ! Frozen gas composition -> mixture-effective ideal-gas parameters
       iVQ=7+this%liq%ns+this%indV-1
-      Yv=Q(iVQ)/Q(2)
+      ! Yv=Q(iVQ)/Q(2)
+      ! Clamp Yv to [0,1] as get_primitive does: near-total VF collapse can leave Q(iVQ)>Q(2) ! debug
+      Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug
       y=0.0_WP; y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       cvG   =sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
       cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
@@ -136,13 +138,17 @@ contains
       real(WP) :: cv1,cv2,g1,g2,pinf,R1,R2,bL,ombm,cpG,qG,Yv
       real(WP) :: y(this%gas%ns)
       integer  :: iVQ
+      ! if (dbg_cell) print*,'--------------------------------------------------' ! debug
+      ! if (dbg_cell) print*,'inside pT_relax(nasg), PRE-p_relax VF=',VF,' Q1=',Q(1),' rhoL=',Q(1)/VF ! debug
       ! Mechanical relaxation first (its own ierr is not propagated; pT owns the final verdict)
       call this%p_relax(dt,VF,Q,Pjump)
       ! Skip if any conserved quantity is non-positive
       if (any(Q(1:4).le.0.0_WP)) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
       ! Frozen gas composition -> mixture-effective ideal-gas parameters
       iVQ=7+this%liq%ns+this%indV-1
-      Yv=Q(iVQ)/Q(2)
+      ! Yv=Q(iVQ)/Q(2)
+      ! Clamp Yv to [0,1] as get_primitive does: near-total VF collapse can leave Q(iVQ)>Q(2) ! debug
+      Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug
       y=0.0_WP; y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
       cv2=sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
       cpG=sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
@@ -152,10 +158,10 @@ contains
       cv1=this%liq%cv; g1=this%liq%gamma; pinf=this%liq%pinf
       R1=cv1*(g1-1.0_WP); R2=cv2*(g2-1.0_WP)
       bL=this%liq_nasg%b
-      ! debug: clamp covolume term like nasg_class does
-      ! ombm=1.0_WP-bL*Q(1)             ! (1 - m1*b) co-volume factor
-      ! if (ombm.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_LIQUID; return; end if   ! liquid past co-volume packing limit
-      ombm=max(1.0_WP-bL*Q(1),1.0_WP-this%liq_nasg%brhomax)
+      ombm=1.0_WP-bL*Q(1)
+      ! if (dbg_cell) print*,'   ENTRY VF=',VF,' Q1=',Q(1),' rhoL=',Q(1)/VF
+      ! if (dbg_cell) print*,'   bL=',bL,' bL*Q1=',bL*Q(1),' bL*rhoL=',bL*(Q(1)/VF),' ombm=',ombm
+      if (ombm.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_BAD_LIQUID; return; end if   ! liquid past co-volume packing limit
       ! Thermal internal energy (formation energies removed); invariant under thermal relax
       Eth=Q(3)+Q(4)-Q(1)*this%liq%q-Q(2)*qG
       ! Quadratic for liquid equilibrium pressure Peq (gas pressure Peq-Pjump), TL=TG, pinf_g=0
@@ -175,6 +181,8 @@ contains
       Q(3)=(VFeq-bL*Q(1))*(Peq+g1*pinf)/(g1-1.0_WP)+Q(1)*this%liq%q
       Q(4)=(1.0_WP-VFeq)*(Peq-Pjump  )/(g2-1.0_WP)+Q(2)*qG
       VF=VFeq
+      ! if (dbg_cell) print*,'   EXIT Peq=',Peq,' VFeq=',VFeq,' Q1=',Q(1),' rhoL=',Q(1)/VFeq
+      ! if (dbg_cell) print*,'   a=',a,' b=',b,' d=',d
       if (present(ierr)) ierr=RELAX_OK
    end subroutine pT_relax
 
