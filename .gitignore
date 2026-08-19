@@ -78,6 +78,7 @@ examples/*/input*~
 !examples/*/src
 !examples/*/*.py
 !examples/*/*.sh
+!examples/eos_relax/eos_relax.f90
 !examples/nozzle_internal/cad
 !examples/nozzle_2phase/cad
 !examples/nozzle_2grids/cad

@@ -313,61 +313,30 @@ contains
       cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
       qG    =sum(y(1:this%gas%ns)*this%gas%q (1:this%gas%ns))
       gammaG=cpG/cvG
-      if (this%model.ne.PTgrelax) then
-         ! Stage 2 — set energies (unconditional fixed-VF swap): whatever VF stage 1 produced
-         ! (converged, VFratmax-clamped, or unchanged on failure), impose the unique energy
-         ! split with PL-PG=Pjump at frozen VF and masses. Conserves phasic masses, total
-         ! energy, momentum; a no-op to roundoff where the quadratic fully converged; completes
-         ! the equilibration where it was clamped or failed (also the vacuum-runaway cutoff).
-         ! Co-volume factor VF*(1-b*rhoL) clamped consistently with the nasg accessors.
-         Eold=Q(3)+Q(4)
-         PL=this%get_p_eq(VF,Q,qG,gammaG,Pjump)
-         ! Stage 3 — floor: if the shared pressure sits below any user limit (PL,TL,PG,TG),
-         ! raise it to the binding limit (all four rise monotonically with the shared pressure);
-         ! the energy added is Asum*(Ptar-PL). Ledgered.
-         Ptar=-1.0e30_WP
-         if (this%Pmin_liq.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_liq)
-         if (this%Pmin_gas.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_gas+Pjump)
-         if (this%Tmin_liq.gt.0.0_WP) Ptar=max(Ptar,this%liq%get_p_from_rho_T(rho=Q(1)/VF,T=this%Tmin_liq,y=[1.0_WP]))
-         if (this%Tmin_gas.gt.0.0_WP) Ptar=max(Ptar,this%gas%get_p_from_rho_T(rho=Q(2)/(1.0_WP-VF),T=this%Tmin_gas,y=y)+Pjump)
-         if (PL.lt.Ptar) then
-            this%acc(5)=this%acc(5)+1.0_WP
-            this%acc(6)=this%acc(6)+(VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])+(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)-Eold)*this%vol
-            PL=Ptar
-         end if
-         ! Write the split
-         Q(3)=VF*this%liq%get_rhoe_from_p_rho(p=PL,rho=Q(1)/VF,y=[1.0_WP])
-         Q(4)=(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=PL-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)
-      else
-         ! PTgrelax: its own converged state is left untouched except an independent
-         ! per-phase floor (no Pjump coupling -- its chemical solve doesn't have one either).
-         PL=this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
-         Ptar=-1.0e30_WP
-         if (this%Pmin_liq.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_liq)
-         if (this%Tmin_liq.gt.0.0_WP) Ptar=max(Ptar,this%liq%get_p_from_rho_T(rho=Q(1)/VF,T=this%Tmin_liq,y=[1.0_WP]))
-         if (PL.lt.Ptar) then
-            Eold=Q(3)
-            Q(3)=VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])
-            this%acc(5)=this%acc(5)+1.0_WP
-            this%acc(6)=this%acc(6)+(Q(3)-Eold)*this%vol
-         end if
-         PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
-         if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR pre  PG=',PG,' RHOG=',Q(2)/(1.0_WP-VF) ! debug
-         if (dbg_cell) print*,'   Q2=',Q(2),' Q4=',Q(4),' VF=',VF ! debug
-         Ptar=-1.0e30_WP
-         if (this%Pmin_gas.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_gas)
-         if (this%Tmin_gas.gt.0.0_WP) Ptar=max(Ptar,this%gas%get_p_from_rho_T(rho=Q(2)/(1.0_WP-VF),T=this%Tmin_gas,y=y))
-         if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR Ptar=',Ptar,' Pmin_gas=',this%Pmin_gas ! debug
-         if (dbg_cell) print*,'   Tmin_gas=',this%Tmin_gas,' will_floor=',(PG.lt.Ptar) ! debug
-         if (PG.lt.Ptar) then
-            Eold=Q(4)
-            Q(4)=(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar,rho=Q(2)/(1.0_WP-VF),y=y)
-            this%acc(5)=this%acc(5)+1.0_WP
-            this%acc(6)=this%acc(6)+(Q(4)-Eold)*this%vol
-            if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' GAS-FLOOR post PG=',Ptar,' RHOG=',Q(2)/(1.0_WP-VF) ! debug
-            if (dbg_cell) print*,'   Q4_new=',Q(4) ! debug
-         end if
+      ! Stage 2 — set energies (unconditional fixed-VF swap): whatever VF stage 1 produced
+      ! (converged, VFratmax-clamped, or unchanged on failure), impose the unique energy
+      ! split with PL-PG=Pjump at frozen VF and masses. Conserves phasic masses, total
+      ! energy, momentum; a no-op to roundoff where the quadratic fully converged; completes
+      ! the equilibration where it was clamped or failed (also the vacuum-runaway cutoff).
+      ! Co-volume factor VF*(1-b*rhoL) clamped consistently with the nasg accessors.
+      Eold=Q(3)+Q(4)
+      PL=this%get_p_eq(VF,Q,qG,gammaG,Pjump)
+      ! Stage 3 — floor: if the shared pressure sits below any user limit (PL,TL,PG,TG),
+      ! raise it to the binding limit (all four rise monotonically with the shared pressure);
+      ! the energy added is Asum*(Ptar-PL). Ledgered.
+      Ptar=-1.0e30_WP
+      if (this%Pmin_liq.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_liq)
+      if (this%Pmin_gas.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_gas+Pjump)
+      if (this%Tmin_liq.gt.0.0_WP) Ptar=max(Ptar,this%liq%get_p_from_rho_T(rho=Q(1)/VF,T=this%Tmin_liq,y=[1.0_WP]))
+      if (this%Tmin_gas.gt.0.0_WP) Ptar=max(Ptar,this%gas%get_p_from_rho_T(rho=Q(2)/(1.0_WP-VF),T=this%Tmin_gas,y=y)+Pjump)
+      if (PL.lt.Ptar) then
+         this%acc(5)=this%acc(5)+1.0_WP
+         this%acc(6)=this%acc(6)+(VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])+(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)-Eold)*this%vol
+         PL=Ptar
       end if
+      ! Write the split
+      Q(3)=VF*this%liq%get_rhoe_from_p_rho(p=PL,rho=Q(1)/VF,y=[1.0_WP])
+      Q(4)=(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=PL-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)
       ! Final verdict: Prelax/PTrelax/PThybrid are always left in a consistent state by the
       ! swap above; PTgrelax's own convergence verdict (ier) is propagated unchanged.
       if (present(ierr)) then
@@ -893,13 +862,15 @@ contains
       cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
       qG    =sum(y(1:this%gas%ns)*this%gas%q (1:this%gas%ns))
       gammaG=cpG/cvG
-      ! Recover p, T from dominant phase
+      ! Recover p, T from dominant phase (p is always the liquid-side pressure convention
+      ! used throughout activate_chem/solve_lv/solve_lvg below: p_l=p_g+Pjump post pT_relax)
       if (VF.gt.0.5_WP) then
          p=this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
          T=this%liq%get_T_from_p_rho(p=p,rho=Q(1)/VF,y=[1.0_WP])
       else
          p=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
          T=this%gas%get_T_from_p_rho(p=p,rho=Q(2)/(1.0_WP-VF),y=y)
+         p=p+Pjump
       end if
       if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg post-pT_relax VF=',VF,' p=',p,' TL=TG=',T,' Yv=',Yv ! debug
       if (dbg_cell) print*,'   RHOL=',Q(1)/VF,' RHOG=',merge(Q(2)/(1.0_WP-VF),-1.0_WP,VF.lt.1.0_WP),' Q=',Q ! debug
@@ -991,7 +962,7 @@ contains
       qG    =sum(y(1:this%gas%ns)*this%gas%q (1:this%gas%ns))
       gammaG=cpG/cvG
       RHOL=this%liq%get_rho_from_p_T(p=p,T=T,y=[1.0_WP])
-      RHOG=this%gas%get_rho_from_p_T(p=p,T=T,y=y)
+      RHOG=this%gas%get_rho_from_p_T(p=p-Pjump,T=T,y=y)
       VF=(rho0-RHOG)/(RHOL-RHOG)
       if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg converged: RHOL=',RHOL,', RHOG=',RHOG
       if (dbg_cell) print*,'   VF=',VF,', p=',p,', T=',T
@@ -1019,7 +990,7 @@ contains
       Q(1)=(       VF)*RHOL
       Q(2)=(1.0_WP-VF)*RHOG
       Q(3)=Q(1)*this%liq%get_e_from_p_T(p=p,T=T,y=[1.0_WP])
-      Q(4)=Q(2)*this%gas%get_e_from_p_T(p=p,T=T,y=y)
+      Q(4)=Q(2)*this%gas%get_e_from_p_T(p=p-Pjump,T=T,y=y)
       Q(7+this%liq%ns+this%indV-1)=Q(2)*Yv
       ! Evaluate conservation
       if (.not.check_cons()) then
@@ -1064,8 +1035,8 @@ contains
          if (dbg_cell) print*,'inside activate_chem'
          ! Default to false
          activate_chem=.false.
-         ! Get vapor mole fraction and partial pressure
-         xv=this%get_xv(Yv_); pv_=xv*p_
+         ! Get vapor mole fraction and partial pressure (gas-side pressure is p_-Pjump)
+         xv=this%get_xv(Yv_); pv_=xv*(p_-Pjump)
          if (pv_.lt.this%pv_min) then
             if (dbg_cell) print*,'pv too small'
             pv_=exp(this%AS+(this%BS+this%ES*p_)/T_)*T_**this%CS*(p_+this%liq%pinf)**this%DS
@@ -1073,11 +1044,11 @@ contains
                ier=RELAX_VACUUM_VAPOR
                if (dbg_cell) print*,'RELAX_VACUUM_VAPOR. failure'
                return
-            else if (pv_.ge.p_) then
+            else if (pv_.ge.(p_-Pjump)) then
                if (dbg_cell) print*,'Too much vapor pressure, seeding Yv=',Y_seed
                Yv_=Y_seed
             else
-               xv=pv_/p_; Yv_=xv*Mv/(xv*Mv+(1.0_WP-xv)*Ma)
+               xv=pv_/(p_-Pjump); Yv_=xv*Mv/(xv*Mv+(1.0_WP-xv)*Ma)
                if (Yv_.lt.Y_small) then
                   if (dbg_cell) print*,'Too little Yv, seeding Yv=',Y_seed
                   Yv_=Y_seed
@@ -1156,10 +1127,10 @@ contains
          if (p_eq.le.p_eps) p_eq=this%get_pvsat(p_eq,T_eq)
          conv=.false.; p_err=10.0_WP*this%p_tol
          do it=1,this%NR_itmax
-            call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+            call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,Pjump,ap,bp,dp,dapdp,dbpdp,ddpdp)
             T_eq=get_T_lv(ap,bp,dp); if (T_eq.le.0.0_WP) return
             dTdp=get_dTdp_lv(ap,bp,dp,dapdp,dbpdp,ddpdp); dTdlnp=p_eq*dTdp
-            F1=this%pTsat(p_eq,p_eq,T_eq); dF1dlnp=this%dpTsatdlnp(p_eq,T_eq,dTdlnp)
+            F1=this%pTsat(p_eq,p_eq-Pjump,T_eq); dF1dlnp=this%dpTsatdlnp(p_eq,T_eq,dTdlnp,Pjump)
             if (abs(dF1dlnp).lt.1.0e-30_WP) exit
             dlnp_nr=-F1/dF1dlnp
             dlnp_nr=max(log(0.5_WP),min(log(1.5_WP),dlnp_nr))
@@ -1167,10 +1138,10 @@ contains
             do while (alpha.gt.1.0e-8_WP)
                p_try=exp(lnpOld+alpha*dlnp_nr)
                if (p_try.le.p_eps) then; alpha=0.5_WP*alpha; cycle; end if
-               call this%get_coeffs_lv(p_try,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+               call this%get_coeffs_lv(p_try,rho0,rhoe0,cvG,gammaG,qG,Pjump,ap,bp,dp,dapdp,dbpdp,ddpdp)
                T_try=get_T_lv(ap,bp,dp)
                if (T_try.le.0.0_WP) then; alpha=0.5_WP*alpha; cycle; end if
-               F1_try=this%pTsat(p_try,p_try,T_try)
+               F1_try=this%pTsat(p_try,p_try-Pjump,T_try)
                if (abs(F1_try).lt.abs(F1)) then
                   p_eq=p_try; T_eq=T_try; accepted=.true.; exit
                end if
@@ -1178,15 +1149,15 @@ contains
             end do
             if (.not.accepted) exit
             p_err=abs(log(p_eq/pOld))
-            call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+            call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,Pjump,ap,bp,dp,dapdp,dbpdp,ddpdp)
             T_eq=get_T_lv(ap,bp,dp); if (T_eq.le.0.0_WP) return
-            F1=this%pTsat(p_eq,p_eq,T_eq)
+            F1=this%pTsat(p_eq,p_eq-Pjump,T_eq)
             if ((p_err.lt.this%p_tol).and.(abs(F1).lt.this%F1_tol)) then
                conv=.true.; exit
             end if
          end do
          if (.not.conv) return
-         call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+         call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,Pjump,ap,bp,dp,dapdp,dbpdp,ddpdp)
          T_eq=get_T_lv(ap,bp,dp)
       end subroutine solve_lv
       !> LVG solve: 2x2 damped Newton in (ln(p), Yv) with step limiter
@@ -1209,12 +1180,12 @@ contains
          conv=.false.
          p_err=10.0_WP*this%p_tol; Yv_err=10.0_WP*this%Yv_tol
          do it=1,this%NR_itmax
-            T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
+            T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0,Pjump)
             if (T_eq.le.0.0_WP) then
                ! if (dbg_cell) print*,'EXIT-A T_eq<=0 it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
                return
             end if
-            xv=this%get_xv(Yv_eq); pv=xv*p_eq
+            xv=this%get_xv(Yv_eq); pv=xv*(p_eq-Pjump)
             if (.not.check_pv(pv)) then
                ! if (dbg_cell) print*,'EXIT-B check_pv(pv) it=',it,' pv=',pv ! debug
                return
@@ -1227,19 +1198,19 @@ contains
             ! if (dbg_cell) print*,'   xv=',xv,' pv=',pv,' F1=',F1,' F2=',F2,' res0=',res0
             ! if (dbg_cell) print*,'   rho0=',rho0,' rhoA0=',rhoA0,' rhoe0=',rhoe0
             ! d/dlnp via forward difference
-            lnp_pert=log(p_eq)+fd_eps; p_pert=exp(lnp_pert); pv_pert=xv*p_pert
+            lnp_pert=log(p_eq)+fd_eps; p_pert=exp(lnp_pert); pv_pert=xv*(p_pert-Pjump)
             if (.not.check_pv(pv_pert)) then
                ! if (dbg_cell) print*,'EXIT-C check_pv(pv_pert,lnp) it=',it,' pv_pert=',pv_pert ! debug
                return
             end if
-            T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0)
+            T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0,Pjump)
             if (T_pert.le.0.0_WP) then
                ! if (dbg_cell) print*,'EXIT-D T_pert<=0(lnp) it=',it,' p_pert=',p_pert ! debug
                return
             end if
             F2p=rhoe_res_lvg(p_pert,T_pert,Yv_eq)/rhoe0
             dTdlnp=(T_pert-T_eq)/fd_eps
-            dF1dlnp=this%dpTsatdlnp(p_eq,T_eq,dTdlnp)
+            dF1dlnp=this%dpTsatdlnp(p_eq,T_eq,dTdlnp,Pjump)
             dF2dlnp=(F2p-F2)/fd_eps
             ! d/dYv via forward (or backward) difference, staying inside domain
             Yv_pert=Yv_eq+fd_eps
@@ -1250,12 +1221,12 @@ contains
                ! if (dbg_cell) print*,'   Yv_eq=',Yv_eq,' Yv_pert=',Yv_pert,' Yvmin=',Yvmin,' Yv_hi=',Yv_hi
                return
             end if
-            xv_pert=this%get_xv(Yv_pert); pv_pert=xv_pert*p_eq
+            xv_pert=this%get_xv(Yv_pert); pv_pert=xv_pert*(p_eq-Pjump)
             if (.not.check_pv(pv_pert)) then
                ! if (dbg_cell) print*,'EXIT-F check_pv(pv_pert,Yv) it=',it,' pv_pert=',pv_pert ! debug
                return
             end if
-            T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0)
+            T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0,Pjump)
             if (T_pert.le.0.0_WP) then
                ! if (dbg_cell) print*,'EXIT-G T_pert<=0(Yv) it=',it,' Yv_pert=',Yv_pert ! debug
                return
@@ -1311,9 +1282,9 @@ contains
                   if ((rho0*(1.0_WP-Yv_try)-rhoA0).le.0.0_WP) then
                      alpha=0.5_WP*alpha; cycle
                   end if
-                  T_try=this%get_T_lvg(p_try,Yv_try,rho0,rhoA0)
+                  T_try=this%get_T_lvg(p_try,Yv_try,rho0,rhoA0,Pjump)
                   if (T_try.le.0.0_WP) then; alpha=0.5_WP*alpha; cycle; end if
-                  xv_try=this%get_xv(Yv_try); pv_try=xv_try*p_try
+                  xv_try=this%get_xv(Yv_try); pv_try=xv_try*(p_try-Pjump)
                   if (.not.check_pv(pv_try)) then; alpha=0.5_WP*alpha; cycle; end if
                   F1_try=this%pTsat(p_try,pv_try,T_try)
                   F2_try=rhoe_res_lvg(p_try,T_try,Yv_try)/rhoe0
@@ -1334,12 +1305,12 @@ contains
             end if
             p_err=abs(log(p_eq/pOld))
             Yv_err=abs(Yv_eq-YvOld)
-            xv=this%get_xv(Yv_eq); pv=xv*p_eq
+            xv=this%get_xv(Yv_eq); pv=xv*(p_eq-Pjump)
             if (.not.check_pv(pv)) then
                ! if (dbg_cell) print*,'EXIT-J check_pv(pv,post-step) it=',it,' pv=',pv ! debug
                return
             end if
-            T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0)
+            T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0,Pjump)
             if (T_eq.le.0.0_WP) then
                ! if (dbg_cell) print*,'EXIT-K T_eq<=0(post-step) it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
                return
@@ -1374,18 +1345,18 @@ contains
       dpTsatdT=-(this%BS+this%ES*pl_)/T_**2+this%CS/T_
    end function dpTsatdT
 
-   real(WP) function dpTsatdp_lv(this,p_,T_,dTdp_)
+   real(WP) function dpTsatdp_lv(this,p_,T_,dTdp_,Pjump_)
       implicit none
       class(relax_igmix_sg), intent(in) :: this
-      real(WP), intent(in) :: p_,T_,dTdp_
-      dpTsatdp_lv=this%dpTsatdT(p_,T_)*dTdp_+this%ES/T_+this%DS/(p_+this%liq%pinf)-1.0_WP/p_
+      real(WP), intent(in) :: p_,T_,dTdp_,Pjump_
+      dpTsatdp_lv=this%dpTsatdT(p_,T_)*dTdp_+this%ES/T_+this%DS/(p_+this%liq%pinf)-1.0_WP/(p_-Pjump_)
    end function dpTsatdp_lv
 
-   real(WP) function dpTsatdlnp(this,p_,T_,dTdlnp_)
+   real(WP) function dpTsatdlnp(this,p_,T_,dTdlnp_,Pjump_)
       implicit none
       class(relax_igmix_sg), intent(in) :: this
-      real(WP), intent(in) :: p_,T_,dTdlnp_
-      dpTsatdlnp=this%dpTsatdT(p_,T_)*dTdlnp_+this%ES*p_/T_+this%DS*p_/(p_+this%liq%pinf)-1.0_WP
+      real(WP), intent(in) :: p_,T_,dTdlnp_,Pjump_
+      dpTsatdlnp=this%dpTsatdT(p_,T_)*dTdlnp_+this%ES*p_/T_+this%DS*p_/(p_+this%liq%pinf)-p_/(p_-Pjump_)
    end function dpTsatdlnp
 
    !> Safeguarded Newton on the saturation curve for Tsat(pl, pv)
@@ -1457,31 +1428,35 @@ contains
    end function get_xv
 
    !> Equilibrium T from energy conservation in liquid-vapor-gas mixture (SG form: no co-volume)
-   real(WP) function get_T_lvg(this,p_,Yv_,rho0,rhoA0)
+   real(WP) function get_T_lvg(this,p_,Yv_,rho0,rhoA0,Pjump_)
       implicit none
       class(relax_igmix_sg), intent(in) :: this
-      real(WP), intent(in) :: p_,Yv_,rho0,rhoA0
+      real(WP), intent(in) :: p_,Yv_,rho0,rhoA0,Pjump_
       get_T_lvg=(1.0_WP-Yv_)/((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)+&
       &           rhoA0*((this%gas%gamma(this%indV)-1.0_WP)*this%gas%cv(this%indV)*Yv_+ &
-      &                  (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/p_)
+      &                  (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/(p_-Pjump_))
    end function get_T_lvg
 
    !> Quadratic coefficients for the equilibrium-T equation (SG form: PinfG=0)
-   subroutine get_coeffs_lv(this,p_eq,rho0,rhoe0,cvG,GammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+   subroutine get_coeffs_lv(this,p_eq,rho0,rhoe0,cvG,GammaG,qG,Pjump,ap,bp,dp,dapdp,dbpdp,ddpdp)
       implicit none
       class(relax_igmix_sg), intent(in)  :: this
-      real(WP), intent(in)  :: p_eq,rho0,rhoe0,cvG,GammaG,qG
+      real(WP), intent(in)  :: p_eq,rho0,rhoe0,cvG,GammaG,qG,Pjump
       real(WP), intent(out) :: ap,bp,dp,dapdp,dbpdp,ddpdp
-      ap=rho0*this%liq%cv*cvG*((GammaG-1.0_WP)*(p_eq+this%liq%gamma*this%liq%pinf)-(this%liq%gamma-1.0_WP)*p_eq)
+      ap=rho0*this%liq%cv*cvG*((GammaG-1.0_WP)*(p_eq+this%liq%gamma*this%liq%pinf)-(this%liq%gamma-1.0_WP)*p_eq   +&
+      &  (this%liq%gamma-1.0_WP)*Pjump)
       bp=rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv*p_eq-(GammaG-1.0_WP)*cvG*(p_eq+this%liq%pinf))              +&
       &  rho0*((GammaG-1.0_WP)*cvG*this%liq%q*(p_eq+this%liq%pinf)-(this%liq%gamma-1.0_WP)*this%liq%cv*qG*p_eq) +&
-      &  cvG*p_eq*(p_eq+this%liq%pinf)-this%liq%cv*p_eq*(p_eq+this%liq%gamma*this%liq%pinf)
-      dp=(qG-this%liq%q)*(p_eq+this%liq%pinf)*p_eq
+      &  cvG*p_eq*(p_eq+this%liq%pinf)-this%liq%cv*p_eq*(p_eq+this%liq%gamma*this%liq%pinf)                     -&
+      &  Pjump*(cvG-this%liq%cv)*p_eq-Pjump*this%liq%pinf*(cvG-this%liq%gamma*this%liq%cv)                      +&
+      &  Pjump*this%liq%cv*(this%liq%gamma-1.0_WP)*(rho0*qG-rhoe0)
+      dp=(qG-this%liq%q)*(p_eq+this%liq%pinf)*(p_eq-Pjump)
       dapdp=rho0*this%liq%cv*cvG*(GammaG-this%liq%gamma)
       dbpdp=rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(GammaG-1.0_WP)*cvG)                                     +&
       &     rho0*((GammaG-1.0_WP)*cvG*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qG)                        +&
-      &     cvG*(2.0_WP*p_eq+this%liq%pinf)-this%liq%cv*(2.0_WP*p_eq+this%liq%gamma*this%liq%pinf)
-      ddpdp=(qG-this%liq%q)*(2.0_WP*p_eq+this%liq%pinf)
+      &     cvG*(2.0_WP*p_eq+this%liq%pinf)-this%liq%cv*(2.0_WP*p_eq+this%liq%gamma*this%liq%pinf)              -&
+      &     Pjump*(cvG-this%liq%cv)
+      ddpdp=(qG-this%liq%q)*(2.0_WP*p_eq+this%liq%pinf-Pjump)
    end subroutine get_coeffs_lv
 
    !> SG-form energy-conserving equilibrium pressure at given (frozen) VF, liquid pressure PL

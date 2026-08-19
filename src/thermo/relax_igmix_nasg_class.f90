@@ -202,26 +202,26 @@ contains
    end function get_p_eq
 
    !> Equilibrium T from energy conservation (NASG form: includes co-volume b correction)
-   real(WP) function get_T_lvg(this,p_,Yv_,rho0,rhoA0) result(T)
+   real(WP) function get_T_lvg(this,p_,Yv_,rho0,rhoA0,Pjump_) result(T)
       implicit none
       class(relax_igmix_nasg), intent(in) :: this
-      real(WP),                intent(in) :: p_,Yv_,rho0,rhoA0
+      real(WP),                intent(in) :: p_,Yv_,rho0,rhoA0,Pjump_
       ! debug: clamp covolume term like nasg_class does
       ! T=(1.0_WP-Yv_-this%liq_nasg%b*(rho0*(1.0_WP-Yv_)-rhoA0))/                                                       &
       ! & ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)                          +  &
       ! &   rhoA0*((this%gas%gamma(this%indV)-1.0_WP)*this%gas%cv(this%indV)*Yv_                                     +  &
-      ! &          (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/p_)
+      ! &          (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/(p_-Pjump_))
       T=(1.0_WP-Yv_-min(this%liq_nasg%b*(rho0*(1.0_WP-Yv_)-rhoA0),this%liq_nasg%brhomax))/                             &
       & ((rho0*(1.0_WP-Yv_)-rhoA0)*(this%liq%gamma-1.0_WP)*this%liq%cv/(p_+this%liq%pinf)                          +  &
       &   rhoA0*((this%gas%gamma(this%indV)-1.0_WP)*this%gas%cv(this%indV)*Yv_                                     +  &
-      &          (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/p_)
+      &          (this%gas%gamma(this%indA)-1.0_WP)*this%gas%cv(this%indA)*(1.0_WP-Yv_))/(p_-Pjump_))
    end function get_T_lvg
 
    !> Quadratic coefficients for the equilibrium-T equation (NASG form: includes co-volume terms)
-   subroutine get_coeffs_lv(this,p_eq,rho0,rhoe0,cvG,GammaG,qG,ap,bp,dp,dapdp,dbpdp,ddpdp)
+   subroutine get_coeffs_lv(this,p_eq,rho0,rhoe0,cvG,GammaG,qG,Pjump,ap,bp,dp,dapdp,dbpdp,ddpdp)
       implicit none
       class(relax_igmix_nasg), intent(in)  :: this
-      real(WP),                intent(in)  :: p_eq,rho0,rhoe0,cvG,GammaG,qG
+      real(WP),                intent(in)  :: p_eq,rho0,rhoe0,cvG,GammaG,qG,Pjump
       real(WP),                intent(out) :: ap,bp,dp,dapdp,dbpdp,ddpdp
       real(WP) :: cvV_,gammaV_,qV_,ombm_lv
       cvV_   =this%gas%cv   (this%indV)
@@ -229,7 +229,8 @@ contains
       qV_    =this%gas%q    (this%indV)
       ! debug: clamp covolume term like nasg_class does
       ombm_lv=max(1.0_WP-rho0*this%liq_nasg%b,1.0_WP-this%liq_nasg%brhomax)
-      ap=rho0*this%liq%cv*cvV_*((gammaV_-this%liq%gamma)*p_eq+this%liq%gamma*(gammaV_-1.0_WP)*this%liq%pinf)
+      ap=rho0*this%liq%cv*cvV_*((gammaV_-this%liq%gamma)*p_eq+this%liq%gamma*(gammaV_-1.0_WP)*this%liq%pinf       +&
+      &  (this%liq%gamma-1.0_WP)*Pjump)
       ! bp=(cvV_*(1.0_WP-rho0*this%liq_nasg%b)-this%liq%cv)*p_eq**2                                                    +&
       ! &  (this%liq%pinf*(cvV_*(1.0_WP-rho0*this%liq_nasg%b)                                                          -&
       ! &   this%liq%gamma*this%liq%cv)+rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)+&
@@ -246,14 +247,17 @@ contains
       &  (this%liq%pinf*(cvV_*ombm_lv                                                                                -&
       &   this%liq%gamma*this%liq%cv)+rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)+&
       &   rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_))*p_eq                                    +&
-      &   (gammaV_-1.0_WP)*cvV_*this%liq%pinf*(rho0*this%liq%q-rhoe0)
-      dp=p_eq*(p_eq+this%liq%pinf)*(qV_*ombm_lv-this%liq%q+this%liq_nasg%b*rhoe0)
+      &   (gammaV_-1.0_WP)*cvV_*this%liq%pinf*(rho0*this%liq%q-rhoe0)                                                -&
+      &   Pjump*(cvV_*ombm_lv-this%liq%cv)*p_eq-Pjump*this%liq%pinf*(cvV_*ombm_lv-this%liq%gamma*this%liq%cv)        +&
+      &   Pjump*this%liq%cv*(this%liq%gamma-1.0_WP)*(rho0*qV_-rhoe0)
+      dp=(p_eq-Pjump)*(p_eq+this%liq%pinf)*(qV_*ombm_lv-this%liq%q+this%liq_nasg%b*rhoe0)
       dapdp=rho0*this%liq%cv*cvV_*(gammaV_-this%liq%gamma)
       dbpdp=2.0_WP*(cvV_*ombm_lv-this%liq%cv)*p_eq                                                                   +&
       &     this%liq%pinf*(cvV_*ombm_lv-this%liq%gamma*this%liq%cv)                                                  +&
       &     rho0*((gammaV_-1.0_WP)*cvV_*this%liq%q-(this%liq%gamma-1.0_WP)*this%liq%cv*qV_)                          +&
-      &     rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_)
-      ddpdp=(2.0_WP*p_eq+this%liq%pinf)*(qV_*ombm_lv-this%liq%q+this%liq_nasg%b*rhoe0)
+      &     rhoe0*((this%liq%gamma-1.0_WP)*this%liq%cv-(gammaV_-1.0_WP)*cvV_)                                        -&
+      &     Pjump*(cvV_*ombm_lv-this%liq%cv)
+      ddpdp=(qV_*ombm_lv-this%liq%q+this%liq_nasg%b*rhoe0)*(2.0_WP*p_eq+this%liq%pinf-Pjump)
    end subroutine get_coeffs_lv
 
 end module relax_igmix_nasg_class
