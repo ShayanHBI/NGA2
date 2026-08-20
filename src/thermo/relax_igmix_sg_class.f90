@@ -17,9 +17,9 @@ module relax_igmix_sg_class
    public :: Mv,Ma
    ! debug: single target cell (dbg_i,dbg_j,dbg_k); caller sets dbg_cell before apply()
    logical, public :: dbg_cell=.false.
-   integer, public :: dbg_i=-1
-   integer, public :: dbg_j=-1
-   integer, public :: dbg_k=-1000
+   integer, public :: dbg_i=-1000000
+   integer, public :: dbg_j=-1000000
+   integer, public :: dbg_k=-1000000
 
    !> Molar masses of vapor and air [kg/mol]
    real(WP), parameter :: Mv=0.0180153_WP
@@ -180,7 +180,7 @@ contains
       ! Absorb (seed culling, high-pressure extreme): a gas packet above diss_P is
       ! supercritical and mixes into the liquid; conserves cell totals exactly, the cell
       ! becomes pure liquid, and the caller's pure-cell snap completes the PLIC reset
-      if (this%diss_P.lt.1.0e30_WP.and.Q(2).gt.0.0_WP.and.Q(4).gt.0.0_WP) then
+      if ((this%model.ne.PTgrelax).and.(this%diss_P.lt.1.0e30_WP).and.(Q(2).gt.0.0_WP).and.(Q(4).gt.0.0_WP)) then
          ! Yv=Q(iVQ)/Q(2)
          Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
          y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
@@ -493,7 +493,7 @@ contains
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
       real(WP), dimension(:), allocatable   :: Qin,Q0,y
-      real(WP) :: VFin,VF0,p,T,Yv,Yvin,Yv0
+      real(WP) :: VFin,VF0,p,T,Yv,Yvin,Yv0,xv_eq
       real(WP) :: Tchem0
       real(WP) :: rho0,rhoe0,rhoA0
       real(WP) :: rhoL,rhoG
@@ -512,27 +512,70 @@ contains
       ! Default to success
       ier=RELAX_OK
       ! Check if pure phase is already stable
+      ! Old 0.5-split version, replaced by a narrow-band version below (misfired on pooled ~0.5 VF cells):
+      ! pure_phase_stability: block
+      !    real(WP) :: TL,pL,eL
+      !    real(WP) :: TG,pG,eG
+      !    real(WP) :: pV,Tsat,pVsat
+      !    logical  :: conv
+      !    integer  :: it
+      !    if (VF.lt.0.5_WP) then
+      !       if (dbg_cell) print*,'attempting pure gas'
+      !       rhoG=Q(1)+Q(2)
+      !       eG=(Q(3)+Q(4))/rhoG
+      !       Yv=(Q(1)+Q(8))/rhoG
+      !       y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+      !       pG=this%gas%get_p_from_rho_e(rho=rhoG,e=eG,y=y)
+      !       TG=this%gas%get_T_from_rho_e(rho=rhoG,e=eG,y=y)
+      !       pV=this%get_xv(Yv)*pG
+      !       call this%get_Tsat(pG,pV,TG,Tsat,conv,it)
+      !       if (conv.and.TG.ge.Tsat) then
+      !          VF=0.0_WP
+      !          Q(2)=Q(1)+Q(2)
+      !          Q(8)=Q(1)+Q(8)
+      !          Q(1)=0.0_WP
+      !          Q(4)=Q(3)+Q(4)
+      !          Q(3)=0.0_WP
+      !          if (present(ierr)) ierr=RELAX_OK
+      !          return
+      !       end if
+      !    else
+      !       if (Q(8).eq.Q(2)) then
+      !          rhoL=Q(1)+Q(2)
+      !          eL=(Q(3)+Q(4))/rhoL
+      !          pL=this%liq%get_p_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
+      !          TL=this%liq%get_T_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
+      !          pVsat=this%get_pvsat(pL,TL)
+      !          if (pL.ge.pVsat) then
+      !             VF=1.0_WP
+      !             Q(1)=Q(1)+Q(2)
+      !             Q(2)=0.0_WP
+      !             Q(8)=0.0_WP
+      !             Q(3)=Q(3)+Q(4)
+      !             Q(4)=0.0_WP
+      !             if (present(ierr)) ierr=RELAX_OK
+      !             return
+      !          end if
+      !       end if
+      !    end if
+      ! end block pure_phase_stability
       pure_phase_stability: block
          real(WP) :: TL,pL,eL
          real(WP) :: TG,pG,eG
-         real(WP) :: pV,eV,Tsat,pVsat
-         real(WP) :: VFT ! VF try
-         real(WP), dimension(size(Q)) :: QT ! Q try
-         real(WP), dimension(size(y)) :: yVpure
+         real(WP) :: pV,Tsat,pVsat
+         real(WP), parameter :: pure_VFlo=0.05_WP,pure_VFhi=0.95_WP
          logical  :: conv
-         integer  :: it,ierT
-         if (VF.lt.0.5_WP) then
+         integer  :: it
+         if (VF.lt.pure_VFlo) then
             if (dbg_cell) print*,'attempting pure gas'
-            ! Transfer all liquid mass and energy to gas
+            ! Transfer all liquid mass and energy to vapor
             rhoG=Q(1)+Q(2)
             eG=(Q(3)+Q(4))/rhoG
             Yv=(Q(1)+Q(8))/rhoG
-            ! Calculate gas state
             y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
             pG=this%gas%get_p_from_rho_e(rho=rhoG,e=eG,y=y)
             TG=this%gas%get_T_from_rho_e(rho=rhoG,e=eG,y=y)
             pV=this%get_xv(Yv)*pG
-            ! Check pure gas stability
             call this%get_Tsat(pG,pV,TG,Tsat,conv,it)
             if (dbg_cell) then
                print*,'rhoG=',rhoG,'eG=',eG,'TG=',TG,', pG=',pG,', pV=',pV,', Yv=',Yv
@@ -551,17 +594,14 @@ contains
             else
                if (dbg_cell) print*,'pure gas not stable: conv=',conv,' TG=',TG,' Tsat=',Tsat
             end if
-         else
-            ! Gas phase does not contain inert gas
-            if (Q(8).eq.Q(2)) then
+         else if (Q(8).eq.Q(2)) then
+            if (VF.gt.pure_VFhi) then
                if (dbg_cell) print*,'attempting pure liquid'
                ! Transfer all vapor mass and energy to liquid
                rhoL=Q(1)+Q(2)
                eL=(Q(3)+Q(4))/rhoL
-               ! Calculate liquid state
                pL=this%liq%get_p_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
                TL=this%liq%get_T_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
-               ! Check pure liquid stability
                pVsat=this%get_pvsat(pL,TL)
                if (pL.ge.pVsat) then
                   VF=1.0_WP
@@ -577,84 +617,10 @@ contains
                   if (dbg_cell) print*,'pure liquid not stable: pL=',pL,' pVsat=',pVsat
                end if
             else
-               if (dbg_cell) print*,'attempting pure liquid-inert gas'
-               ! Gas phase contains inert gas
-               ! Yv=Q(8)/Q(2)
-               Yv=max(Yvmin,min(Yvmax,Q(8)/Q(2))) ! debug: clamp (near-total VF collapse can leave Q(8)>Q(2)), same convention as below
-               y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
-               yVpure(this%indV)=1.0_WP; yVpure(this%indA)=0.0_WP
-               rhoG=Q(2)/(1.0_WP-VF)
-               eG=Q(4)/Q(2)
-               TG=this%gas%get_T_from_rho_e(rho=rhoG,e=eG,y=y)
-               pG=this%gas%get_p_from_rho_e(rho=rhoG,e=eG,y=y)
-               eV=this%gas%get_e_from_p_rho(p=pG,rho=rhoG,y=yVpure)
-               ! The system of euqations would reduce into a 2x2 system for p and T, which would be independent of VF. So, VFT input
-               ! value is just used as a placeholder. VFT=VF is physically incorrect and not used for the final root at all.
-               VFT=VF
-               QT=Q
-               ! Transfer all vapor mass and energy to liquid
-               QT(1)=QT(1)+QT(8)
-               QT(2)=QT(2)-QT(8)
-               QT(3)=QT(3)+QT(8)*eV
-               QT(4)=QT(4)-QT(8)*eV
-               QT(8)=0.0_WP
-               ! Thermo-mechanical relaxation for the resulting liquid-gas cell
-               call this%pT_relax(dt,VFT,QT,Pjump,ierT)
-               if (ierT.eq.RELAX_OK) then
-                  ! Calculate liquid state
-                  rhoL=QT(1)/VFT
-                  eL=QT(3)/QT(1)
-                  TL=this%liq%get_T_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
-                  pL=this%liq%get_p_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
-                  ! Check liquid stability
-                  pVsat=this%get_pvsat(pL,TL)
-                  ! debug: margin on the stability test, printed on BOTH branches -- this test is a
-                  ! hard binary gate (pure-liquid Q(8)=0 vs. falling through to the vapor-generating
-                  ! solve below), so a near-zero margin here means the branch choice is noise-driven
-                  if (dbg_cell) print*,'pure liquid-inert gas margin: pL=',pL,' pVsat=',pVsat,' pL-pVsat=',pL-pVsat,' TL=',TL
-                  if (pL.ge.pVsat) then
-                     ! Mechanically stable does NOT mean Yv=0 is the true equilibrium: with inert gas
-                     ! present, liquid-air alone isn't a valid coexistence state, only liquid-vapor-air
-                     ! is (Raoult/Dalton: p_vapor=pVsat at equilibrium). Forcing Q(8)=0 here (old code,
-                     ! kept below, commented) discarded that and produced a hard 0-vs-solved discontinuity
-                     ! in the Yv field cell-to-cell. Instead, inject the analytic equilibrium vapor
-                     ! content implied by the pVsat already computed above (closed-form, no iteration),
-                     ! then re-relax once to restore exact mechanical/thermal equilibrium for it.
-                     ! VF=VFT
-                     ! Q=QT
-                     ! if (present(ierr)) ierr=RELAX_OK
-                     ! if (dbg_cell) print*,'pure liquid-inert gas is stable'
-                     ! return
-                     equilibrium_vapor: block
-                        real(WP) :: xv_eq,Yv_eq,dm,dVF,eV_eq
-                        xv_eq=pVsat/pL
-                        Yv_eq=xv_eq*Mv/(xv_eq*Mv+(1.0_WP-xv_eq)*Ma)
-                        eV_eq=this%gas%cv(this%indV)*TL+this%gas%q(this%indV)
-                        dm=Yv_eq*QT(2)/(1.0_WP-Yv_eq)
-                        dVF=dm/rhoL
-                        QT(1)=QT(1)-dm; QT(3)=QT(3)-dm*eL
-                        QT(2)=QT(2)+dm; QT(4)=QT(4)+dm*eV_eq
-                        QT(8)=dm
-                        VFT=VFT-dVF
-                        if (dbg_cell) print*,'pure liquid-inert gas: injecting equilibrium Yv=',Yv_eq,' dm=',dm,' xv=',xv_eq
-                     end block equilibrium_vapor
-                     call this%pT_relax(dt,VFT,QT,Pjump,ierT)
-                     if (ierT.eq.RELAX_OK) then
-                        VF=VFT
-                        Q=QT
-                        if (present(ierr)) ierr=RELAX_OK
-                        if (dbg_cell) print*,'pure liquid-inert gas is stable (with equilibrium Yv)'
-                        return
-                     else
-                        if (dbg_cell) print*,'pure liquid-inert gas: post-injection pT_relax failed ierT=',ierT
-                     end if
-                  else
-                     if (dbg_cell) print*,'pure liquid-inert gas not stable: pL=',pL,' pVsat=',pVsat
-                  end if
-               else
-                  if (dbg_cell) print*,'pure liquid-inert gas check: pT_relax failed ierT=',ierT
-               end if
+               if (dbg_cell) print*,'interfacial, no inert gas, falling through to general chem_relax'
             end if
+         else
+            if (dbg_cell) print*,'liquid-inert gas cell, falling through to general chem_relax'
          end if
       end block pure_phase_stability
       ! Store input
@@ -885,6 +851,13 @@ contains
          Yv0=max(Yvmin,min(Yvmax,Yv0))
       else
          Yv0=0.0_WP
+      end if
+      ! Better Newton starting guess for liquid-dominated interfacial cells: Raoult/Dalton Yv from pVsat/p.
+      ! Pjump deliberately omitted here (unlike elsewhere) -- its curvature noise is the same order as
+      ! the pL-pVsat margin in this branch and checkers the Yv field; -Pjump tested, confirmed worse.
+      if ((.not.nucleated).and.(VF.gt.0.5_WP).and.(Q(2).gt.0.0_WP).and.(Q(2).ne.Q(7+this%liq%ns+this%indV-1))) then
+         xv_eq=this%get_pvsat(p,T)/p
+         Yv=xv_eq*Mv/(xv_eq*Mv+(1.0_WP-xv_eq)*Ma)
       end if
       if (nucleated) then
          ! Liquid wants to cavitate but there is not enough of it
@@ -1173,8 +1146,8 @@ contains
          real(WP) :: Yv_max_phys,Yv_hi
          integer  :: it,lsit
          logical  :: accepted
-         ! if (dbg_cell) print*,'--------------------------------------------------'
-         ! if (dbg_cell) print*,'inside solve_lvg, p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
+         if (dbg_cell) print*,'--------------------------------------------------'
+         if (dbg_cell) print*,'inside solve_lvg, p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
          Yv_max_phys=1.0_WP-(rhoA0/rho0)
          Yv_hi=min(Yvmax,Yv_max_phys)
          conv=.false.
@@ -1182,30 +1155,30 @@ contains
          do it=1,this%NR_itmax
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0,Pjump)
             if (T_eq.le.0.0_WP) then
-               ! if (dbg_cell) print*,'EXIT-A T_eq<=0 it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
+               if (dbg_cell) print*,'EXIT-A T_eq<=0 it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
                return
             end if
             xv=this%get_xv(Yv_eq); pv=xv*(p_eq-Pjump)
             if (.not.check_pv(pv)) then
-               ! if (dbg_cell) print*,'EXIT-B check_pv(pv) it=',it,' pv=',pv ! debug
+               if (dbg_cell) print*,'EXIT-B check_pv(pv) it=',it,' pv=',pv ! debug
                return
             end if
             F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
             res0=sqrt(F1**2+F2**2)
-            ! if (dbg_cell) print*,'ITER-START it=',it
-            ! if (dbg_cell) print*,'   p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
-            ! if (dbg_cell) print*,'   xv=',xv,' pv=',pv,' F1=',F1,' F2=',F2,' res0=',res0
-            ! if (dbg_cell) print*,'   rho0=',rho0,' rhoA0=',rhoA0,' rhoe0=',rhoe0
+            if (dbg_cell) print*,'ITER-START it=',it
+            if (dbg_cell) print*,'   p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
+            if (dbg_cell) print*,'   xv=',xv,' pv=',pv,' F1=',F1,' F2=',F2,' res0=',res0
+            if (dbg_cell) print*,'   rho0=',rho0,' rhoA0=',rhoA0,' rhoe0=',rhoe0
             ! d/dlnp via forward difference
             lnp_pert=log(p_eq)+fd_eps; p_pert=exp(lnp_pert); pv_pert=xv*(p_pert-Pjump)
             if (.not.check_pv(pv_pert)) then
-               ! if (dbg_cell) print*,'EXIT-C check_pv(pv_pert,lnp) it=',it,' pv_pert=',pv_pert ! debug
+               if (dbg_cell) print*,'EXIT-C check_pv(pv_pert,lnp) it=',it,' pv_pert=',pv_pert ! debug
                return
             end if
             T_pert=this%get_T_lvg(p_pert,Yv_eq,rho0,rhoA0,Pjump)
             if (T_pert.le.0.0_WP) then
-               ! if (dbg_cell) print*,'EXIT-D T_pert<=0(lnp) it=',it,' p_pert=',p_pert ! debug
+               if (dbg_cell) print*,'EXIT-D T_pert<=0(lnp) it=',it,' p_pert=',p_pert ! debug
                return
             end if
             F2p=rhoe_res_lvg(p_pert,T_pert,Yv_eq)/rhoe0
@@ -1217,18 +1190,18 @@ contains
             if (Yv_pert.gt.Yv_hi-fd_eps) Yv_pert=Yv_eq-fd_eps
             if (Yv_pert.lt.Yvmin+fd_eps) Yv_pert=Yv_eq+fd_eps
             if ((Yv_pert.le.Yvmin+fd_eps).or.(Yv_pert.ge.Yv_hi-fd_eps)) then
-               ! if (dbg_cell) print*,'EXIT-E Yv_pert out of [Yvmin,Yv_hi] it=',it
-               ! if (dbg_cell) print*,'   Yv_eq=',Yv_eq,' Yv_pert=',Yv_pert,' Yvmin=',Yvmin,' Yv_hi=',Yv_hi
+               if (dbg_cell) print*,'EXIT-E Yv_pert out of [Yvmin,Yv_hi] it=',it
+               if (dbg_cell) print*,'   Yv_eq=',Yv_eq,' Yv_pert=',Yv_pert,' Yvmin=',Yvmin,' Yv_hi=',Yv_hi
                return
             end if
             xv_pert=this%get_xv(Yv_pert); pv_pert=xv_pert*(p_eq-Pjump)
             if (.not.check_pv(pv_pert)) then
-               ! if (dbg_cell) print*,'EXIT-F check_pv(pv_pert,Yv) it=',it,' pv_pert=',pv_pert ! debug
+               if (dbg_cell) print*,'EXIT-F check_pv(pv_pert,Yv) it=',it,' pv_pert=',pv_pert ! debug
                return
             end if
             T_pert=this%get_T_lvg(p_eq,Yv_pert,rho0,rhoA0,Pjump)
             if (T_pert.le.0.0_WP) then
-               ! if (dbg_cell) print*,'EXIT-G T_pert<=0(Yv) it=',it,' Yv_pert=',Yv_pert ! debug
+               if (dbg_cell) print*,'EXIT-G T_pert<=0(Yv) it=',it,' Yv_pert=',Yv_pert ! debug
                return
             end if
             F2Y=rhoe_res_lvg(p_eq,T_pert,Yv_pert)/rhoe0
@@ -1237,16 +1210,16 @@ contains
             dF2dYv=(F2Y-F2)/(Yv_pert-Yv_eq)
             ! 2x2 Newton
             detJ=dF1dlnp*dF2dYv-dF1dYv*dF2dlnp
-            ! if (dbg_cell) print*,'JACOBIAN it=',it
-            ! if (dbg_cell) print*,'   dF1dlnp=',dF1dlnp,' dF1dYv=',dF1dYv
-            ! if (dbg_cell) print*,'   dF2dlnp=',dF2dlnp,' dF2dYv=',dF2dYv,' detJ=',detJ
+            if (dbg_cell) print*,'JACOBIAN it=',it
+            if (dbg_cell) print*,'   dF1dlnp=',dF1dlnp,' dF1dYv=',dF1dYv
+            if (dbg_cell) print*,'   dF2dlnp=',dF2dlnp,' dF2dYv=',dF2dYv,' detJ=',detJ
             if (abs(detJ).lt.1.0e-30_WP) then
-               ! if (dbg_cell) print*,'EXIT-H detJ singular it=',it,' detJ=',detJ ! debug
+               if (dbg_cell) print*,'EXIT-H detJ singular it=',it,' detJ=',detJ ! debug
                exit
             end if
             dlnp_nr=-( dF2dYv *F1-dF1dYv  *F2)/detJ
             dYv_nr =-(-dF2dlnp*F1+dF1dlnp*F2)/detJ
-            ! if (dbg_cell) print*,'NR-STEP-RAW it=',it,' dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr ! debug
+            if (dbg_cell) print*,'NR-STEP-RAW it=',it,' dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr ! debug
             ! Direction-preserving step limiter
             step_limit: block
                real(WP) :: ms,lnp_up,lnp_dn
@@ -1261,15 +1234,15 @@ contains
                end if
                ms=max(0.0_WP,min(1.0_WP,ms))
                dlnp_nr=dlnp_nr*ms; dYv_nr=dYv_nr*ms
-               ! if (dbg_cell) print*,'NR-STEP-LIMITED it=',it,' ms=',ms
-               ! if (dbg_cell) print*,'   dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr
+               if (dbg_cell) print*,'NR-STEP-LIMITED it=',it,' ms=',ms
+               if (dbg_cell) print*,'   dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr
             end block step_limit
             ! Damped update with line search
             pOld=p_eq; YvOld=Yv_eq; lnpOld=log(pOld); alpha=1.0_WP; lsit=0
             if ((abs(F1).lt.F_line_search_tol).and.(abs(F2).lt.F_line_search_tol)) then
                p_eq=exp(lnpOld+dlnp_nr); Yv_eq=YvOld+dYv_nr
-               ! if (dbg_cell) print*,'FULL-STEP(no-line-search) it=',it
-               ! if (dbg_cell) print*,'   p_eq=',p_eq,' Yv_eq=',Yv_eq
+               if (dbg_cell) print*,'FULL-STEP(no-line-search) it=',it
+               if (dbg_cell) print*,'   p_eq=',p_eq,' Yv_eq=',Yv_eq
             else
                accepted=.false.
                do while (alpha.gt.1.0e-8_WP)
@@ -1289,17 +1262,17 @@ contains
                   F1_try=this%pTsat(p_try,pv_try,T_try)
                   F2_try=rhoe_res_lvg(p_try,T_try,Yv_try)/rhoe0
                   res_try=sqrt(F1_try**2+F2_try**2)
-                  ! if (dbg_cell) print*,'LINESEARCH it=',it,' lsit=',lsit,' alpha=',alpha
-                  ! if (dbg_cell) print*,'   p_try=',p_try,' Yv_try=',Yv_try,' T_try=',T_try
-                  ! if (dbg_cell) print*,'   F1_try=',F1_try,' F2_try=',F2_try,' res_try=',res_try,' res0=',res0
+                  if (dbg_cell) print*,'LINESEARCH it=',it,' lsit=',lsit,' alpha=',alpha
+                  if (dbg_cell) print*,'   p_try=',p_try,' Yv_try=',Yv_try,' T_try=',T_try
+                  if (dbg_cell) print*,'   F1_try=',F1_try,' F2_try=',F2_try,' res_try=',res_try,' res0=',res0
                   if (res_try.lt.res0) then
                      p_eq=p_try; Yv_eq=Yv_try; T_eq=T_try; accepted=.true.; exit
                   end if
                   alpha=0.5_WP*alpha
                end do
                if (.not.accepted) then
-                  ! if (dbg_cell) print*,'EXIT-I line search not accepted it=',it
-                  ! if (dbg_cell) print*,'   lsit=',lsit,' alpha=',alpha,' res0=',res0
+                  if (dbg_cell) print*,'EXIT-I line search not accepted it=',it
+                  if (dbg_cell) print*,'   lsit=',lsit,' alpha=',alpha,' res0=',res0
                   exit
                end if
             end if
@@ -1307,20 +1280,20 @@ contains
             Yv_err=abs(Yv_eq-YvOld)
             xv=this%get_xv(Yv_eq); pv=xv*(p_eq-Pjump)
             if (.not.check_pv(pv)) then
-               ! if (dbg_cell) print*,'EXIT-J check_pv(pv,post-step) it=',it,' pv=',pv ! debug
+               if (dbg_cell) print*,'EXIT-J check_pv(pv,post-step) it=',it,' pv=',pv ! debug
                return
             end if
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0,Pjump)
             if (T_eq.le.0.0_WP) then
-               ! if (dbg_cell) print*,'EXIT-K T_eq<=0(post-step) it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
+               if (dbg_cell) print*,'EXIT-K T_eq<=0(post-step) it=',it,' p_eq=',p_eq,' Yv_eq=',Yv_eq ! debug
                return
             end if
             F1=this%pTsat(p_eq,pv,T_eq)
             F2=rhoe_res_lvg(p_eq,T_eq,Yv_eq)/rhoe0
-            ! if (dbg_cell) print*,'ITER-END it=',it,' p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
-            ! if (dbg_cell) print*,'   p_err=',p_err,' p_tol=',this%p_tol,' Yv_err=',Yv_err
-            ! if (dbg_cell) print*,'   Yv_tol_eff=',this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq))
-            ! if (dbg_cell) print*,'   F1=',F1,' F1_tol=',this%F1_tol,' F2=',F2,' F2_tol=',this%F2_tol
+            if (dbg_cell) print*,'ITER-END it=',it,' p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
+            if (dbg_cell) print*,'   p_err=',p_err,' p_tol=',this%p_tol,' Yv_err=',Yv_err
+            if (dbg_cell) print*,'   Yv_tol_eff=',this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq))
+            if (dbg_cell) print*,'   F1=',F1,' F1_tol=',this%F1_tol,' F2=',F2,' F2_tol=',this%F2_tol
             if ((p_err.lt.this%p_tol).and.Yv_err.lt.this%Yv_tol_abs+this%Yv_tol*max(abs(YvOld),abs(Yv_eq)).and.(abs(F1).lt.this%F1_tol).and.(abs(F2).lt.this%F2_tol)) then
                conv=.true.; exit
             end if

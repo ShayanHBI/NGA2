@@ -68,6 +68,7 @@ module simulation
    real(WP) :: Prandtl ,diff_ratio    !< Heat diffusivity
    real(WP) :: Weber                  !< Weber number
    real(WP) :: Tctol                  !< Condensation temperature tolerance
+   real(WP) :: Yv0                    !< Initial vapor mass fraction seeded into interfacial cells' gas phase
 
    !> Drop disturbances
    real(WP) :: dist_amp=0.005_WP      !< Disturbance amplitude
@@ -250,7 +251,7 @@ contains
       use amrex_amr_module, only: amrex_boxarray,amrex_distromap,amrex_mfiter,amrex_box
       use amrex_amr_module, only: amrex_mfiter_build,amrex_mfiter_destroy
       use mms_geom, only: initialize_volume_moments
-      use amrmpcomp_class, only: VFlo
+      use amrmpcomp_class, only: VFlo,VFhi
       class(amrmpcomp), intent(inout) :: solver
       integer, intent(in) :: lvl
       real(WP), intent(in) :: time
@@ -260,7 +261,7 @@ contains
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pCL,pCG
       real(WP), dimension(3) :: BL,BG
-      real(WP) :: dx,dy,dz,myVF,IEL,x_cc,rhoG,pG,uG,H
+      real(WP) :: dx,dy,dz,myVF,IEL,x_cc,rhoG,pG,uG,H,yG_init
       integer :: i,j,k
       integer, parameter :: nref=3
       ! Get mesh size
@@ -298,14 +299,18 @@ contains
             pG  =pG1  +(pG2  -pG1  )*H
             uG  =u1   +(u2   -u1   )*H
             ! Set conserved variables: Q=(VF*rhoL, (1-VF)*rhoG, VF*rhoL*IL, (1-VF)*rhoG*IG, rho_mix*U, 0, 0)
+            ! Seed interfacial cells' gas phase with Yv0 (read from input) instead of starting every
+            ! cell from a hard Yv=0 baseline -- avoids the checkered Yv field that a uniform Yv=0 start
+            ! produces once relax_igmix_sg's "pure liquid-inert gas" branch first runs on it.
+            yG_init=merge(Yv0,0.0_WP,myVF.gt.VFlo.and.myVF.lt.VFhi)
             pQ(i,j,k,1)=(       myVF)*rhoL1
             pQ(i,j,k,2)=(1.0_WP-myVF)*rhoG
             pQ(i,j,k,3)=pQ(i,j,k,1)*IEL
-            pQ(i,j,k,4)=pQ(i,j,k,2)*gas%get_e_from_p_rho(p=pG,rho=rhoG,y=[0.0_WP,1.0_WP])
+            pQ(i,j,k,4)=pQ(i,j,k,2)*gas%get_e_from_p_rho(p=pG,rho=rhoG,y=[yG_init,1.0_WP-yG_init])
             pQ(i,j,k,5)=(pQ(i,j,k,1)+pQ(i,j,k,2))*uG
             pQ(i,j,k,6)=0.0_WP
             pQ(i,j,k,7)=0.0_WP
-            pQ(i,j,k,8)=0.0_WP
+            pQ(i,j,k,8)=yG_init*pQ(i,j,k,2)
          end do; end do; end do
       end do
       call amrex_mfiter_destroy(mfi)
@@ -513,6 +518,7 @@ contains
          call param_read('Vapor cv',CvV)
          call param_read('Vapor q',qV)
          call param_read('Vapor qp',qpV)
+         call param_read('Initial vapor mass fraction',Yv0,default=0.0_WP)
          ! Surface tension
          call param_read('Weber number',Weber)
          ! Liquid EoS, fit to this case's reference parameters

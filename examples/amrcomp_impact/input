@@ -22,6 +22,8 @@ Relaxation type: pTg
 Cavitation pressure threshold coefficient: 0.8
 Condensation temperature tolerance : 0.1
 
+Initial vapor mass fraction: 0
+
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####
 ###########################################
@@ -79,9 +81,9 @@ Sutherland temperature: 0.073
 Max dt:   1e-3
 Initial dt: 1e-3
 Max CFL:  0.75
-Max time: 15
+Max time: 20
 
 # Output
 Output period:     0.1
 Checkpoint period: 1
-Restart from:      
+Restart from:      1.50000E+01
