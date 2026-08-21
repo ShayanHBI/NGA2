@@ -17,7 +17,7 @@ Ly : 0.03 ! 0.1
 # Flow setup
 Liquid temperature                 : 350
 Liquid pressure                    : 1e5
-Pulse amplitude                    : 1e6
+Pulse amplitude                    : 1e7
 Pulse radius                       : 0.001
 Boundary condition                 : wall   ! dirichlet=cavitation only, wall=cavitation+condensation
 Cavitation pressure threshold      : -1e8

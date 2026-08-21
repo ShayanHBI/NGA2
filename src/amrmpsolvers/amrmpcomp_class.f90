@@ -92,7 +92,12 @@ module amrmpcomp_class
       real(WP) :: sigma                  !< Surface tension coefficient
 
       ! Diagnostics
-      type(amrdata) :: cluster_idx       !< Per-cell cluster_relax pool id (0=unpooled), for viz
+      type(amrdata) :: cluster_idx       !< Per-cell cluster_relax pool id (0=unpooled), for viz. Reset
+                                          !< once per apply_relax call, so it only shows clustering from
+                                          !< the single most recent RK stage. Carried across regrid via
+                                          !< its own on_coarse/on_remake (not reset_level+setval(0) like
+                                          !< the auxiliary fields below), so a regrid can't wipe it out
+                                          !< right before the next write.
 
       ! CFL numbers
       real(WP) :: CFLst=0.0_WP                               !< Surface tension
@@ -514,7 +519,12 @@ contains
       call this%beta%reset_level(lvl,ba,dm)
       call this%diffL%reset_level(lvl,ba,dm)
       call this%diffG%reset_level(lvl,ba,dm)
-      call this%cluster_idx%reset_level(lvl,ba,dm); call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
+      ! cluster_idx: NOT reset like the auxiliary fields above -- carried across via the field's
+      ! own default interpolation (new fine cells inherit their coarse parent's id), preserving the
+      ! latest apply_relax result instead of blanking the whole level. The auxiliary fields above
+      ! are fine to wipe since they're all unconditionally recomputed from Q/VF every step;
+      ! cluster_idx is not (only apply_relax writes it, once per RK stage).
+      call this%cluster_idx%on_coarse(lvl,time,ba,dm)
    end subroutine on_coarse
 
    !> Override on_remake: migrate data on regrid using conservative interpolation
@@ -540,7 +550,10 @@ contains
       call this%beta%reset_level(lvl,ba,dm)
       call this%diffL%reset_level(lvl,ba,dm)
       call this%diffG%reset_level(lvl,ba,dm)
-      call this%cluster_idx%reset_level(lvl,ba,dm); call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
+      ! cluster_idx: NOT reset -- carried across via FillPatch from the old layout (see on_coarse
+      ! for why), so the just-computed apply_relax result for existing cells survives a pure
+      ! redistribution regrid instead of being blanked right before the next write.
+      call this%cluster_idx%on_remake(lvl,time,ba,dm)
    end subroutine on_remake
 
    !> Override on_clear: delete level
@@ -2735,8 +2748,8 @@ contains
       integer, dimension(6)   :: fopp
       type(amrex_mfiter) :: mfi
       type(amrex_box)    :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pP,pS,pI,pCidx,pPLIC
-      type(amrex_multifab) :: pool,idpool
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pP,pS,pI,pCidx,pPLIC,pVF0
+      type(amrex_multifab) :: pool,idpool,vfsnap
       logical, dimension(6) :: acc
       real(WP), dimension(6) :: mVF,wlf,rawcapf ! old capacity-weight scheme -- unused now, kept for reference (see below)
       real(WP), dimension(this%nQ,6) :: mQ
@@ -2795,7 +2808,7 @@ contains
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
             ! reservoir-eligible cells build a pool; a thin-liquid claimant paired with a
             ! thin-gas neighbour (pair_leader) may also lead one -- see pair_leader above
-            if (claimant(i,j,k).and..not.pair_leader(i,j,k)) cycle
+            if (claimant(i,j,k,pVF).and..not.pair_leader(i,j,k)) cycle
             VFpool0=pVF(i,j,k,1); Qpool0=pQ(i,j,k,1:this%nQ); Pjpool=this%sigma*pCurv(i,j,k,1); nmem=0
             ! Own cell's PLIC (normal,offset) and cell box -- geometric redistribution below
             nrm0=pPLIC(i,j,k,1:3); d0=pPLIC(i,j,k,4); valid0=(abs(d0).lt.1.0e9_WP)
@@ -2804,7 +2817,7 @@ contains
             do f=1,6
                acc(f)=.false.
                ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
-               if (claimant(ia,ja,ka).and.partner_dir(ia,ja,ka).eq.fopp(f)) then
+               if (claimant(ia,ja,ka,pVF).and.partner_dir(ia,ja,ka,pVF).eq.fopp(f)) then
                   acc(f)=.true.; nmem=nmem+1
                   mVF(f)=pVF(ia,ja,ka,1); mQ(:,f)=pQ(ia,ja,ka,1:this%nQ)
                   VFpool0=VFpool0+mVF(f); Qpool0=Qpool0+mQ(:,f); Pjpool=Pjpool+this%sigma*pCurv(ia,ja,ka,1)
@@ -2967,13 +2980,17 @@ contains
                call die('[cluster_relax] unknown redist_method')
             end select
             ! Own (reservoir) share
+            if (dbg_cell) then ! debug
+               call get_thermo(pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   cluster cell role=RESERVOIR i=',i,' j=',j,' k=',k
+               print*,'   PRE  VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
+               print*,'   PRE  TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
+            end if
             call apply_redist(pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),valid0,hex0,nrm0,d0,wl0,newVF,newQ)
             if (dbg_cell) then ! debug
                call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-               print*,'   own redist i=',i,' j=',j,' k=',k
-               print*,'   newVF=',newVF,' newQ=',newQ
-               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
-               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+               print*,'   POST VF=',newVF,' Q=',newQ
+               print*,'   POST TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
             end if
             pP(i,j,k,1:this%nQ)=newQ; pP(i,j,k,this%nQ+1)=newVF
             msk=0
@@ -2983,16 +3000,16 @@ contains
                ! target -- print every member of the cluster here, not just the traced one, so the
                ! whole cluster's post-redistribution state is visible together
                if (dbg_cell) then ! debug
-                  print*,'   PRE member redist f=',f,' reservoir=(',i,j,k,')'
-                  print*,'   mVF=',mVF(f),' mQ1=',mQ(1,f),' mQ3=',mQ(3,f),' validf=',validf(f)
+                  call get_thermo(mVF(f),mQ(:,f),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+                  print*,'   cluster cell role=MEMBER f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
+                  print*,'   PRE  VF=',mVF(f),' Q=',mQ(:,f),' validf=',validf(f)
+                  print*,'   PRE  TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
                end if
                call apply_redist(mVF(f),mQ(:,f),validf(f),hexf(:,:,f),nrmf(:,f),df(f),wlf(f),newVF,newQ)
                if (dbg_cell) then ! debug
                   call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-                  print*,'   member redist f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
-                  print*,'   newVF=',newVF,' newQ=',newQ
-                  print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
-                  print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+                  print*,'   POST VF=',newVF,' Q=',newQ
+                  print*,'   POST TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
                end if
                pP(i,j,k,f*npay+1:f*npay+this%nQ)=newQ; pP(i,j,k,f*npay+this%nQ+1)=newVF
                msk=ibset(msk,f)
@@ -3024,34 +3041,56 @@ contains
       call this%amr%mfiter_destroy(mfi)
       call pool%fill_boundary(this%amr%geom(lvl))
       call idpool%fill_boundary(this%amr%geom(lvl))
+      ! Freeze a read-only VF snapshot from BEFORE pass 2 writes anything, for pass 2's own
+      ! claimant/partner_dir calls to read. Pass 2 below writes pVF in place as it resolves each
+      ! cell, cell-by-cell within one mfi/i/j/k sweep -- if claimant/partner_dir kept reading that
+      ! same live pVF, a claimant visited later in the sweep could see an ALREADY-UPDATED neighbour
+      ! (its post-redistribution VF, not the pre-relax VF pass 1 actually paired it against), pick
+      ! a different partner_dir than pass 1 did, look up the wrong neighbour's pP slot, and be
+      ! silently left unresolved (stale VF/Q, never picking up its pass-1-computed redistributed
+      ! share). vfsnap freezes the same pre-cluster state pass 1 saw (pVF is never written during
+      ! pass 1), so pass 2's own claim decisions always agree with pass 1's.
+      call this%amr%mfab_build(lvl,vfsnap,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
+      call this%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>this%VF%mf(lvl)%dataptr(mfi); pVF0=>vfsnap%dataptr(mfi)
+         bx=mfi%tilebox()
+         pVF0(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)= &
+         &   pVF(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)
+      end do
+      call this%amr%mfiter_destroy(mfi)
+      call vfsnap%fill_boundary(this%amr%geom(lvl))
       ! ---- Pass 2: every touched cell adopts its share (claimant <- reservoir's slot; reservoir <- own slot) ----
       call this%amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
          pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
          pP=>pool%dataptr(mfi); pS=>cskip%dataptr(mfi); pI=>idpool%dataptr(mfi)
-         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi)
+         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi); pVF0=>vfsnap%dataptr(mfi)
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
             dbg_cell=(i.eq.dbg_i.and.j.eq.dbg_j.and.k.eq.dbg_k) ! debug
             if (dbg_cell) then ! debug
                print*,'--------------------------------------------------'
-               print*,'inside cluster_relax, pass2 claimant=',claimant(i,j,k),' VF=',pVF(i,j,k,1)
+               print*,'inside cluster_relax, pass2 claimant=',claimant(i,j,k,pVF0),' VF0=',pVF0(i,j,k,1)
                print*,'   own pP(nc)=',nint(pP(i,j,k,nc))
-               if (nint(pP(i,j,k,nc)).eq.0.and.claimant(i,j,k)) then
+               if (nint(pP(i,j,k,nc)).eq.0.and.claimant(i,j,k,pVF0)) then
                   ! this cell did not lead a pool of its own (own pP(nc)=0) and needs a
-                  ! reservoir partner to adopt into -- that check reads the PARTNER's pool bit
-                  d=partner_dir(i,j,k)
+                  ! reservoir partner to adopt into -- that check reads the PARTNER's pool bit.
+                  ! partner_dir uses pVF0 (the pre-pass-2 snapshot), the SAME array pass 1 used to
+                  ! decide this cell's pairing, so it reproduces pass 1's decision exactly even
+                  ! though pass 2 has already overwritten some neighbours' live pVF by now.
+                  d=partner_dir(i,j,k,pVF0)
                   print*,'   partner_dir=',d
-                  ! debug: dump every face neighbour's VF against the cluster_VFlo/VFhi bounds
-                  ! partner_dir searches against, to see why none (or one) qualified
+                  ! debug: dump every face neighbour's VF0 (frozen) against the cluster_VFlo/VFhi
+                  ! bounds partner_dir searches against, to see why none (or one) qualified
                   print*,'   cluster_VFlo=',this%cluster_VFlo,' cluster_VFhi=',this%cluster_VFhi
                   do f=1,6
                      ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
-                     print*,'   neighbour f=',f,' i=',ia,' j=',ja,' k=',ka,' VF=',pVF(ia,ja,ka,1)
+                     print*,'   neighbour f=',f,' i=',ia,' j=',ja,' k=',ka,' VF0=',pVF0(ia,ja,ka,1)
                   end do
                   if (d.gt.0) then
                      ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
-                     print*,'   partner i=',ia,' j=',ja,' k=',ka,' partner VF=',pVF(ia,ja,ka,1)
+                     print*,'   partner i=',ia,' j=',ja,' k=',ka,' partner VF0=',pVF0(ia,ja,ka,1)
                      print*,'   partner pP(nc)=',nint(pP(ia,ja,ka,nc)),' bit f=',f
                      print*,'   partner accepted this cell=',btest(nint(pP(ia,ja,ka,nc)),f)
                   else
@@ -3072,8 +3111,10 @@ contains
                   print*,'   pass2 adopted own reservoir/pair-leader share'
                   print*,'   newVF=',pVF(i,j,k,1),' newQ=',pQ(i,j,k,1:this%nQ),' cidx=',pCidx(i,j,k,1)
                end if
-            else if (claimant(i,j,k)) then
-               d=partner_dir(i,j,k)
+            else if (claimant(i,j,k,pVF0)) then
+               ! partner_dir keyed off pVF0 (frozen), matching pass 1's own pairing decision --
+               ! see the dbg_cell block above for why this must NOT be the live, partly-updated pVF
+               d=partner_dir(i,j,k,pVF0)
                if (d.gt.0) then
                   ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
                   if (btest(nint(pP(ia,ja,ka,nc)),f)) then
@@ -3093,57 +3134,67 @@ contains
       call this%amr%mfiter_destroy(mfi)
       call amrex_multifab_destroy(pool)
       call amrex_multifab_destroy(idpool)
-      ! if (nclust_events.gt.0) print*,'cluster_relax: t=',time,' events=',nclust_events,' cells=',nclust_cells ! debug
+      call amrex_multifab_destroy(vfsnap)
+      ! print*,'CLUSTER_CENSUS t=',time,' events=',nclust_events,' cells=',nclust_cells ! debug: independent of cluster_idx viz field, for cross-checking
    contains
-      !> Thin-liquid claimant: too little liquid, needs a liquid-rich partner
-      logical function lclaim(ci,cj,ck)
+      !> Thin-liquid claimant: too little liquid, needs a liquid-rich partner. Takes vf explicitly
+      !> (rather than reading host-associated pVF) so pass 2 can evaluate this against a frozen
+      !> snapshot instead of the live, partly-already-updated field -- see vfsnap above.
+      logical function lclaim(ci,cj,ck,vf)
          integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf
          real(WP) :: myVF
-         myVF=pVF(ci,cj,ck,1)
+         myVF=vf(ci,cj,ck,1)
          lclaim=(myVF.ge.VFlo.and.myVF.lt.this%cluster_VFlo)
       end function lclaim
-      !> Thin-gas claimant: too little gas, needs a gas-rich partner
-      logical function gclaim(ci,cj,ck)
+      !> Thin-gas claimant: too little gas, needs a gas-rich partner (see lclaim re: vf)
+      logical function gclaim(ci,cj,ck,vf)
          integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf
          real(WP) :: myVF
-         myVF=pVF(ci,cj,ck,1)
+         myVF=vf(ci,cj,ck,1)
          gclaim=(myVF.gt.this%cluster_VFhi.and.myVF.le.VFhi)
       end function gclaim
       !> Claimant predicate: thin liquid or thin gas by cluster_relax's own bounds, excludes pure cells
-      logical function claimant(ci,cj,ck)
+      logical function claimant(ci,cj,ck,vf)
          integer, intent(in) :: ci,cj,ck
-         claimant=lclaim(ci,cj,ck).or.gclaim(ci,cj,ck)
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf
+         claimant=lclaim(ci,cj,ck,vf).or.gclaim(ci,cj,ck,vf)
       end function claimant
       !> A thin-liquid claimant may still LEAD pass 1's gathering if its best partner (by
       !> partner_dir) is itself a thin-gas claimant: the liquid-starved cell has gas to
       !> offer, the gas-starved cell has liquid to offer, so the pair is healthy together
       !> even though neither qualifies as a reservoir alone. Only the liquid side is granted
       !> this extra eligibility (never the gas side), so a mutual pair is never led from both ends.
+      !> Only ever called from pass 1, always against the live pVF (safe there -- pass 1 never
+      !> writes pVF, so it stays a frozen snapshot for the whole pass on its own).
       logical function pair_leader(ci,cj,ck)
          integer, intent(in) :: ci,cj,ck
          integer :: d
          pair_leader=.false.
-         if (.not.lclaim(ci,cj,ck)) return
-         d=partner_dir(ci,cj,ck)
+         if (.not.lclaim(ci,cj,ck,pVF)) return
+         d=partner_dir(ci,cj,ck,pVF)
          if (d.eq.0) return
-         pair_leader=gclaim(ci+foff(1,d),cj+foff(2,d),ck+foff(3,d))
+         pair_leader=gclaim(ci+foff(1,d),cj+foff(2,d),ck+foff(3,d),pVF)
       end function pair_leader
       !> Best-partner direction for a claimant: liquid reservoir (highest VF) if thin liquid,
-      !> gas reservoir (lowest VF) if thin gas; 0 if not a claimant or no qualifying neighbour
-      integer function partner_dir(ci,cj,ck) result(d)
+      !> gas reservoir (lowest VF) if thin gas; 0 if not a claimant or no qualifying neighbour.
+      !> Takes vf explicitly (see lclaim) so pass 1 and pass 2 can be made to agree exactly.
+      integer function partner_dir(ci,cj,ck,vf) result(d)
          integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf
          integer :: g; real(WP) :: vc,vm,vv
-         d=0; vc=pVF(ci,cj,ck,1)
+         d=0; vc=vf(ci,cj,ck,1)
          if (vc.lt.this%cluster_VFlo) then
             vm=this%cluster_VFlo
             do g=1,6
-               vv=pVF(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
+               vv=vf(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
                if (vv.gt.this%cluster_VFlo.and.vv.gt.vm) then; vm=vv; d=g; end if
             end do
          else if (vc.gt.this%cluster_VFhi) then
             vm=this%cluster_VFhi
             do g=1,6
-               vv=pVF(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
+               vv=vf(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
                if (vv.lt.this%cluster_VFhi.and.vv.lt.vm) then; vm=vv; d=g; end if
             end do
          end if
@@ -3403,6 +3454,9 @@ contains
       !        entry state even for a cell cluster_relax just changed)
       call this%amr%mfab_build(lvl,cskip,ncomp=2,nover=0,atface=[.false.,.false.,.false.])
       call cskip%setval(0.0_WP)
+      ! cluster_idx is owned here (not by the driver): reset once per apply_relax call so it
+      ! always reflects exactly this call's clustering, not leftovers from an earlier RK stage.
+      call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
       call this%amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
          pVF=>this%VF%mf(lvl)%dataptr(mfi); pS=>cskip%dataptr(mfi)

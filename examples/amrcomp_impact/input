@@ -81,9 +81,9 @@ Sutherland temperature: 0.073
 Max dt:   1e-3
 Initial dt: 1e-3
 Max CFL:  0.75
-Max time: 20
+Max time: 15
 
 # Output
 Output period:     0.1
 Checkpoint period: 1
-Restart from:      1.50000E+01
+Restart from:      1.20000E+01

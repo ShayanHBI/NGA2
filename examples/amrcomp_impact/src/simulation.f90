@@ -889,7 +889,6 @@ contains
 
          ! Remember old state
          call fs%store_old()
-         call fs%cluster_idx%setval(val=0.0_WP,lvl=fs%amr%maxlvl)
          ! call debug_probe('00-start-of-step-Qold') ! debug
 
          ! ======================= RK2 Stage 1: Q*=Q[n]+dt/2*dQdt(t,Q[n]) =======================

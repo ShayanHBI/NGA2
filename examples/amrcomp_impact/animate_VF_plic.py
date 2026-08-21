@@ -13,10 +13,15 @@ import yt
 parser = argparse.ArgumentParser()
 parser.add_argument("input", help="case identifier, e.g. pTg")
 parser.add_argument("--start-time", type=float, default=0.0, help="skip frames before this simulation time")
+parser.add_argument(
+    "--snapshot-time", type=float, default=None,
+    help="render a single PDF of the frame closest to this time instead of the full animation",
+)
 args = parser.parse_args()
 
 INPUT = args.input
 START_TIME = args.start_time
+SNAPSHOT_TIME = args.snapshot_time
 CASE = f"impact_relax_{INPUT}"
 AMRVIZ_DIR = Path("amrviz") / CASE
 
@@ -26,13 +31,14 @@ VMIN, VMAX = 0.0, 1.0
 
 # Case is non-dimensional -- plotted coordinates and time are used as-is.
 VIEW_XLIM = (0.0, 11.0)
-# VIEW_XLIM = (0.0, 2)
+# VIEW_XLIM = (0.0, 3)
 VIEW_YLIM = (-5.5, 5.5)
-# VIEW_YLIM = (-2.5, 2.5)
+# VIEW_YLIM = (-3, 3)
 
 CMAP = "jet"
 INTERFACE_COLOR = "white"
 INTERFACE_LINEWIDTH = 0.75
+# INTERFACE_LINEWIDTH = 0.5
 
 FPS = 12
 OUTPUT = f"VF_plic_{INPUT}.mp4"
@@ -40,7 +46,7 @@ OUTPUT = f"VF_plic_{INPUT}.mp4"
 # Paper-style figure geometry (inches). Canvas sized to ~9.5 x 7.0 cm --
 # smaller physical size, so fonts/lines are scaled up to stay legible and
 # margins are generous enough that the rotated y-label always fits.
-CM_TO_IN = 1.0 / 2.54
+CM_TO_IN         = 1.0 / 2.54
 FIG_WIDTH_IN     = 9.5 * CM_TO_IN
 LEFT_MARGIN_IN   = 0.78
 RIGHT_MARGIN_IN  = 0.75
@@ -122,6 +128,29 @@ def extract_plic_segments(vtp_path: Path):
     return segments
 
 
+def closest_frame_index(frames, target_time):
+    """Binary search on frame time (monotonic in frame number) so only a
+    handful of plotfiles are opened instead of the whole series."""
+    cache = {}
+
+    def time_at(i):
+        if i not in cache:
+            cache[i] = float(yt.load(str(frames[i][0])).current_time.to_value())
+        return cache[i]
+
+    lo, hi = 0, len(frames) - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if time_at(mid) < target_time:
+            lo = mid + 1
+        else:
+            hi = mid
+
+    candidates = [lo] + ([lo - 1] if lo > 0 else [])
+    idx = min(candidates, key=lambda i: abs(time_at(i) - target_time))
+    return idx, time_at(idx)
+
+
 def load_frame(plt_path: Path, vtp_path: Path):
     ds = yt.load(str(plt_path))
     t = float(ds.current_time.to_value())
@@ -150,7 +179,12 @@ if START_TIME > 0.0:
         if float(yt.load(str(p)).current_time.to_value()) >= START_TIME
     ]
 
-t0, data0, segs0, le, re = load_frame(*frames[0])
+if SNAPSHOT_TIME is not None:
+    frame_idx, _ = closest_frame_index(frames, SNAPSHOT_TIME)
+else:
+    frame_idx = 0
+
+t0, data0, segs0, le, re = load_frame(*frames[frame_idx])
 
 x_span = VIEW_XLIM[1] - VIEW_XLIM[0]
 y_span = VIEW_YLIM[1] - VIEW_YLIM[0]
@@ -210,6 +244,11 @@ def update(i):
     return im, lc, title
 
 
-anim = FuncAnimation(fig, update, frames=len(frames), blit=False)
-anim.save(OUTPUT, fps=FPS, dpi=200, writer="ffmpeg")
-print(f"Saved: {OUTPUT}  ({len(frames)} frames)")
+if SNAPSHOT_TIME is not None:
+    snapshot_output = f"VF_plic_{INPUT}_t{t0:.2f}.pdf"
+    fig.savefig(snapshot_output)
+    print(f"Saved snapshot: {snapshot_output}  (t={t0:.4f})")
+else:
+    anim = FuncAnimation(fig, update, frames=len(frames), blit=False)
+    anim.save(OUTPUT, fps=FPS, dpi=200, writer="ffmpeg")
+    print(f"Saved: {OUTPUT}  ({len(frames)} frames)")

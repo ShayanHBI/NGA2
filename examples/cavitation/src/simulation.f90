@@ -517,6 +517,7 @@ contains
             call eosL%initialize(gamma=GammaL,pinf=PinfL,cv=CvL,q=qL,qp=qpL,name='water')
          type is (nasg)
             call eosL%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
+            eosL%brhomax=1e10_WP
          end select
          ! Liquid density and energy at the uniform initial state (used by the Dirichlet BC)
          rhoL0=eosL%get_rho_from_p_T(p=p0,T=T0,y=[1.0_WP])

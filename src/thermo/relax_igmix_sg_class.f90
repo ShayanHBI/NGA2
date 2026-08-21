@@ -17,9 +17,9 @@ module relax_igmix_sg_class
    public :: Mv,Ma
    ! debug: single target cell (dbg_i,dbg_j,dbg_k); caller sets dbg_cell before apply()
    logical, public :: dbg_cell=.false.
-   integer, public :: dbg_i=-1000000
-   integer, public :: dbg_j=-1000000
-   integer, public :: dbg_k=-1000000
+   integer, public :: dbg_i=-10000000000
+   integer, public :: dbg_j=-10000000000
+   integer, public :: dbg_k=-10000000000
 
    !> Molar masses of vapor and air [kg/mol]
    real(WP), parameter :: Mv=0.0180153_WP
