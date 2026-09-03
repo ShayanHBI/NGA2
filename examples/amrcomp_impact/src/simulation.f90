@@ -597,7 +597,7 @@ contains
          use amrmpcomp_class,      only: BC_GAS,BC_REFLECT
          use amrdata_class,        only: interp_face_lin
          use messager,             only: die
-         use relax_igmix_sg_class, only: Prelax,PTrelax,PTgrelax,PThybrid
+         use relax_igmix_sg_class, only: Prelax,PTrelax,PTgrelax,PThybrid,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi
          ! Assign materials and create flow solver
          fs%liq=>water; fs%gas=>gas; call fs%initialize(amr=amr,name=trim(case_name))
          ! Set surface tension coefficient
@@ -616,7 +616,8 @@ contains
          relax_model%RHOGmin=0.0_WP
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
-         relax_model%diss_P=200.0_WP
+         ! relax_model%diss_P=200.0_WP
+         ! relax_model%diss_RHO=200.0_WP
          ! relax_model%Tratmax=5.0_WP
          fs%Pmin_liq=-0.98_WP*water%pinf
          fs%Tmin_liq=0.1_WP
@@ -626,6 +627,7 @@ contains
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
          ! Set relaxation model for the flow solver
          fs%relax=>relax_model
+         fs%cluster_rhog_on=.true.
          ! Set initial conditions
          fs%user_init=>shockdrop_init
 
@@ -744,6 +746,7 @@ contains
          call viz%add_scalar(Mach,1,'Mach')
          call viz%add_scalar(fs%Yg,1,'Yv')
          call viz%add_scalar(fs%cluster_idx,1,'cluster_idx')
+         call viz%add_scalar(fs%stranded,1,'stranded')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -865,6 +868,7 @@ contains
          call rescfile%add_column(flr_e,'Floor dE')
          call rescfile%add_column(stuck_n,'Stuck n')
          call rescfile%add_column(fs%pool_n,'Pool n')
+         call rescfile%add_column(fs%strand_n,'Strand n')
          call rescfile%write()
       end block create_monitors
 

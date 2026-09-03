@@ -1,0 +1,8 @@
+{
+  "files.watcherExclude": {
+    "**/examples/**": true
+  },
+  "C_Cpp.files.exclude": {
+    "**/examples/**": true
+  }
+}

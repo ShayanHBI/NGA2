@@ -29,12 +29,22 @@ FIELDS = [
     ("TG", r"$T_G$"),
     ("PL", r"$p_L$"),
     ("PG", r"$p_G$"),
+    ("RHOL", r"$\rho_L$"),
+    ("RHOG", r"$\rho_G$"),
 ]
+LIQUID_FIELDS = {"TL", "PL", "RHOL"}
+GAS_FIELDS = {"TG", "PG", "RHOG"}
 
 # Case is non-dimensional -- plotted coordinates and time are used as-is.
-# VIEW_XLIM = (0.0, 11.0)
+AUTO_VIEW_LIMITS = True    # zoom to the droplet's extent (from VF) at the rendered time; if False, use the fixed VIEW_XLIM/VIEW_YLIM below
+VIEW_MARGIN = 1.0          # padding added around the droplet's bounding box on each side, auto mode only
+VIEW_MIN_HALF_SPAN = 1.0   # minimum half-span in each direction, so a very compact droplet doesn't zoom in absurdly tight
+VIEW_SYMMETRIC_Y = True    # force the y-range symmetric about y=0 (matches the impact's symmetry), auto mode only
+DROP_VF_THRESHOLD = 1.0e-3 # VF below this is treated as noise and ignored when locating the droplet
+
+# Fixed view window, used only when AUTO_VIEW_LIMITS is False.
 VIEW_XLIM = (0.0, 3.5)
-VIEW_YLIM = (-6,6)
+VIEW_YLIM = (-6, 6)
 
 # Rotate the whole view 90 deg counterclockwise: simulation x runs vertically
 # (bottom to top) and simulation y runs horizontally (right to left, since a
@@ -102,6 +112,12 @@ def tick_formatter(value, _):
 def cbar_tick_formatter(value, _):
     if abs(value) < 1.0e-8:
         return r"$0$"
+    # .2g switches to "1.5e+02"-style scientific notation for any value >=100
+    # (fine for TL/PL/PG/TG, which stay below that, but RHOL/RHOG routinely
+    # don't) -- those would overflow into the neighboring panel, so fall back
+    # to a plain fixed-point integer there instead.
+    if abs(value) >= 100:
+        return rf"${value:.0f}$"
     return rf"${value:.2g}$"
 
 
@@ -161,6 +177,46 @@ def closest_frame_index(frames, target_time):
     return idx, time_at(idx)
 
 
+def _pad_to_min_span(lo, hi, min_half_span):
+    center = 0.5 * (lo + hi)
+    half = max(0.5 * (hi - lo), min_half_span)
+    return center - half, center + half
+
+
+def compute_view_limits(vf, le, re):
+    """Bounding box (with padding) of cells where the droplet is present
+    (VF > DROP_VF_THRESHOLD), so the view auto-zooms to wherever the droplet
+    actually is at the rendered time instead of a fixed window."""
+    ny, nx = vf.shape
+    dx = (re[0] - le[0]) / nx
+    dy = (re[1] - le[1]) / ny
+
+    mask = vf > DROP_VF_THRESHOLD
+    row_idx = np.where(mask.any(axis=1))[0]
+    col_idx = np.where(mask.any(axis=0))[0]
+    if len(row_idx) == 0 or len(col_idx) == 0:
+        # No droplet found (fully evaporated, or threshold too strict) --
+        # fall back to the whole domain rather than an empty/undefined view.
+        return (le[0], re[0]), (le[1], re[1])
+
+    x_lo = le[0] + col_idx.min() * dx - VIEW_MARGIN
+    x_hi = le[0] + (col_idx.max() + 1) * dx + VIEW_MARGIN
+    y_lo = le[1] + row_idx.min() * dy - VIEW_MARGIN
+    y_hi = le[1] + (row_idx.max() + 1) * dy + VIEW_MARGIN
+
+    x_lo, x_hi = _pad_to_min_span(x_lo, x_hi, VIEW_MIN_HALF_SPAN)
+    if VIEW_SYMMETRIC_Y:
+        y_half = max(abs(y_lo), abs(y_hi), VIEW_MIN_HALF_SPAN)
+        y_lo, y_hi = -y_half, y_half
+    else:
+        y_lo, y_hi = _pad_to_min_span(y_lo, y_hi, VIEW_MIN_HALF_SPAN)
+
+    # Clip to the actual domain so padding never requests space outside it.
+    x_lo, x_hi = max(x_lo, le[0]), min(x_hi, re[0])
+    y_lo, y_hi = max(y_lo, le[1]), min(y_hi, re[1])
+    return (x_lo, x_hi), (y_lo, y_hi)
+
+
 def load_frame(plt_path: Path, vtp_path: Path):
     ds = yt.load(str(plt_path))
     t = float(ds.current_time.to_value())
@@ -176,13 +232,13 @@ def load_frame(plt_path: Path, vtp_path: Path):
 
     vf = np.array(frb["boxlib", "VF"])
     data = {name: np.array(frb["boxlib", name]) for name, _ in FIELDS}
-    data["TL"] = np.where(vf > VF_EPS, data["TL"], np.nan)
-    data["PL"] = np.where(vf > VF_EPS, data["PL"], np.nan)
-    data["TG"] = np.where(vf < 1.0 - VF_EPS, data["TG"], np.nan)
-    data["PG"] = np.where(vf < 1.0 - VF_EPS, data["PG"], np.nan)
+    for name in LIQUID_FIELDS:
+        data[name] = np.where(vf > VF_EPS, data[name], np.nan)
+    for name in GAS_FIELDS:
+        data[name] = np.where(vf < 1.0 - VF_EPS, data[name], np.nan)
 
     segments = extract_plic_segments(vtp_path)
-    return t, data, segments, le, re
+    return t, data, vf, segments, le, re
 
 
 plt_files = sorted(AMRVIZ_DIR.glob("plt.nga2.cell.*"), key=frame_number)
@@ -190,7 +246,10 @@ vtp_files = {frame_number(p): p for p in AMRVIZ_DIR.glob("plic_*.vtp")}
 frames = [(p, vtp_files[frame_number(p)]) for p in plt_files if frame_number(p) in vtp_files]
 
 frame_idx, _ = closest_frame_index(frames, TARGET_TIME)
-t, data, segments, le, re = load_frame(*frames[frame_idx])
+t, data, vf, segments, le, re = load_frame(*frames[frame_idx])
+
+if AUTO_VIEW_LIMITS:
+    VIEW_XLIM, VIEW_YLIM = compute_view_limits(vf, le, re)
 
 tick_locator = MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
 x_ticks = [v for v in tick_locator.tick_values(*VIEW_XLIM) if VIEW_XLIM[0] <= v <= VIEW_XLIM[1]]
@@ -211,29 +270,37 @@ else:
     plot_xlabel, plot_ylabel = r"$x$", r"$y$"
     data_height_over_width = (VIEW_YLIM[1] - VIEW_YLIM[0]) / (VIEW_XLIM[1] - VIEW_XLIM[0])
 
+N_ROWS = 3
+
 width_budget_in = (
     MAX_FIG_WIDTH_IN - LEFT_MARGIN_IN - RIGHT_MARGIN_IN - COL_GAP_IN - 2 * (CBAR_GAP_IN + CBAR_WIDTH_IN)
 ) / 2
-height_budget_in = (MAX_FIG_HEIGHT_IN - BOTTOM_MARGIN_IN - TOP_MARGIN_IN - ROW_GAP_IN) / 2
+height_budget_in = (
+    MAX_FIG_HEIGHT_IN - BOTTOM_MARGIN_IN - TOP_MARGIN_IN - (N_ROWS - 1) * ROW_GAP_IN
+) / N_ROWS
 
 PLOT_WIDTH_IN = min(width_budget_in, height_budget_in / data_height_over_width)
 PANEL_HEIGHT_IN = PLOT_WIDTH_IN * data_height_over_width
 
 FIG_WIDTH_IN = LEFT_MARGIN_IN + RIGHT_MARGIN_IN + COL_GAP_IN + 2 * (CBAR_GAP_IN + CBAR_WIDTH_IN + PLOT_WIDTH_IN)
-FIG_HEIGHT_IN = BOTTOM_MARGIN_IN + 2 * PANEL_HEIGHT_IN + ROW_GAP_IN + TOP_MARGIN_IN
+FIG_HEIGHT_IN = BOTTOM_MARGIN_IN + N_ROWS * PANEL_HEIGHT_IN + (N_ROWS - 1) * ROW_GAP_IN + TOP_MARGIN_IN
 
 fig = plt.figure(figsize=(FIG_WIDTH_IN, FIG_HEIGHT_IN))
 
-row_bottoms = {1: BOTTOM_MARGIN_IN + PANEL_HEIGHT_IN + ROW_GAP_IN, 0: BOTTOM_MARGIN_IN}
+row_bottoms = {
+    row: BOTTOM_MARGIN_IN + row * (PANEL_HEIGHT_IN + ROW_GAP_IN)
+    for row in range(N_ROWS)
+}
 col_lefts = {
     0: LEFT_MARGIN_IN,
     1: LEFT_MARGIN_IN + PLOT_WIDTH_IN + CBAR_GAP_IN + CBAR_WIDTH_IN + COL_GAP_IN,
 }
 
-# (field, title) placed row-major: TL,TG on top; PL,PG on bottom.
+# (field, title) placed row-major top to bottom: TL,TG / PL,PG / RHOL,RHOG.
 LAYOUT = [
-    (FIELDS[0], 1, 0), (FIELDS[1], 1, 1),
-    (FIELDS[2], 0, 0), (FIELDS[3], 0, 1),
+    (FIELDS[0], 2, 0), (FIELDS[1], 2, 1),
+    (FIELDS[2], 1, 0), (FIELDS[3], 1, 1),
+    (FIELDS[4], 0, 0), (FIELDS[5], 0, 1),
 ]
 
 plot_segments = segments[..., ::-1] if ROTATE_CCW else segments

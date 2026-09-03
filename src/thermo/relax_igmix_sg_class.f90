@@ -15,11 +15,19 @@ module relax_igmix_sg_class
    public :: relax_igmix_sg
    public :: Prelax,PTrelax,PTgrelax,PThybrid
    public :: Mv,Ma
-   ! debug: single target cell (dbg_i,dbg_j,dbg_k); caller sets dbg_cell before apply()
+   ! debug: (dbg_i,dbg_j,dbg_k) identifies the cell CURRENTLY being traced; caller sets it to
+   ! the active cell's own indices and dbg_cell=.true. right before apply(), so every print
+   ! inside this module (which has no i,j,k of its own) labels itself correctly even when the
+   ! caller is sweeping a whole box of cells, not just one. The box itself is
+   ! [dbg_ilo,dbg_ihi]x[dbg_jlo,dbg_jhi]x[dbg_klo,dbg_khi] (inclusive); an empty range (lo>hi,
+   ! the default) matches no cell.
    logical, public :: dbg_cell=.false.
-   integer, public :: dbg_i=-10000000000
-   integer, public :: dbg_j=-10000000000
-   integer, public :: dbg_k=-10000000000
+   integer, public :: dbg_i=-100000000 ! 60
+   integer, public :: dbg_j=-100000000 ! 1032
+   integer, public :: dbg_k=-100000000 ! 0
+   integer, public :: dbg_ilo=100000000, dbg_ihi=-100000000
+   integer, public :: dbg_jlo=100000000, dbg_jhi=-100000000
+   integer, public :: dbg_klo=100000000, dbg_khi=-100000000
 
    !> Molar masses of vapor and air [kg/mol]
    real(WP), parameter :: Mv=0.0180153_WP
@@ -66,6 +74,7 @@ module relax_igmix_sg_class
       real(WP) :: Pmin_gas=-1.0e30_WP   !< Gas pressure floor (e.g. ~saturation pressure); off by default
       real(WP) :: Tmin_gas=-1.0_WP      !< Gas temperature floor; off by default
       real(WP) :: diss_P=1.0e30_WP      !< Dissolution: absorb gas where phasic gas pressure exceeds this (1e30=off)
+      real(WP) :: diss_RHO=1.0e30_WP    !< Dissolution: absorb gas where phasic gas density exceeds this (1e30=off)
       real(WP) :: vol=1.0_WP            !< Cell volume for ledger units (set by the case; apply() runs on the finest level only)
       !> Ledger: rank-local cumulative accumulators (1-2 dissolution n/dm; 3 quadratic proposal
       !> succeeded; 4 proposal failed, completed by the swap alone; 5-6 floor n/dE; 7 untouched
@@ -163,7 +172,7 @@ contains
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
       real(WP), dimension(this%gas%ns) :: y
-      real(WP) :: Yv,cvG,cpG,qG,gammaG,PG,PL,Ptar,Eold,TL,TG
+      real(WP) :: Yv,cvG,cpG,qG,gammaG,PG,PL,Ptar,Eold,TL,TG,RHOG
       integer  :: iVQ,ier
       logical :: run_pTg,interfacial
       interfacial=((VF.ge.VFlo).and.(VF.le.VFhi))
@@ -180,7 +189,7 @@ contains
       ! Absorb (seed culling, high-pressure extreme): a gas packet above diss_P is
       ! supercritical and mixes into the liquid; conserves cell totals exactly, the cell
       ! becomes pure liquid, and the caller's pure-cell snap completes the PLIC reset
-      if ((this%model.ne.PTgrelax).and.(this%diss_P.lt.1.0e30_WP).and.(Q(2).gt.0.0_WP).and.(Q(4).gt.0.0_WP)) then
+      if ((this%diss_P.lt.1.0e30_WP).and.(Q(2).gt.0.0_WP).and.(Q(4).gt.0.0_WP)) then
          ! Yv=Q(iVQ)/Q(2)
          Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
          y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
@@ -191,6 +200,18 @@ contains
             Q(2)=0.0_WP; Q(4)=0.0_WP; Q(iVQ)=0.0_WP
             VF=1.0_WP
             if (dbg_cell) call this%debug_dump('ABSORB',VF,Q,Pjump)
+            if (present(ierr)) ierr=RELAX_OK
+            return
+         end if
+      end if
+      if ((this%model.eq.PTgrelax).and.(this%diss_RHO.lt.1.0e30_WP).and.(Q(2).gt.0.0_WP).and.(Q(4).gt.0.0_WP)) then
+         RHOG=Q(2)/(1.0_WP-VF)
+         if (RHOG.gt.this%diss_RHO) then
+            this%acc(1)=this%acc(1)+1.0_WP; this%acc(2)=this%acc(2)+Q(2)*this%vol
+            Q(1)=Q(1)+Q(2); Q(3)=Q(3)+Q(4)
+            Q(2)=0.0_WP; Q(4)=0.0_WP; Q(iVQ)=0.0_WP
+            VF=1.0_WP
+            if (dbg_cell) call this%debug_dump('ABSORB-RHOG',VF,Q,Pjump)
             if (present(ierr)) ierr=RELAX_OK
             return
          end if
@@ -255,7 +276,7 @@ contains
                   ! pT_relax already succeeded): current VF/Q is the accepted answer already --
                   ! either pT_relax's own p_relax-consistent result, or the preserved
                   ! calling p_relax again here would be redundant.
-                  if (dbg_cell) call this%debug_dump('POST-fallback',VF,Q,Pjump,ier)
+                  if (dbg_cell) call this%debug_dump('POST-fallback to pT_relax',VF,Q,Pjump,ier)
                end if
             else
                if (dbg_cell) print*, 'Cant run pTg'
@@ -494,7 +515,6 @@ contains
       integer,  optional,     intent(out)   :: ierr
       real(WP), dimension(:), allocatable   :: Qin,Q0,y
       real(WP) :: VFin,VF0,p,T,Yv,Yvin,Yv0,xv_eq
-      real(WP) :: Tchem0
       real(WP) :: rho0,rhoe0,rhoA0
       real(WP) :: rhoL,rhoG
       real(WP) :: cvG,cpG,qG,gammaG
@@ -620,7 +640,7 @@ contains
                if (dbg_cell) print*,'interfacial, no inert gas, falling through to general chem_relax'
             end if
          else
-            if (dbg_cell) print*,'liquid-inert gas cell, falling through to general chem_relax'
+            if (dbg_cell) print*,'falling through to general chemical relaxation'
          end if
       end block pure_phase_stability
       ! Store input
@@ -855,7 +875,8 @@ contains
       ! Better Newton starting guess for liquid-dominated interfacial cells: Raoult/Dalton Yv from pVsat/p.
       ! Pjump deliberately omitted here (unlike elsewhere) -- its curvature noise is the same order as
       ! the pL-pVsat margin in this branch and checkers the Yv field; -Pjump tested, confirmed worse.
-      if ((.not.nucleated).and.(VF.gt.0.5_WP).and.(Q(2).gt.0.0_WP).and.(Q(2).ne.Q(7+this%liq%ns+this%indV-1))) then
+      ! if ((.not.nucleated).and.(VF.gt.0.5_WP).and.(Q(2).gt.0.0_WP).and.(Q(2).ne.Q(7+this%liq%ns+this%indV-1))) then
+      if ((.not.nucleated).and.(VF.gt.0.5_WP).and.(Q(2).gt.0.0_WP).and.(Yv.lt.Y_small)) then
          xv_eq=this%get_pvsat(p,T)/p
          Yv=xv_eq*Mv/(xv_eq*Mv+(1.0_WP-xv_eq)*Ma)
       end if
@@ -905,7 +926,6 @@ contains
          call dealloc(); return
       end if
       ! Solve chemical equilibrium for p, T, Yv (without modifying Q yet)
-      Tchem0=T ! shared post-pT_relax T, before solve_lv/solve_lvg mutates it in place
       if (Yv.gt.Yv_pure) then
          Yv=Yvmax
          y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
@@ -1144,14 +1164,18 @@ contains
          real(WP) :: alpha,res0,res_try
          real(WP) :: p_try,Yv_try,T_try,xv_try,pv_try,F1_try,F2_try
          real(WP) :: Yv_max_phys,Yv_hi
-         integer  :: it,lsit
+         integer  :: it,lsit,hi_lock
          logical  :: accepted
-         if (dbg_cell) print*,'--------------------------------------------------'
-         if (dbg_cell) print*,'inside solve_lvg, p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
          Yv_max_phys=1.0_WP-(rhoA0/rho0)
          Yv_hi=min(Yvmax,Yv_max_phys)
+         if (dbg_cell) then
+            print*,'--------------------------------------------------'
+            print*,'inside solve_lvg, p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq
+            print*,'inside solve_lvg, rhoA0=',rhoA0,', rho0=',rho0,', Yv_hi=',Yv_hi
+         end if
          conv=.false.
          p_err=10.0_WP*this%p_tol; Yv_err=10.0_WP*this%Yv_tol
+         hi_lock=0
          do it=1,this%NR_itmax
             T_eq=this%get_T_lvg(p_eq,Yv_eq,rho0,rhoA0,Pjump)
             if (T_eq.le.0.0_WP) then
@@ -1223,20 +1247,36 @@ contains
             ! Direction-preserving step limiter
             step_limit: block
                real(WP) :: ms,lnp_up,lnp_dn
-               ms=1.0_WP
+               logical  :: hit_hi
+               ms=1.0_WP; hit_hi=.false.
                lnp_up=log(1.5_WP); lnp_dn=log(0.5_WP)
                if (dlnp_nr.gt.lnp_up) ms=min(ms,lnp_up/dlnp_nr)
                if (dlnp_nr.lt.lnp_dn) ms=min(ms,lnp_dn/dlnp_nr)
                if (dYv_nr.gt.0.0_WP) then
-                  if (Yv_eq+dYv_nr.ge.Yv_hi-fd_eps) ms=min(ms,0.9_WP*(Yv_hi-fd_eps-Yv_eq)/dYv_nr)
+                  if (Yv_eq+dYv_nr.ge.Yv_hi-fd_eps) then
+                     ms=min(ms,0.9_WP*(Yv_hi-fd_eps-Yv_eq)/dYv_nr); hit_hi=.true.
+                  end if
                else if (dYv_nr.lt.0.0_WP) then
                   if (Yv_eq+dYv_nr.le.Yvmin+fd_eps) ms=min(ms,0.9_WP*(Yv_eq-Yvmin-fd_eps)/abs(dYv_nr))
                end if
                ms=max(0.0_WP,min(1.0_WP,ms))
                dlnp_nr=dlnp_nr*ms; dYv_nr=dYv_nr*ms
-               if (dbg_cell) print*,'NR-STEP-LIMITED it=',it,' ms=',ms
+               if (hit_hi) then; hi_lock=hi_lock+1; else; hi_lock=0; end if
+               if (dbg_cell) print*,'NR-STEP-LIMITED it=',it,' ms=',ms,' hi_lock=',hi_lock
                if (dbg_cell) print*,'   dlnp_nr=',dlnp_nr,' dYv_nr=',dYv_nr
             end block step_limit
+            ! Persistently pinned against the evaporation ceiling (Yv_hi) for several iterations
+            ! straight: the raw step keeps demanding more vapor than the cell's liquid can ever
+            ! supply, so no interior two-phase equilibrium exists. The true equilibrium is then the
+            ! boundary itself -- all liquid evaporated (VF=0) -- which has a direct, non-iterative
+            ! solution (fixed mass rho0, fixed energy rhoe0, fixed composition Yv_hi, single gas
+            ! phase, no saturation condition left to satisfy since no liquid remains).
+            if (hi_lock.ge.3) then
+               if (dbg_cell) print*,'EXIT-K pinned at Yv_hi for',hi_lock,' iterations -- resolving as complete evaporation' ! debug
+               call boundary_all_vapor(Yv_hi,p_eq,T_eq,Yv_eq)
+               conv=.true.
+               return
+            end if
             ! Damped update with line search
             pOld=p_eq; YvOld=Yv_eq; lnpOld=log(pOld); alpha=1.0_WP; lsit=0
             if ((abs(F1).lt.F_line_search_tol).and.(abs(F2).lt.F_line_search_tol)) then
@@ -1301,6 +1341,21 @@ contains
          if (dbg_cell.and..not.conv) print*,'EXIT-L exhausted NR_itmax=',this%NR_itmax,' final it=',it-1
          if (dbg_cell.and..not.conv) print*,'   p_eq=',p_eq,' T_eq=',T_eq,' Yv_eq=',Yv_eq,' p_err=',p_err,' Yv_err=',Yv_err
       end subroutine solve_lvg
+      !> Direct (non-iterative) equilibrium for the evaporation ceiling: with Yv pinned at
+      !> Yv_hi_, all liquid is gone (VF=0), so the cell is single-phase gas at fixed mass rho0,
+      !> fixed energy rhoe0, and fixed composition Yv_hi_ -- there is no liquid left for a
+      !> saturation condition to hold against, so p,T follow directly from the gas EOS, the same
+      !> (rho,e)->p->T route apply() itself uses for a single-phase gas cell.
+      subroutine boundary_all_vapor(Yv_hi_,p_eq,T_eq,Yv_eq)
+         real(WP), intent(in)  :: Yv_hi_
+         real(WP), intent(out) :: p_eq,T_eq,Yv_eq
+         real(WP) :: p_gas
+         Yv_eq=Yv_hi_
+         y(this%indV)=Yv_eq; y(this%indA)=1.0_WP-Yv_eq
+         p_gas=this%gas%get_p_from_rho_e(rho=rho0,e=rhoe0/rho0,y=y)
+         T_eq=this%gas%get_T_from_p_rho(p=p_gas,rho=rho0,y=y)
+         p_eq=p_gas+Pjump
+      end subroutine boundary_all_vapor
    end subroutine pTg_relax
 
    !> p-T saturation residual (general form: ES=0 for SG, ES=b/RV for NASG)

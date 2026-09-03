@@ -16,11 +16,10 @@ module amrmpcomp_class
    ! Expose type and constants
    public :: amrmpcomp,VFlo,VFhi,BC_LIQ,BC_GAS,BC_REFLECT,BC_USER
 
-!   ! cluster_relax split-back method selector
-!   integer, parameter, public :: cap_redist=1        !< capacity-weighted VF split (legacy)
-!   integer, parameter, public :: geo_redist_multi=2  !< PLIC-geometric VF split: each member keeps its own normal, advanced by a shared delta (bisection)
-!   integer, parameter, public :: geo_redist_shared=3 !< PLIC-geometric VF split: one shared plane (averaged normal, closed-form offset) cuts every member's own hex
-   ! relax_clustered: every cluster is a matched pair (host+guest), see relax_clustered below
+   ! cluster_relax split-back method selector
+   integer, parameter, public :: cap_redist=1        !< capacity-weighted VF split (legacy)
+   integer, parameter, public :: geo_redist_multi=2  !< PLIC-geometric VF split: each member keeps its own normal, advanced by a shared delta (bisection)
+   integer, parameter, public :: geo_redist_shared=3 !< PLIC-geometric VF split: one shared plane (averaged normal, closed-form offset) cuts every member's own hex
 
    !> AMR compressible multiphase solver type
    type, extends(amrmpflow) :: amrmpcomp
@@ -49,16 +48,16 @@ module amrmpcomp_class
       real(WP) :: merge_sick=100.0_WP   !< One-sided deficit factor: a gas whose density or specific energy is this many times BELOW its fullest neighbour's merges at any VF
 
       ! Pre-relaxation clustering
-      logical  :: cluster_on=.true.    !< enable relax_clustered (called from apply_relax, ahead of its per-cell relax loop)
-      real(WP) :: cluster_VFlo=0.05_WP  !< thin-liquid claimant bound for relax_clustered
-      real(WP) :: cluster_VFhi=0.95_WP  !< thin-gas    claimant bound for relax_clustered
+      logical  :: cluster_on=.true.    !< enable cluster_relax (called from apply_relax, ahead of its per-cell relax loop)
+      real(WP) :: cluster_VFlo=0.05_WP  !< thin-liquid claimant bound for cluster_relax
+      real(WP) :: cluster_VFhi=0.95_WP  !< thin-gas    claimant bound for cluster_relax
       real(WP) :: cluster_rhoG_K=1.2_WP !< RHOG density-spike claimant multiplier vs. reservoir-eligible neighbours' median RHOG, OR'd into gclaim on top of the VF-based cluster_VFhi trigger (RHOG runaway compounds well before VF crosses cluster_VFhi)
-!      integer  :: redist_method=geo_redist_multi !< cluster_relax split-back method: cap_redist, geo_redist_multi, or geo_redist_shared
+      integer  :: redist_method=geo_redist_multi !< cluster_relax split-back method: cap_redist, geo_redist_multi, or geo_redist_shared
 
       ! Post-clustering stranded-gas dissolution: a cell surrounded by near-pure-liquid neighbours
-      ! on every face has no reservoir for relax_clustered to pool with -- fold its trace gas back
+      ! on every face has no reservoir for cluster_relax to pool with -- fold its trace gas back
       ! into the liquid instead of leaving a runaway RHOG in the field.
-      logical  :: dissolve_on=.true.        !< enable dissolve_stranded_gas (called from apply_relax, after Pass B's relax_clustered)
+      logical  :: dissolve_on=.true.        !< enable dissolve_stranded_gas (called from apply_relax, after Pass B's cluster_relax)
       logical  :: cluster_rhog_on=.true.    !< enable Pass B (RHOG-based clustering) and dissolve_stranded_gas; off reverts to VF-only clustering
       real(WP) :: dissolve_rhoG_K=2.0_WP    !< RHOG must exceed this multiple of the local 2-ring reference RHOG to dissolve
 
@@ -81,7 +80,7 @@ module amrmpcomp_class
       real(WP) :: resc_ng=0.0_WP,resc_mg=0.0_WP,resc_eg=0.0_WP
       real(WP) :: pool_acc=0.0_WP
       real(WP) :: pool_n=0.0_WP
-      real(WP) :: strand_acc=0.0_WP !< relax_clustered claimants that found no accepting reservoir
+      real(WP) :: strand_acc=0.0_WP !< cluster_relax claimants that found no accepting reservoir
       real(WP) :: strand_n=0.0_WP
 
       ! Pressure solver for pressure projection
@@ -171,7 +170,7 @@ module amrmpcomp_class
       procedure :: build_plic
       procedure :: clean_Q
       procedure :: merge_Q
-      procedure :: relax_clustered
+      procedure :: cluster_relax
       procedure :: debug_probe_cell ! debug
       procedure :: apply_relax
       procedure :: add_viscartif
@@ -2748,1301 +2747,617 @@ contains
       end function lclaim
    end subroutine merge_Q
 
-!   !> rhog_mode=.false. (default): today's VF-only claimant rule (cluster_VFlo/cluster_VFhi),
-!   !> unaware of cskip. rhog_mode=.true.: a SECOND pass, called from apply_relax strictly after
-!   !> Pass A (this same subroutine, rhog_mode=.false.) plus the individual per-cell relax have
-!   !> both already run for every cell -- so by the time this pass evaluates RHOG, every cell holds
-!   !> its REAL post-relaxation state, not a stale pre-relax or throwaway-probed one. In this mode
-!   !> claimant status ignores VF thresholds entirely and instead requires (a) cskip's comp 1 still
-!   !> 0 (this cell was individually relaxed in Pass A, not already pooled -- "cells that have not
-!   !> been clustered") and (b) a real RHOG excess over cluster_rhoG_K times the local reference
-!   !> (rhoG_excess_frac). Reservoir eligibility is untouched in both modes (still pure VF-based) --
-!   !> a Pass-A-clustered cell can still lend gas to a Pass-B claimant.
-!   subroutine cluster_relax(this,dt,time,cskip,rhog_mode)
-!      use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
-!      use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j,dbg_k,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
-!      use amrvof_geometry, only: cut_hex_vol,get_plane_dist
-!      use messager, only: die
-!      implicit none
-!      class(amrmpcomp), intent(inout) :: this
-!      real(WP), intent(in) :: dt,time
-!      type(amrex_multifab), intent(inout) :: cskip
-!      logical, intent(in), optional :: rhog_mode
-!      logical :: use_rhog
-!      integer :: lvl,i,j,k,f,d,ia,ja,ka,ierr,npay,nc,nmem,msk
-!      integer, dimension(3,6) :: foff
-!      integer, dimension(6)   :: fopp
-!      type(amrex_mfiter) :: mfi
-!      type(amrex_box)    :: bx
-!      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pP,pS,pS0,pI,pCidx,pPLIC,pVF0,pQ0,pStrand,pMatch,pRGC
-!      type(amrex_multifab) :: pool,idpool,vfsnap,qsnap,csnap,matchdir,rgclaim
-!      logical, dimension(6) :: acc
-!      real(WP), dimension(6) :: mVF,wlf,rawcapf ! Capacity-weight scheme
-!      real(WP), dimension(this%nQ,6) :: mQ
-!      real(WP) :: VFpool0,VFpool1,dVF,Pjpool,rawVFsum,rawGFsum,nM,wl0,s,newVF
-!      real(WP) :: rawcap0,rawcapsum
-!      real(WP) :: Mtot,KEtot,KEpool,Ediss,cid
-!      real(WP), dimension(3) :: u_pool
-!      real(WP), dimension(this%nQ) :: Qpool0,Qpool1,dQ,newQ
-!      integer :: nclust_events,nclust_cells,local_id ! debug: activation counters
-!      logical :: dbg ! debug: trace one cluster in detail
-!      logical :: adopted ! pass 2: did this claimant end up pooled by any reservoir
-!      logical :: member_claim ! pass 1: is a candidate member itself a claimant (see claimant_lookup)
-!      real(WP) :: RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_ ! debug: pool thermo trace
-!      ! Cluster's post-relax intensive state -- shared by every member on redistribution (see
-!      ! redist below) so that every cell of the pool ends up at the SAME TL,PL,RHOL and
-!      ! TG,PG,RHOG as the cluster, not merely conserving the pool's totals under independent
-!      ! mass/energy weighting.
-!      real(WP) :: RHOL_c,RHOG_c,eL_c,eG_c
-!      real(WP), dimension(this%liq%ns-1) :: Yl_c
-!      real(WP), dimension(this%gas%ns-1) :: Yg_c
-!      ! Geometric redistribution: each pool member's own PLIC (normal+offset, from this%plic) and
-!      ! cell box, used to find the ONE shared physical interface displacement (delta) that
-!      ! reproduces the pool's exact VF change -- see geo_split/eval_VFnew below.
-!      real(WP) :: dx,dy,dz,cell_vol
-!      real(WP), dimension(3) :: nrm0
-!      real(WP) :: d0
-!      logical :: valid0
-!      real(WP), dimension(3,8) :: hex0
-!      real(WP), dimension(3,6) :: nrmf
-!      real(WP), dimension(6) :: df
-!      logical, dimension(6) :: validf
-!      real(WP), dimension(3,8,6) :: hexf
-!      real(WP) :: delta
-!      ! Shared-plane redistribution (geo_redist_shared): one averaged normal + one closed-form
-!      ! offset for the whole pool -- see shared_plane below. Stored once per pool (reservoir's
-!      ! cell, pool payload components nc+1:nc+4) and written to this%plic for every member in
-!      ! pass 2, since it is identical for the whole pool.
-!      real(WP), dimension(3) :: shared_nrm
-!      real(WP) :: shared_d
-!      nclust_events=0; nclust_cells=0; local_id=0 ! debug
-!      use_rhog=.false.; if (present(rhog_mode)) use_rhog=rhog_mode
-!      ! Return if disabled
-!      if (.not.this%cluster_on) return
-!      if (.not.associated(this%relax)) return
-!      ! Finest level only (mixture cells live there)
-!      if (this%amr%clvl().lt.this%amr%maxlvl) return
-!      lvl=this%amr%maxlvl
-!      dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl); cell_vol=this%amr%cell_vol(lvl)
-!      foff(:,1)=[-1,0,0]; foff(:,2)=[1,0,0]; foff(:,3)=[0,-1,0]; foff(:,4)=[0,1,0]; foff(:,5)=[0,0,-1]; foff(:,6)=[0,0,1]
-!      fopp=[2,1,4,3,6,5]
-!      ! Pooled-state field: 1 own slot + 6 face slots, each (nQ+1) reals (Q then VF), plus 1 acceptance
-!      ! bitmask, plus 4 more for geo_redist_shared's pool-wide PLIC plane (normal+offset, stored once
-!      ! per pool at components nc+1:nc+4, not per-slot -- identical for every member)
-!      npay=this%nQ+1; nc=7*npay+1
-!      call this%amr%mfab_build(lvl,pool,ncomp=nc+4,nover=1,atface=[.false.,.false.,.false.])
-!      call pool%setval(0.0_WP)
-!      ! idpool: per-slot pool id (0=unpooled), 1 own + 6 face slots, mirrors pool's slot layout
-!      call this%amr%mfab_build(lvl,idpool,ncomp=7,nover=1,atface=[.false.,.false.,.false.])
-!      call idpool%setval(0.0_WP)
-!      ! matchdir: for geo_redist_shared only, each claimant cell's negotiated reservoir direction
-!      ! (0=unmatched, else 1..6), precomputed below by negotiate_shared_pairing so it stays fixed
-!      ! and symmetric while pass 1/2 read it -- left all-zero (unused) for cap_redist/geo_redist_multi,
-!      ! which keep today's greedy partner_dir via pair_match's dispatch below
-!      call this%amr%mfab_build(lvl,matchdir,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
-!      call matchdir%setval(0.0_WP)
-!      ! rhog_mode only: precompute each cell's gclaim status AND rhoG_excess_frac value ONCE (each
-!      ! needs a 2-ring rhoG_ref scan, safe here -- every tile evaluates only its OWN valid cells
-!      ! against the live this%VF/this%Q, which already carry nover>=2 ghost cells), then
-!      ! fill_boundary into a 1-ring-safe lookup field (comp 1=claimant flag, comp 2=excess_frac).
-!      ! Without this, best_avail_claimant's neighbour loop and pass 1's member-acceptance loop each
-!      ! hop 1 ring out and THEN call claimant()/gclaim()/rhoG_excess_frac() on that neighbour --
-!      ! which in rhog_mode triggers ANOTHER 2-ring rhoG_ref scan from there, a compounded 3-ring
-!      ! reach from the original cell that exceeds VF/Q's actual nover=2 allocation and crashed with
-!      ! a SIGBUS at a domain/AMR-box edge (Session 20). rgclaim/claimant_lookup below replace those
-!      ! sites' direct claimant()/rhoG_excess_frac() calls on a neighbour with a cheap, non-recursive
-!      ! field read instead.
-!      if (use_rhog) then
-!         call this%amr%mfab_build(lvl,rgclaim,ncomp=2,nover=1,atface=[.false.,.false.,.false.])
-!         call rgclaim%setval(0.0_WP)
-!         call this%amr%mfiter_build(lvl,mfi)
-!         do while (mfi%next())
-!            pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
-!            pS=>cskip%dataptr(mfi); pRGC=>rgclaim%dataptr(mfi)
-!            bx=mfi%tilebox()
-!            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-!               if (gclaim(i,j,k,pVF,pQ,pS)) pRGC(i,j,k,1)=1.0_WP
-!               pRGC(i,j,k,2)=rhoG_excess_frac(i,j,k,pVF,pQ)
-!            end do; end do; end do
-!         end do
-!         call this%amr%mfiter_destroy(mfi)
-!         call rgclaim%fill_boundary(this%amr%geom(lvl))
-!      end if
-!      if (this%redist_method.eq.geo_redist_shared) call negotiate_shared_pairing()
-!      ! ---- Pass 1: each eligible reservoir pools with its accepted claimants and solves once ----
-!      call this%amr%mfiter_build(lvl,mfi)
-!      do while (mfi%next())
-!         pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
-!         pCurv=>this%curv%dataptr(mfi); pP=>pool%dataptr(mfi); pI=>idpool%dataptr(mfi)
-!         pPLIC=>this%plic%dataptr(mfi); pMatch=>matchdir%dataptr(mfi); pS=>cskip%dataptr(mfi)
-!         if (use_rhog) pRGC=>rgclaim%dataptr(mfi)
-!         bx=mfi%tilebox()
-!         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-!            ! reservoir-eligible cells build a pool; a thin-liquid claimant paired with a
-!            ! thin-gas neighbour (thin_pair_leader) may also lead one -- see thin_pair_leader above
-!            if (claimant(i,j,k,pVF,pQ,pS).and..not.thin_pair_leader(i,j,k)) cycle
-!            VFpool0=pVF(i,j,k,1); Qpool0=pQ(i,j,k,1:this%nQ); Pjpool=this%sigma*pCurv(i,j,k,1); nmem=0
-!            ! Own cell's PLIC (normal,offset) and cell box -- geometric redistribution below
-!            nrm0=pPLIC(i,j,k,1:3); d0=pPLIC(i,j,k,4); valid0=(abs(d0).lt.1.0e9_WP)
-!            call build_hex([this%amr%xlo+real(i,WP)*dx,this%amr%ylo+real(j,WP)*dy,this%amr%zlo+real(k,WP)*dz], &
-!            &              [this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz],hex0)
-!            do f=1,6
-!               acc(f)=.false.
-!               ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
-!               ! geo_redist_shared needs its super-cell to stay a real hexahedron, so it only ever
-!               ! pairs with ONE neighbour -- which one is negotiate_shared_pairing's symmetric
-!               ! match (via pair_match below), not just the first qualifying face -- see shared_plane
-!               if (this%redist_method.eq.geo_redist_shared.and.nmem.ge.1) cycle
-!               ! member_claim: is the NEIGHBOUR (ia,ja,ka) itself a claimant. Uses the precomputed
-!               ! rgclaim lookup in rhog_mode (claimant() here would hop 1 ring then trigger ANOTHER
-!               ! 2-ring rhoG_ref scan from the neighbour -- see rgclaim's build-site comment).
-!               if (use_rhog) then
-!                  member_claim=claimant_lookup(ia,ja,ka,pRGC)
-!               else
-!                  member_claim=claimant(ia,ja,ka,pVF,pQ,pS)
-!               end if
-!               if (member_claim.and.pair_match(ia,ja,ka,pVF,pQ,pS,pMatch).eq.fopp(f)) then
-!                  acc(f)=.true.; nmem=nmem+1
-!                  mVF(f)=pVF(ia,ja,ka,1); mQ(:,f)=pQ(ia,ja,ka,1:this%nQ)
-!                  VFpool0=VFpool0+mVF(f); Qpool0=Qpool0+mQ(:,f); Pjpool=Pjpool+this%sigma*pCurv(ia,ja,ka,1)
-!                  ! Member's own PLIC (normal,offset) and cell box -- geometric redistribution below
-!                  nrmf(:,f)=pPLIC(ia,ja,ka,1:3); df(f)=pPLIC(ia,ja,ka,4); validf(f)=(abs(df(f)).lt.1.0e9_WP)
-!                  call build_hex([this%amr%xlo+real(ia,WP)*dx,this%amr%ylo+real(ja,WP)*dy,this%amr%zlo+real(ka,WP)*dz], &
-!                  &              [this%amr%xlo+real(ia+1,WP)*dx,this%amr%ylo+real(ja+1,WP)*dy,this%amr%zlo+real(ka+1,WP)*dz], &
-!                  &              hexf(:,:,f))
-!               end if
-!            end do
-!            ! dbg_cell: does this pool (reservoir i,j,k + its accepted members) touch the debug
-!            ! box [dbg_ilo,dbg_ihi]x[dbg_jlo,dbg_jhi]x[dbg_klo,dbg_khi], either as the reservoir
-!            ! itself or as an accepted member? dbg_i/j/k are then set to the RESERVOIR's own
-!            ! indices (not the member's) since apply() below always acts on the pooled reservoir.
-!            dbg_cell=(i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) ! debug
-!            do f=1,6
-!               if (acc(f).and.i+foff(1,f).ge.dbg_ilo.and.i+foff(1,f).le.dbg_ihi.and. &
-!               &   j+foff(2,f).ge.dbg_jlo.and.j+foff(2,f).le.dbg_jhi.and. &
-!               &   k+foff(3,f).ge.dbg_klo.and.k+foff(3,f).le.dbg_khi) dbg_cell=.true. ! debug
-!            end do
-!            if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug: label prints with the reservoir's own index
-!            if (nmem.eq.0) cycle
-!            nclust_events=nclust_events+1; nclust_cells=nclust_cells+nmem+1 ! debug
-!            ! dbg=(this%amr%rank.eq.0.and.nclust_events.eq.1) ! debug: trace only the first pool on rank 0
-!            ! if (dbg) then
-!            !    print*,'CLUSTER reservoir i=',i,' j=',j,' k=',k,' VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
-!            !    do f=1,6
-!            !       if (acc(f)) print*,'CLUSTER member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f),&
-!            !       &                  ' VF=',mVF(f),' Q=',mQ(:,f)
-!            !    end do
-!            ! end if
-!            if (dbg_cell) then ! debug
-!               print*,'--------------------------------------------------'
-!               print*,'inside cluster_relax, reservoir i=',i,' j=',j,' k=',k
-!               print*,'   this cell is part of a CLUSTER of',nmem+1,' cells (this reservoir + ',nmem,' accepted member(s))'
-!               print*,'   VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
-!               do f=1,6
-!                  if (acc(f)) then
-!                     print*,'   member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
-!                     print*,'   VF=',mVF(f),' Q=',mQ(:,f)
-!                  end if
-!               end do
-!            end if
-!            ! debug: reservoir-alone diagnostic -- relax this reservoir's own (unpooled) state on a
-!            ! throwaway copy, to see whether the overshoot is already present before pooling.
-!            ! dbg_cell is left ON (not suppressed) during this call, so the internal pTg_relax/
-!            ! solve_lvg iteration trace prints too -- needed to see exactly how a bad result arose.
-!            if (dbg_cell) then
-!               block
-!                  real(WP) :: VFdiag,TLd0,TGd0,TLd1,TGd1,RHOLd,RHOGd,PLd,PGd,eLd,eGd,Yvd
-!                  real(WP), dimension(this%nQ) :: Qdiag
-!                  integer :: ierrd
-!                  VFdiag=pVF(i,j,k,1); Qdiag=pQ(i,j,k,1:this%nQ)
-!                  call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd0,TGd0,eLd,eGd,Yvd)
-!                  print*,'   [diag] reservoir ALONE (unpooled), pre : VF=',pVF(i,j,k,1),' TL=',TLd0,' TG=',TGd0
-!                  call this%relax%apply(dt=dt,VF=VFdiag,Q=Qdiag,Pjump=this%sigma*pCurv(i,j,k,1),ierr=ierrd)
-!                  call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd1,TGd1,eLd,eGd,Yvd)
-!                  print*,'   [diag] reservoir ALONE (unpooled), post: VF=',VFdiag,' TL=',TLd1,' TG=',TGd1,' ierr=',ierrd
-!               end block
-!            end if
-!            ! debug: member-alone diagnostic -- same idea as the reservoir-alone one above, but for
-!            ! each accepted member on its own throwaway copy, to see whether IT would already be in
-!            ! trouble unpooled too (not just the reservoir)
-!            if (dbg_cell) then
-!               do f=1,6
-!                  if (.not.acc(f)) cycle
-!                  block
-!                     real(WP) :: VFdiag,TLd0,TGd0,TLd1,TGd1,RHOLd,RHOGd,PLd,PGd,eLd,eGd,Yvd
-!                     real(WP), dimension(this%nQ) :: Qdiag
-!                     integer :: ierrd
-!                     VFdiag=mVF(f); Qdiag=mQ(:,f)
-!                     call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd0,TGd0,eLd,eGd,Yvd)
-!                     print*,'   [diag] member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f), &
-!                     &      ' ALONE (unpooled), pre : VF=',mVF(f),' TL=',TLd0,' TG=',TGd0
-!                     call this%relax%apply(dt=dt,VF=VFdiag,Q=Qdiag,Pjump=this%sigma*pCurv(i+foff(1,f),j+foff(2,f),k+foff(3,f),1),ierr=ierrd)
-!                     call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd1,TGd1,eLd,eGd,Yvd)
-!                     print*,'   [diag] member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f), &
-!                     &      ' ALONE (unpooled), post: VF=',VFdiag,' TL=',TLd1,' TG=',TGd1,' ierr=',ierrd
-!                  end block
-!               end do
-!            end if
-!            local_id=local_id+1; cid=real(this%amr%rank,WP)*1.0e4_WP+real(local_id,WP)
-!            pI(i,j,k,1)=cid
-!            do f=1,6
-!               if (acc(f)) pI(i,j,k,f+1)=cid
-!            end do
-!            nM=real(nmem+1,WP)
-!            ! Pool velocity and mixing dissipation, computed from raw (un-normalized) sums before
-!            ! dividing by nM. u_pool is the pool's TOTAL-mass-weighted velocity (own+claimants,
-!            ! each member's own u_m=Q_m(5:7)/(Q_m(1)+Q_m(2))); since Qpool0(5:7) is already the raw
-!            ! sum of every member's own momentum at this point, Qpool0(5:7)/[Qpool0(1)+Qpool0(2)]
-!            ! *is* that mass-weighted average -- no extra loop needed. Forcing every member to this
-!            ! one shared velocity (see redist) loses kinetic energy (mixing dissipation, mirroring
-!            ! merge_Q's eG=(sE+0.5*(sKE-|sMom|^2/sM))/sM); that lost KE is added to the pool's
-!            ! internal energy (split by mass fraction) so apply()'s energy conservation isn't
-!            ! silently violated by pooling itself.
-!            Mtot=Qpool0(1)+Qpool0(2)
-!            u_pool=Qpool0(5:7)/Mtot
-!            KEtot=sum(pQ(i,j,k,5:7)**2)/(pQ(i,j,k,1)+pQ(i,j,k,2))
-!            do f=1,6
-!               if (acc(f)) KEtot=KEtot+sum(mQ(5:7,f)**2)/(mQ(1,f)+mQ(2,f))
-!            end do
-!            KEpool=sum(Qpool0(5:7)**2)/Mtot
-!            Ediss=max(0.0_WP,0.5_WP*(KEtot-KEpool))
-!            Qpool0(3)=Qpool0(3)+Ediss*(Qpool0(1)/Mtot)
-!            Qpool0(4)=Qpool0(4)+Ediss*(Qpool0(2)/Mtot)
-!            VFpool0=VFpool0/nM; Qpool0=Qpool0/nM; Pjpool=Pjpool/nM
-!            ! if (dbg) print*,'CLUSTER pool nM=',nM,' u_pool=',u_pool,' Ediss=',Ediss,' PRE  VF=',VFpool0,' Q=',Qpool0
-!            if (dbg_cell) then ! debug
-!               call get_thermo(VFpool0,Qpool0,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!               print*,'   pool nM=',nM,' u_pool=',u_pool,' Ediss=',Ediss
-!               print*,'   PRE VF=',VFpool0,' Q=',Qpool0
-!               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
-!               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
-!            end if
-!            VFpool1=VFpool0; Qpool1=Qpool0
-!            if (dbg_cell) print*,'   relax%apply below runs on the POOLED cluster state, not on this cell alone' ! debug
-!            call this%relax%apply(dt=dt,VF=VFpool1,Q=Qpool1,Pjump=Pjpool,ierr=ierr) ! debug: dbg_cell already set above, gates apply()'s own trace
-!            dVF=VFpool1-VFpool0; dQ=Qpool1-Qpool0
-!            ! Cluster's post-relax intensive state, shared by every member below
-!            RHOL_c=0.0_WP; eL_c=0.0_WP
-!            if (VFpool1.gt.0.0_WP.and.Qpool1(1).gt.0.0_WP) then
-!               RHOL_c=Qpool1(1)/VFpool1; eL_c=Qpool1(3)/Qpool1(1)
-!            end if
-!            RHOG_c=0.0_WP; eG_c=0.0_WP
-!            if (VFpool1.lt.1.0_WP.and.Qpool1(2).gt.0.0_WP) then
-!               RHOG_c=Qpool1(2)/(1.0_WP-VFpool1); eG_c=Qpool1(4)/Qpool1(2)
-!            end if
-!            if (this%liq%ns.gt.1.and.Qpool1(1).gt.0.0_WP) Yl_c=Qpool1(this%Yl_lo:this%Yl_hi)/Qpool1(1)
-!            if (this%gas%ns.gt.1.and.Qpool1(2).gt.0.0_WP) Yg_c=Qpool1(this%Yg_lo:this%Yg_hi)/Qpool1(2)
-!            ! if (dbg) print*,'CLUSTER pool ierr=',ierr,' POST VF=',VFpool1,' Q=',Qpool1,' dVF=',dVF,' dQ=',dQ
-!            if (dbg_cell) then ! debug
-!               call get_thermo(VFpool1,Qpool1,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!               print*,'   pool ierr=',ierr
-!               print*,'   POST VF=',VFpool1,' Q=',Qpool1,' dVF=',dVF,' dQ=',dQ
-!               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
-!               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
-!            end if
-!            ! ---- Solve this pool's redistribution ----
-!            select case (this%redist_method)
-!            case (cap_redist)
-!               ! Split-back weights, capacity-based: give more of the pool's delta to whichever
-!               ! member has more room in the direction the pool is moving -- remaining gas volume
-!               ! (1-VF) when condensing (dVF>=0), remaining liquid volume (VF) when evaporating
-!               ! (dVF<0). One weight per member governs its VF share; redist() (called from
-!               ! apply_redist below) rebuilds that member's liquid and gas Q directly from the
-!               ! shared cluster state, so there is no separate gas-side weight to track.
-!               if (dVF.ge.0.0_WP) then; rawcap0=1.0_WP-pVF(i,j,k,1); else; rawcap0=pVF(i,j,k,1); end if
-!               rawcapsum=rawcap0
-!               rawcapf=0.0_WP
-!               do f=1,6
-!                  if (.not.acc(f)) cycle
-!                  if (dVF.ge.0.0_WP) then; rawcapf(f)=1.0_WP-mVF(f); else; rawcapf(f)=mVF(f); end if
-!                  rawcapsum=rawcapsum+rawcapf(f)
-!               end do
-!               if (rawcapsum.gt.0.0_WP) then; wl0=rawcap0/rawcapsum; else; wl0=1.0_WP/nM; end if
-!               do f=1,6
-!                  if (.not.acc(f)) cycle
-!                  if (rawcapsum.gt.0.0_WP) then; wlf(f)=rawcapf(f)/rawcapsum; else; wlf(f)=1.0_WP/nM; end if
-!               end do
-!               ! Safety scale: the weight factor nM*w_m applied to a dominant member (large w_m)
-!               ! is NOT bounded by 1 -- e.g. a 7-member group's dominant reservoir can have w_m
-!               ! close to 1, so it would receive up to nM (7x) the pool's raw change, easily
-!               ! pushing its own VF far outside [0,1]. s in [0,1] is the largest common (whole-
-!               ! group, so conservation is preserved for ANY s) fraction of the pooled VF change
-!               ! that keeps every member's VF in [0,1]
-!               s=1.0_WP
-!               call bound_scale(pVF(i,j,k,1),wl0,s)
-!               do f=1,6
-!                  if (acc(f)) call bound_scale(mVF(f),wlf(f),s)
-!               end do
-!               if (dbg_cell) print*,'   weights wl0=',wl0,' wlf=',wlf,' s=',s ! debug
-!            case (geo_redist_multi)
-!               ! Geometric redistribution: find the ONE shared physical interface displacement
-!               ! (delta) that, applied along each pool member's OWN fixed PLIC normal, reproduces
-!               ! the pool's exact VF change (geo_split/eval_VFnew below). Unlike cap_redist, this
-!               ! is a genuine root-find to the exact target, so mass/energy conservation is exact
-!               ! for any pool (not just when no member needed bound_scale's clipping), and VF
-!               ! boundedness comes from the interface's own geometric saturation at VF=0/1, not an
-!               ! artificial linear clamp.
-!               call seed_reservoir_plane()
-!               call geo_split(delta)
-!               if (dbg_cell) print*,'   geo delta=',delta,' own valid0=',valid0 ! debug
-!            case (geo_redist_shared)
-!               ! One averaged normal + direct offset (shared_plane), cuts every member incl. pure cells
-!               call shared_plane(shared_nrm,shared_d)
-!               if (dbg_cell) print*,'   shared_nrm=',shared_nrm,' shared_d=',shared_d ! debug
-!            case default
-!               call die('[cluster_relax] unknown redist_method')
-!            end select
-!            ! Own (reservoir) share
-!            if (dbg_cell) then ! debug
-!               call get_thermo(pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!               print*,'   cluster cell role=RESERVOIR i=',i,' j=',j,' k=',k
-!               print*,'   PRE  VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
-!               print*,'   PRE  TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
-!            end if
-!            call apply_redist(pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),valid0,hex0,nrm0,d0,wl0,newVF,newQ)
-!            if (dbg_cell) then ! debug
-!               call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!               print*,'   POST VF=',newVF,' Q=',newQ
-!               print*,'   POST TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
-!            end if
-!            pP(i,j,k,1:this%nQ)=newQ; pP(i,j,k,this%nQ+1)=newVF
-!            msk=0
-!            do f=1,6
-!               if (.not.acc(f)) cycle
-!               ! dbg_cell already announced 'inside cluster_relax' above if this pool touches the
-!               ! target -- print every member of the cluster here, not just the traced one, so the
-!               ! whole cluster's post-redistribution state is visible together
-!               if (dbg_cell) then ! debug
-!                  call get_thermo(mVF(f),mQ(:,f),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!                  print*,'   cluster cell role=MEMBER f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
-!                  print*,'   PRE  VF=',mVF(f),' Q=',mQ(:,f),' validf=',validf(f)
-!                  print*,'   PRE  TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
-!               end if
-!               call apply_redist(mVF(f),mQ(:,f),validf(f),hexf(:,:,f),nrmf(:,f),df(f),wlf(f),newVF,newQ)
-!               if (dbg_cell) then ! debug
-!                  call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!                  print*,'   POST VF=',newVF,' Q=',newQ
-!                  print*,'   POST TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
-!               end if
-!               pP(i,j,k,f*npay+1:f*npay+this%nQ)=newQ; pP(i,j,k,f*npay+this%nQ+1)=newVF
-!               msk=ibset(msk,f)
-!            end do
-!            pP(i,j,k,nc)=real(msk,WP)
-!            ! Stash the pool's single shared PLIC plane once (reservoir's own slot only, not
-!            ! per-member) so pass 2 can write it into this%plic for every member of this pool
-!            if (this%redist_method.eq.geo_redist_shared) then
-!               pP(i,j,k,nc+1:nc+3)=shared_nrm; pP(i,j,k,nc+4)=shared_d
-!            end if
-!            ! Clean summary: final individual (VF,Q,thermo) of every cell in this cluster,
-!            ! read back from pP (already holds each cell's post-redistribution share), all
-!            ! together in one place instead of scattered across the weight/redist steps above
-!            if (dbg_cell) then ! debug
-!               print*,'--------------------------------------------------'
-!               print*,'inside cluster_relax, final state of every cell in this cluster:'
-!               call get_thermo(pP(i,j,k,this%nQ+1),pP(i,j,k,1:this%nQ),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!               print*,'   reservoir i=',i,' j=',j,' k=',k
-!               print*,'   VF=',pP(i,j,k,this%nQ+1),' Q=',pP(i,j,k,1:this%nQ)
-!               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
-!               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
-!               do f=1,6
-!                  if (.not.acc(f)) cycle
-!                  call get_thermo(pP(i,j,k,f*npay+this%nQ+1),pP(i,j,k,f*npay+1:f*npay+this%nQ), &
-!                  &               RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
-!                  print*,'   member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
-!                  print*,'   VF=',pP(i,j,k,f*npay+this%nQ+1),' Q=',pP(i,j,k,f*npay+1:f*npay+this%nQ)
-!                  print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
-!                  print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
-!               end do
-!            end if
-!         end do; end do; end do
-!      end do
-!      call this%amr%mfiter_destroy(mfi)
-!      call pool%fill_boundary(this%amr%geom(lvl))
-!      call idpool%fill_boundary(this%amr%geom(lvl))
-!      ! Freeze a read-only VF snapshot from BEFORE pass 2 writes anything, for pass 2's own
-!      ! claimant/partner_dir calls to read. Pass 2 below writes pVF in place as it resolves each
-!      ! cell, cell-by-cell within one mfi/i/j/k sweep -- if claimant/partner_dir kept reading that
-!      ! same live pVF, a claimant visited later in the sweep could see an ALREADY-UPDATED neighbour
-!      ! (its post-redistribution VF, not the pre-relax VF pass 1 actually paired it against), pick
-!      ! a different partner_dir than pass 1 did, look up the wrong neighbour's pP slot, and be
-!      ! silently left unresolved (stale VF/Q, never picking up its pass-1-computed redistributed
-!      ! share). vfsnap freezes the same pre-cluster state pass 1 saw (pVF is never written during
-!      ! pass 1), so pass 2's own claim decisions always agree with pass 1's. qsnap is the same
-!      ! idea for Q, needed because gclaim's density-spike term (rhoG_excess_frac) reads Q too --
-!      ! pass 2 also writes pQ in place cell-by-cell, so its own claimant/pair_match calls must read
-!      ! this frozen pre-pass-2 Q, not the live, partly-updated one, for the same reason as pVF0.
-!      ! csnap is the same idea again for cskip's comp 1 (rhog_mode's "not already Pass-A-clustered"
-!      ! gate) -- pass 2 writes cskip comp 1 too (pS(i,j,k,1)=1.0 on adoption), so rhog_mode's own
-!      ! claimant/pair_match calls in pass 2 must read the frozen pre-pass-2 cskip, not the live one.
-!      ! nover=2 (not 1) on all three: rhoG_ref's reference is a 2-ring stencil (see rhoG_ref), and
-!      ! gclaim/claimant/pair_match run against these frozen snapshots in pass 2 exactly as they run
-!      ! against the live fields in pass 1/negotiate, so they need the same ghost depth in both cases.
-!      call this%amr%mfab_build(lvl,vfsnap,ncomp=1,nover=2,atface=[.false.,.false.,.false.])
-!      call this%amr%mfab_build(lvl,qsnap,ncomp=this%nQ,nover=2,atface=[.false.,.false.,.false.])
-!      call this%amr%mfab_build(lvl,csnap,ncomp=1,nover=2,atface=[.false.,.false.,.false.])
-!      call this%amr%mfiter_build(lvl,mfi)
-!      do while (mfi%next())
-!         pVF=>this%VF%mf(lvl)%dataptr(mfi); pVF0=>vfsnap%dataptr(mfi)
-!         pQ=>this%Q%mf(lvl)%dataptr(mfi); pQ0=>qsnap%dataptr(mfi)
-!         pS=>cskip%dataptr(mfi); pS0=>csnap%dataptr(mfi)
-!         bx=mfi%tilebox()
-!         pVF0(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)= &
-!         &   pVF(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)
-!         pQ0(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),:)= &
-!         &   pQ(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),:)
-!         pS0(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)= &
-!         &   pS(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)
-!      end do
-!      call this%amr%mfiter_destroy(mfi)
-!      call vfsnap%fill_boundary(this%amr%geom(lvl))
-!      call qsnap%fill_boundary(this%amr%geom(lvl))
-!      call csnap%fill_boundary(this%amr%geom(lvl))
-!      ! ---- Pass 2: every touched cell adopts its share (claimant <- reservoir's slot; reservoir <- own slot) ----
-!      call this%amr%mfiter_build(lvl,mfi)
-!      do while (mfi%next())
-!         pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
-!         pP=>pool%dataptr(mfi); pS=>cskip%dataptr(mfi); pI=>idpool%dataptr(mfi)
-!         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi); pVF0=>vfsnap%dataptr(mfi); pQ0=>qsnap%dataptr(mfi)
-!         pS0=>csnap%dataptr(mfi)
-!         pStrand=>this%stranded%mf(lvl)%dataptr(mfi)
-!         pPLIC=>this%plic%dataptr(mfi); pMatch=>matchdir%dataptr(mfi)
-!         if (use_rhog) pRGC=>rgclaim%dataptr(mfi)
-!         bx=mfi%tilebox()
-!         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-!            dbg_cell=(i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) ! debug
-!            if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug
-!            if (dbg_cell) then ! debug
-!               print*,'--------------------------------------------------'
-!               print*,'inside cluster_relax, pass2 claimant=',claimant(i,j,k,pVF0,pQ0,pS0),' VF0=',pVF0(i,j,k,1)
-!               print*,'   own pP(nc)=',nint(pP(i,j,k,nc))
-!               if (nint(pP(i,j,k,nc)).eq.0.and.claimant(i,j,k,pVF0,pQ0,pS0)) then
-!                  ! this cell did not lead a pool of its own (own pP(nc)=0) and needs a
-!                  ! reservoir partner to adopt into -- that check reads the PARTNER's pool bit.
-!                  ! pair_match uses pVF0/pQ0/pS0 (the pre-pass-2 snapshots), the SAME arrays pass 1
-!                  ! used to decide this cell's pairing, so it reproduces pass 1's decision exactly
-!                  ! even though pass 2 has already overwritten some neighbours' live pVF/pQ/cskip by now.
-!                  d=pair_match(i,j,k,pVF0,pQ0,pS0,pMatch)
-!                  print*,'   pair_match=',d
-!                  ! debug: dump every face neighbour's VF0 (frozen) against the cluster_VFlo/VFhi
-!                  ! bounds partner_dir searches against, to see why none (or one) qualified
-!                  print*,'   cluster_VFlo=',this%cluster_VFlo,' cluster_VFhi=',this%cluster_VFhi
-!                  do f=1,6
-!                     ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
-!                     print*,'   neighbour f=',f,' i=',ia,' j=',ja,' k=',ka,' VF0=',pVF0(ia,ja,ka,1)
-!                  end do
-!                  if (d.gt.0) then
-!                     ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
-!                     print*,'   partner i=',ia,' j=',ja,' k=',ka,' partner VF0=',pVF0(ia,ja,ka,1)
-!                     print*,'   partner pP(nc)=',nint(pP(ia,ja,ka,nc)),' bit f=',f
-!                     print*,'   partner accepted this cell=',btest(nint(pP(ia,ja,ka,nc)),f)
-!                  else
-!                     print*,'   no qualifying reservoir neighbour found -- will NOT be adopted'
-!                  end if
-!               end if
-!            end if
-!            ! Own pP(nc)!=0 covers BOTH a normal (non-claimant) reservoir and a claimant that
-!            ! led a pool as thin_pair_leader (see pass 1) -- either way this cell's own slot holds
-!            ! its post-relax share directly. Only a claimant that did NOT lead falls through to
-!            ! looking up its partner's slot.
-!            if (nint(pP(i,j,k,nc)).ne.0) then
-!               pQ(i,j,k,1:this%nQ)=pP(i,j,k,1:this%nQ)
-!               pVF(i,j,k,1)=pP(i,j,k,this%nQ+1)
-!               pS(i,j,k,1)=1.0_WP
-!               pCidx(i,j,k,1)=pI(i,j,k,1)
-!               if (this%redist_method.eq.geo_redist_shared) then
-!                  pPLIC(i,j,k,1:4)=pP(i,j,k,nc+1:nc+4); pS(i,j,k,3)=1.0_WP
-!               end if
-!               if (dbg_cell) then ! debug
-!                  print*,'   pass2 adopted own reservoir/pair-leader share'
-!                  print*,'   newVF=',pVF(i,j,k,1),' newQ=',pQ(i,j,k,1:this%nQ),' cidx=',pCidx(i,j,k,1)
-!               end if
-!            else if (claimant(i,j,k,pVF0,pQ0,pS0)) then
-!               ! pair_match keyed off pVF0/pQ0/pS0 (frozen), matching pass 1's own pairing decision
-!               ! -- see the dbg_cell block above for why this must NOT be the live, partly-updated
-!               ! pVF/pQ/cskip
-!               d=pair_match(i,j,k,pVF0,pQ0,pS0,pMatch); adopted=.false.
-!               if (d.gt.0) then
-!                  ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
-!                  if (btest(nint(pP(ia,ja,ka,nc)),f)) then
-!                     pQ(i,j,k,1:this%nQ)=pP(ia,ja,ka,f*npay+1:f*npay+this%nQ)
-!                     pVF(i,j,k,1)=pP(ia,ja,ka,f*npay+this%nQ+1)
-!                     pS(i,j,k,1)=1.0_WP
-!                     pCidx(i,j,k,1)=pI(ia,ja,ka,f+1)
-!                     if (this%redist_method.eq.geo_redist_shared) then
-!                        pPLIC(i,j,k,1:4)=pP(ia,ja,ka,nc+1:nc+4); pS(i,j,k,3)=1.0_WP
-!                     end if
-!                     adopted=.true.
-!                     if (dbg_cell) then ! debug
-!                        print*,'   pass2 adopted from reservoir i=',ia,' j=',ja,' k=',ka
-!                        print*,'   newVF=',pVF(i,j,k,1),' newQ=',pQ(i,j,k,1:this%nQ),' cidx=',pCidx(i,j,k,1)
-!                     end if
-!                  end if
-!               end if
-!               ! Stranded: this claimant needed a reservoir but ended up in none (no qualifying
-!               ! neighbour, or its only candidate's pool already had a member and rejected it).
-!               ! this%stranded is already zeroed for the whole level above, once per apply_relax call.
-!               if (.not.adopted) then
-!                  this%strand_acc=this%strand_acc+1.0_WP
-!                  pStrand(i,j,k,1)=1.0_WP
-!                  ! print*,'STRAND rank=',this%amr%rank,' i=',i,' j=',j,' k=',k,' VF=',pVF0(i,j,k,1), &
-!                  ! &      ' neighbours=',(pVF0(i+foff(1,f),j+foff(2,f),k+foff(3,f),1),f=1,6) ! debug: pattern check
-!               end if
-!            end if
-!         end do; end do; end do
-!      end do
-!      call this%amr%mfiter_destroy(mfi)
-!      call amrex_multifab_destroy(pool)
-!      call amrex_multifab_destroy(idpool)
-!      call amrex_multifab_destroy(vfsnap)
-!      call amrex_multifab_destroy(qsnap)
-!      call amrex_multifab_destroy(csnap)
-!      call amrex_multifab_destroy(matchdir)
-!      if (use_rhog) call amrex_multifab_destroy(rgclaim)
-!      ! print*,'CLUSTER_CENSUS t=',time,' events=',nclust_events,' cells=',nclust_cells ! debug: independent of cluster_idx viz field, for cross-checking
-!   contains
-!      !> Thin-liquid claimant: too little liquid, needs a liquid-rich partner. Takes vf explicitly
-!      !> (rather than reading host-associated pVF) so pass 2 can evaluate this against a frozen
-!      !> snapshot instead of the live, partly-already-updated field -- see vfsnap above.
-!      logical function lclaim(ci,cj,ck,vf)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf
-!         real(WP) :: myVF
-!         myVF=vf(ci,cj,ck,1)
-!         lclaim=(myVF.ge.VFlo.and.myVF.lt.this%cluster_VFlo)
-!      end function lclaim
-!      !> Thin-gas claimant. rhog_mode=.false. (Pass A, today's rule): too little gas by the VF
-!      !> bound alone, needs a gas-rich partner (see lclaim re: vf). rhog_mode=.true. (Pass B):
-!      !> ignores VF entirely -- claimant iff this cell was NOT already clustered by Pass A
-!      !> (cs comp 1 still 0, "cells that have not been clustered") AND its now-REAL post-Pass-A
-!      !> RHOG has spiked past cluster_rhoG_K times its reservoir-eligible neighbours' median RHOG
-!      !> (rhoG_excess_frac below) -- RHOG runaway was found to compound continuously well before
-!      !> VF ever crosses cluster_VFhi (Session 19 J/N), and forcing Pass B to run strictly after
-!      !> Pass A + the individual per-cell relax (see apply_relax) means rhoG_at here reads each
-!      !> cell's REAL relaxed density, not a stale pre-relax or throwaway-probed one (Session 20).
-!      logical function gclaim(ci,cj,ck,vf,q,cs)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
-!         real(WP) :: myVF
-!         if (use_rhog) then
-!            gclaim=(cs(ci,cj,ck,1).lt.0.5_WP).and.(rhoG_excess_frac(ci,cj,ck,vf,q).gt.0.0_WP)
-!         else
-!            myVF=vf(ci,cj,ck,1)
-!            gclaim=(myVF.gt.this%cluster_VFhi.and.myVF.le.VFhi)
-!         end if
-!      end function gclaim
-!      !> Non-recursive claimant lookup, rhog_mode only -- reads the precomputed rgclaim field
-!      !> (built once per cluster_relax call, above) instead of calling claimant()/gclaim() again,
-!      !> which would trigger a further 2-ring rhoG_ref scan and compound past VF/Q's allocated
-!      !> ghost depth (see rgclaim's build-site comment). Use this, never claimant(), for a NEIGHBOUR
-!      !> (any position reached via a foff hop, not the caller's own loop position) in rhog_mode.
-!      logical function claimant_lookup(ci,cj,ck,rgc) result(cl)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: rgc
-!         cl=(rgc(ci,cj,ck,1).gt.0.5_WP)
-!      end function claimant_lookup
-!      !> Claimant predicate: thin liquid or thin gas by cluster_relax's own bounds (Pass A), or
-!      !> gclaim's rhog_mode rule (Pass B) -- excludes pure cells in Pass A; lclaim is never
-!      !> density-aware (RHOG-only trigger, see Session 20), so it always uses the plain VF bound.
-!      logical function claimant(ci,cj,ck,vf,q,cs)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
-!         if (use_rhog) then
-!            claimant=gclaim(ci,cj,ck,vf,q,cs)
-!         else
-!            claimant=lclaim(ci,cj,ck,vf).or.gclaim(ci,cj,ck,vf,q,cs)
-!         end if
-!      end function claimant
-!      !> Local gas density RHOG at a cell, from a given (vf,q) pair -- mirrors get_primitive's own
-!      !> formula exactly (RHOG=Q(2)/(1-VF), valid only when VF<=VFhi and Q(2)>0, else 0/undefined).
-!      !> Needed standalone because this%RHOG (the amrdata field) is stale here -- cluster_relax
-!      !> runs on live post-advection Q, one stage before this timestep's own get_primitive call
-!      !> (see apply_relax's call order in simulation.f90) -- so RHOG must be recomputed locally
-!      !> from whichever snapshot is current: live (pVF,pQ) in pass 1/negotiate, frozen (pVF0,pQ0)
-!      !> in pass 2.
-!      real(WP) function rhoG_at(ci,cj,ck,vf,q) result(rg)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
-!         if (vf(ci,cj,ck,1).le.VFhi.and.q(ci,cj,ck,2).gt.0.0_WP) then
-!            rg=q(ci,cj,ck,2)/(1.0_WP-vf(ci,cj,ck,1))
-!         else
-!            rg=0.0_WP
-!         end if
-!      end function rhoG_at
-!      !> Median RHOG among a 2-ring shell (each of the 6 axis directions, at distance 1 AND 2 --
-!      !> 12 candidates) that are reservoir-eligible on the VF side alone (own VF<=cluster_VFhi,
-!      !> i.e. NOT already a VF-based gas-thin claimant) with a well-defined RHOG -- deliberately
-!      !> VF-only so the reference set can never itself already be density-flagged (avoids
-!      !> circularity). Widened from a 1-ring (face-neighbour-only) reference after Session 20 found
-!      !> the 1-ring version topped out around a 1.2-1.5x ratio on the one known-bad cell traced --
-!      !> not enough margin over K to fire without likely false-positiving on ordinary healthy
-!      !> gradients -- because the whole local front compounds together, diluting even the widened
-!      !> reference; distance-2 needs this%nover>=2 ghost cells on VF/Q, already guaranteed
-!      !> (this%nover=max(this%nover,2), set at initialize). Returns -1 if no such neighbour exists.
-!      !> Skips a "neighbour" that's actually the same cell -- happens for this case's thin (nz=1),
-!      !> periodic-in-z domain, where the z-faces wrap a cell onto itself. The wrap is via ghost-fill
-!      !> (a memory copy from the same source cell into a distinctly-indexed ghost location), so an
-!      !> INDEX check (ia2.eq.ci etc.) does NOT catch it -- k=-1 and k=0 are different indices even
-!      !> though they hold identical data. Detect it by VALUE instead (bit-identical VF and gas
-!      !> payload -- astronomically unlikely for two genuinely different physical cells, and the
-!      !> degenerate VF=1/VF=0 cases that WOULD coincide are already excluded by the checks below).
-!      !> Without this guard the self-reference drags the median toward the cell's OWN RHOG, silently
-!      !> killing the excess signal in exactly the VF-mid-range region this trigger exists to catch.
-!      real(WP) function rhoG_ref(ci,cj,ck,vf,q) result(ref)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
-!         integer :: g,m,ia2,ja2,ka2,nvalid,p,pp
-!         real(WP), dimension(12) :: vals
-!         real(WP) :: tmp
-!         nvalid=0
-!         do g=1,6; do m=1,2
-!            ia2=ci+foff(1,g)*m; ja2=cj+foff(2,g)*m; ka2=ck+foff(3,g)*m
-!            if (vf(ia2,ja2,ka2,1).eq.vf(ci,cj,ck,1).and.q(ia2,ja2,ka2,2).eq.q(ci,cj,ck,2)) cycle
-!            if (vf(ia2,ja2,ka2,1).gt.this%cluster_VFhi) cycle
-!            if (vf(ia2,ja2,ka2,1).gt.VFhi.or.q(ia2,ja2,ka2,2).le.0.0_WP) cycle
-!            nvalid=nvalid+1; vals(nvalid)=rhoG_at(ia2,ja2,ka2,vf,q)
-!         end do; end do
-!         if (nvalid.eq.0) then; ref=-1.0_WP; return; end if
-!         do p=2,nvalid
-!            tmp=vals(p)
-!            do pp=p-1,1,-1
-!               if (vals(pp).le.tmp) exit
-!               vals(pp+1)=vals(pp)
-!            end do
-!            vals(pp+1)=tmp
-!         end do
-!         if (mod(nvalid,2).eq.1) then
-!            ref=vals(nvalid/2+1)
-!         else
-!            ref=0.5_WP*(vals(nvalid/2)+vals(nvalid/2+1))
-!         end if
-!      end function rhoG_ref
-!      !> Fractional RHOG excess over cluster_rhoG_K times the local reference (rhoG_ref); 0 if the
-!      !> reference is unavailable or this cell's own RHOG doesn't exceed the K-scaled ceiling --
-!      !> this is the density-spike half of gclaim's OR condition.
-!      real(WP) function rhoG_excess_frac(ci,cj,ck,vf,q) result(ex)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
-!         real(WP) :: ref,ceil
-!         ex=0.0_WP
-!         ref=rhoG_ref(ci,cj,ck,vf,q)
-!         if (ref.le.0.0_WP) return
-!         ceil=this%cluster_rhoG_K*ref
-!         ex=max(rhoG_at(ci,cj,ck,vf,q)-ceil,0.0_WP)/ceil
-!      end function rhoG_excess_frac
-!      !> A thin-liquid claimant may still LEAD pass 1's gathering if its best partner (by
-!      !> partner_dir) is itself a thin-gas claimant: the liquid-starved cell has gas to
-!      !> offer, the gas-starved cell has liquid to offer, so the pair is healthy together
-!      !> even though neither qualifies as a reservoir alone. Only the liquid side is granted
-!      !> this extra eligibility (never the gas side), so a mutual pair is never led from both ends.
-!      !> Only ever called from pass 1, always against the live pVF (safe there -- pass 1 never
-!      !> writes pVF, so it stays a frozen snapshot for the whole pass on its own). Meaningless in
-!      !> rhog_mode (Pass B): its whole premise is pairing a VF-thin-liquid claimant that leads with
-!      !> a VF-thin-gas neighbour, but in rhog_mode gclaim no longer means "thin gas by VF" -- it
-!      !> means "unclustered density-spike claimant", an unrelated condition on the candidate
-!      !> partner -- so this always returns false in that mode rather than evaluate a mismatched check.
-!      logical function thin_pair_leader(ci,cj,ck)
-!         integer, intent(in) :: ci,cj,ck
-!         integer :: d
-!         thin_pair_leader=.false.
-!         if (use_rhog) return
-!         if (.not.lclaim(ci,cj,ck,pVF)) return
-!         d=partner_dir(ci,cj,ck,pVF,pQ,pS)
-!         if (d.eq.0) return
-!         thin_pair_leader=gclaim(ci+foff(1,d),cj+foff(2,d),ck+foff(3,d),pVF,pQ,pS)
-!      end function thin_pair_leader
-!      !> Best-partner direction for a claimant: liquid reservoir (highest VF) if thin liquid,
-!      !> gas reservoir (lowest VF) if thin gas OR density-triggered (gclaim's OR condition) --
-!      !> the gas-side branch gate is gclaim itself (not a raw VF compare) so a density-only
-!      !> claimant (own VF still below cluster_VFhi) still gets a search direction; the neighbour
-!      !> ranking inside stays VF-only (lowest-VF = most gas to donate) either way. 0 if not a
-!      !> claimant or no qualifying neighbour. Takes vf,q,cs explicitly (see lclaim) so pass 1 and
-!      !> pass 2 can be made to agree exactly. In rhog_mode the liquid-reservoir branch is skipped
-!      !> unconditionally -- a density-spike claimant can sit at ANY VF (RHOG is defined across the
-!      !> whole range), so it always needs a GAS-rich partner regardless of its own VF, never a
-!      !> liquid-rich one; only gclaim's rhog-mode gate decides eligibility here.
-!      integer function partner_dir(ci,cj,ck,vf,q,cs) result(d)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
-!         integer :: g; real(WP) :: vc,vm,vv
-!         logical :: own_gclaim
-!         d=0; vc=vf(ci,cj,ck,1)
-!         if (use_rhog) then; own_gclaim=claimant_lookup(ci,cj,ck,pRGC)
-!         else; own_gclaim=gclaim(ci,cj,ck,vf,q,cs); end if
-!         if (.not.use_rhog.and.vc.lt.this%cluster_VFlo) then
-!            vm=this%cluster_VFlo
-!            do g=1,6
-!               vv=vf(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
-!               if (vv.gt.this%cluster_VFlo.and.vv.gt.vm) then; vm=vv; d=g; end if
-!            end do
-!         else if (own_gclaim) then
-!            vm=this%cluster_VFhi
-!            do g=1,6
-!               vv=vf(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
-!               if (vv.lt.this%cluster_VFhi.and.vv.lt.vm) then; vm=vv; d=g; end if
-!            end do
-!         end if
-!      end function partner_dir
-!      !> Dispatch for pass 1/2's pairing test: cap_redist/geo_redist_multi keep today's greedy
-!      !> partner_dir unchanged (they accept every qualifying neighbour, no one-member cap, so they
-!      !> never had the stranding problem below); geo_redist_shared instead reads
-!      !> negotiate_shared_pairing's precomputed symmetric match (pmt), since its one-member cap
-!      !> means WHICH neighbour gets the slot actually matters.
-!      !> The else branch below can be called with ci,cj,ck already 1 ring away from pass 1's own loop
-!      !> position (member-acceptance loop's pair_match(ia,ja,ka,...) call) -- partner_dir now reads
-!      !> the precomputed rgclaim lookup for its own-position claimant check in rhog_mode instead of
-!      !> calling gclaim() live, avoiding the compounding-past-nover=2 hop that used to SIGBUS here.
-!      integer function pair_match(ci,cj,ck,vf,q,cs,pmt) result(d)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs,pmt
-!         if (this%redist_method.eq.geo_redist_shared) then
-!            d=nint(pmt(ci,cj,ck,1))
-!         else
-!            d=partner_dir(ci,cj,ck,vf,q,cs)
-!         end if
-!      end function pair_match
-!      !> Best still-available reservoir neighbour for a claimant, ranked exactly like partner_dir
-!      !> (most extreme qualifying VF) but restricted to neighbours with takenf=0 -- used only by
-!      !> negotiate_shared_pairing's round loop, where availability shrinks each round. Bounds are
-!      !> copied verbatim from partner_dir, including its ONE-sided checks (vv.gt.cluster_VFlo with
-!      !> no upper bound; vv.lt.cluster_VFhi with no lower bound) -- a pure cell (VF=0 or 1) is a
-!      !> legitimate, even ideal, reservoir on its helpful side (maximum gas/liquid to lend), so it
-!      !> must NOT be excluded here. A neighbour that's itself a wrong-side claimant can still pass
-!      !> this loose check, exactly as it can in partner_dir, but never reciprocates in Phase 2 (it
-!      !> only ever populates its OWN claimant-side pick, never a reservoir-side one), so the mutual
-!      !> check downstream is what actually rules it out -- no extra filtering belongs here.
-!      integer function best_avail_reservoir(ci,cj,ck,vf,q,cs,takenf) result(d)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs,takenf
-!         integer :: g,ia2,ja2,ka2; real(WP) :: vc,vm,vv
-!         d=0; vc=vf(ci,cj,ck,1)
-!         if (.not.use_rhog.and.vc.lt.this%cluster_VFlo) then
-!            vm=this%cluster_VFlo
-!            do g=1,6
-!               ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
-!               if (takenf(ia2,ja2,ka2,1).gt.0.5_WP) cycle
-!               vv=vf(ia2,ja2,ka2,1)
-!               if (vv.gt.this%cluster_VFlo.and.vv.gt.vm) then; vm=vv; d=g; end if
-!            end do
-!         else if (gclaim(ci,cj,ck,vf,q,cs)) then
-!            vm=this%cluster_VFhi
-!            do g=1,6
-!               ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
-!               if (takenf(ia2,ja2,ka2,1).gt.0.5_WP) cycle
-!               vv=vf(ia2,ja2,ka2,1)
-!               if (vv.lt.this%cluster_VFhi.and.vv.lt.vm) then; vm=vv; d=g; end if
-!            end do
-!         end if
-!      end function best_avail_reservoir
-!      !> Best still-available (neediest) claimant neighbour for a reservoir-eligible cell --
-!      !> mirror image of best_avail_reservoir, ranked by the claimant's own distance past
-!      !> whichever threshold it's thin on (or, for a density-only claimant whose own VF is still
-!      !> mid-range, by its fractional RHOG excess -- see rhoG_excess_frac), not by raw VF
-!      !> (reservoirs don't have a "most extreme" side of their own the way claimants do).
-!      integer function best_avail_claimant(ci,cj,ck,vf,q,cs,takenf) result(d)
-!         integer, intent(in) :: ci,cj,ck
-!         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs,takenf
-!         integer :: g,ia2,ja2,ka2; real(WP) :: vv,need,best_need
-!         d=0; best_need=0.0_WP
-!         do g=1,6
-!            ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
-!            if (takenf(ia2,ja2,ka2,1).gt.0.5_WP) cycle
-!            ! claimant() (not a raw threshold check) is essential here -- it alone applies lclaim/
-!            ! gclaim's VFlo/VFhi guard, which excludes an EXACTLY pure cell (VF=0 or 1). Without
-!            ! it, a pure cell's "need" hits the same capped maximum as a genuinely at-risk near-
-!            ! pure claimant and wins ties against it, even though a pure cell has no RHOL/RHOG
-!            ! overshoot risk at all (its missing phase isn't even computed) -- this starved the
-!            ! actual at-risk claimant of the reservoir it needed. rhog_mode reads the precomputed
-!            ! rgclaim lookup instead of calling claimant()/rhoG_excess_frac() directly on this
-!            ! NEIGHBOUR -- doing so would hop 1 ring here then trigger ANOTHER 2-ring rhoG_ref scan
-!            ! from (ia2,ja2,ka2), compounding past VF/Q's allocated ghost depth (see rgclaim above).
-!            if (use_rhog) then
-!               if (pRGC(ia2,ja2,ka2,1).le.0.5_WP) cycle
-!               need=pRGC(ia2,ja2,ka2,2)
-!            else
-!               if (.not.claimant(ia2,ja2,ka2,vf,q,cs)) cycle
-!               vv=vf(ia2,ja2,ka2,1)
-!               if (vv.lt.this%cluster_VFlo) then
-!                  need=this%cluster_VFlo-vv
-!               else if (vv.gt.this%cluster_VFhi) then
-!                  need=vv-this%cluster_VFhi
-!               else
-!                  need=rhoG_excess_frac(ia2,ja2,ka2,vf,q)
-!               end if
-!            end if
-!            if (need.gt.best_need) then; best_need=need; d=g; end if
-!         end do
-!      end function best_avail_claimant
-!      !> Symmetric pairing negotiation for geo_redist_shared: decides, for every claimant cell,
-!      !> the single reservoir-eligible neighbour (if any) it pairs with, writing the answer into
-!      !> matchdir (0=unmatched, else direction 1..6) before pass 1 builds any pools. A pair (C,R)
-!      !> is committed only when C's best still-available candidate is R AND R's best
-!      !> still-available candidate is C -- both sides check this identical condition independently
-!      !> from their own valid region, using a ghost-exchanged 'pick' field, so no cross-rank
-!      !> write-back is needed and the result cannot depend on which side is considered "first"
-!      !> (unlike today's partner_dir + fixed face-scan-order acceptance, still used by
-!      !> cap_redist/geo_redist_multi below, which lets whichever candidate sits on a lower-numbered
-!      !> face win regardless of need). Runs in rounds, each removing that round's newly-matched
-!      !> cells from availability so the losers of round r get to retry against whatever's left in
-!      !> round r+1. Bounded at 6 rounds = max face-degree: a cell can be out-competed for at most 5
-!      !> neighbours before either matching its 6th or genuinely having none left.
-!      subroutine negotiate_shared_pairing()
-!         type(amrex_multifab) :: taken,pick
-!         type(amrex_mfiter) :: mfi2
-!         type(amrex_box) :: bx2
-!         real(WP), dimension(:,:,:,:), contiguous, pointer :: pTaken,pPick,pVFn,pQn,pCSn,pMd
-!         integer, parameter :: max_rounds=6
-!         integer :: rr,g,ii,jj,kk,ia2,ja2,ka2
-!         call this%amr%mfab_build(lvl,taken,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
-!         call taken%setval(0.0_WP)
-!         do rr=1,max_rounds
-!            ! Phase 1: every still-unmatched cell ranks its best still-available neighbour --
-!            ! claimants seek the most extreme-VF reservoir, reservoir-eligible cells seek the
-!            ! neediest claimant -- and records it in pick
-!            call this%amr%mfab_build(lvl,pick,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
-!            call pick%setval(0.0_WP)
-!            call this%amr%mfiter_build(lvl,mfi2)
-!            do while (mfi2%next())
-!               pVFn=>this%VF%mf(lvl)%dataptr(mfi2); pQn=>this%Q%mf(lvl)%dataptr(mfi2)
-!               pCSn=>cskip%dataptr(mfi2)
-!               if (use_rhog) pRGC=>rgclaim%dataptr(mfi2)
-!               pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2)
-!               bx2=mfi2%tilebox()
-!               do kk=bx2%lo(3),bx2%hi(3); do jj=bx2%lo(2),bx2%hi(2); do ii=bx2%lo(1),bx2%hi(1)
-!                  if (pTaken(ii,jj,kk,1).gt.0.5_WP) cycle
-!                  if (claimant(ii,jj,kk,pVFn,pQn,pCSn)) then
-!                     pPick(ii,jj,kk,1)=real(best_avail_reservoir(ii,jj,kk,pVFn,pQn,pCSn,pTaken),WP)
-!                  else
-!                     pPick(ii,jj,kk,1)=real(best_avail_claimant(ii,jj,kk,pVFn,pQn,pCSn,pTaken),WP)
-!                  end if
-!                  if (ii.ge.dbg_ilo.and.ii.le.dbg_ihi.and.jj.ge.dbg_jlo.and.jj.le.dbg_jhi.and.kk.ge.dbg_klo.and.kk.le.dbg_khi) then ! debug
-!                     print*,'   negotiate round=',rr,' i=',ii,' j=',jj,' k=',kk,' claimant=',claimant(ii,jj,kk,pVFn,pQn,pCSn), &
-!                     &         ' VF=',pVFn(ii,jj,kk,1),' pick=',nint(pPick(ii,jj,kk,1)), &
-!                     &         ' RHOG=',rhoG_at(ii,jj,kk,pVFn,pQn),' ref=',rhoG_ref(ii,jj,kk,pVFn,pQn), &
-!                     &         ' excess_frac=',rhoG_excess_frac(ii,jj,kk,pVFn,pQn) ! debug
-!                     if (rr.eq.1) then ! debug: raw per-neighbour VF/RHOG breakdown, round 1 only
-!                        do g=1,6
-!                           ia2=ii+foff(1,g); ja2=jj+foff(2,g); ka2=kk+foff(3,g)
-!                           print*,'      neighbour f=',g,' i=',ia2,' j=',ja2,' VF=',pVFn(ia2,ja2,ka2,1), &
-!                           &      ' RHOG=',rhoG_at(ia2,ja2,ka2,pVFn,pQn),' ref-eligible=',(pVFn(ia2,ja2,ka2,1).le.this%cluster_VFhi)
-!                        end do
-!                     end if
-!                  end if ! debug
-!               end do; end do; end do
-!            end do
-!            call this%amr%mfiter_destroy(mfi2)
-!            call pick%fill_boundary(this%amr%geom(lvl))
-!            ! Phase 2: commit mutual matches -- both sides independently check the same symmetric
-!            ! condition (my pick's target picks me back) using only their own valid region plus
-!            ! the ghost-exchanged pick field
-!            call this%amr%mfiter_build(lvl,mfi2)
-!            do while (mfi2%next())
-!               pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2); pMd=>matchdir%dataptr(mfi2)
-!               bx2=mfi2%tilebox()
-!               do kk=bx2%lo(3),bx2%hi(3); do jj=bx2%lo(2),bx2%hi(2); do ii=bx2%lo(1),bx2%hi(1)
-!                  if (pTaken(ii,jj,kk,1).gt.0.5_WP) cycle
-!                  g=nint(pPick(ii,jj,kk,1)); if (g.eq.0) cycle
-!                  ia2=ii+foff(1,g); ja2=jj+foff(2,g); ka2=kk+foff(3,g)
-!                  if (nint(pPick(ia2,ja2,ka2,1)).eq.fopp(g)) then
-!                     pMd(ii,jj,kk,1)=real(g,WP); pTaken(ii,jj,kk,1)=1.0_WP
-!                  end if
-!               end do; end do; end do
-!            end do
-!            call this%amr%mfiter_destroy(mfi2)
-!            call taken%fill_boundary(this%amr%geom(lvl))
-!            call amrex_multifab_destroy(pick)
-!         end do
-!         call amrex_multifab_destroy(taken)
-!         ! matchdir itself is only ever written over each tile's own valid region above -- pass
-!         ! 1/2 read it at NEIGHBOUR indices that can fall in another tile's ghost region, so it
-!         ! needs its own sync here (once, not per round -- nothing reads it mid-negotiation)
-!         call matchdir%fill_boundary(this%amr%geom(lvl))
-!      end subroutine negotiate_shared_pairing
-!      !> Shrink the common scale s (in [0,1]) as needed so this member's post-redistribution VF stays in [0,1].
-!      subroutine bound_scale(VFold,wl,s)
-!         real(WP), intent(in) :: VFold,wl
-!         real(WP), intent(inout) :: s
-!         real(WP), parameter :: eps_safe=1.0e-4_WP
-!         real(WP) :: A,VFtarget
-!         logical :: already_fragile
-!         A=nM*wl*dVF
-!         if (A.gt.0.0_WP) then; s=min(s,(1.0_WP-VFold)/A); else if (A.lt.0.0_WP) then; s=min(s,-VFold/A); end if
-!         VFtarget=VFold+A
-!         already_fragile=(VFold.gt.0.0_WP.and.VFold.lt.eps_safe).or.(VFold.gt.1.0_WP-eps_safe.and.VFold.lt.1.0_WP)
-!         if (.not.already_fragile.and.((VFtarget.gt.0.0_WP.and.VFtarget.lt.eps_safe).or. &
-!         &   (VFtarget.gt.1.0_WP-eps_safe.and.VFtarget.lt.1.0_WP))) s=0.0_WP
-!         s=max(s,0.0_WP)
-!      end subroutine bound_scale
-!      !> 
-!      subroutine redist(VFold,Qold,wl,s,VFnew,Qnew)
-!         real(WP), intent(in) :: VFold,wl,s
-!         real(WP), dimension(this%nQ), intent(in) :: Qold
-!         real(WP), intent(out) :: VFnew
-!         real(WP), dimension(this%nQ), intent(out) :: Qnew
-!         real(WP) :: dm
-!         VFnew=VFold+nM*wl*s*dVF
-!         Qnew=Qold
-!         Qnew(1)=VFnew*RHOL_c; Qnew(3)=Qnew(1)*eL_c
-!         if (this%liq%ns.gt.1) Qnew(this%Yl_lo:this%Yl_hi)=Qnew(1)*Yl_c
-!         Qnew(2)=(1.0_WP-VFnew)*RHOG_c; Qnew(4)=Qnew(2)*eG_c
-!         if (this%gas%ns.gt.1) Qnew(this%Yg_lo:this%Yg_hi)=Qnew(2)*Yg_c
-!         ! Transferred mass carries u_pool; dm sums to zero across the pool (apply conserves mass)
-!         dm=(Qnew(1)-Qold(1))+(Qnew(2)-Qold(2))
-!         Qnew(5:7)=Qold(5:7)+dm*u_pool
-!      end subroutine redist
-!      !> debug: liquid/gas thermo state (RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv) from a pooled (VF,Q) pair
-!      subroutine get_thermo(VFc,Qc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv)
-!         real(WP), intent(in) :: VFc
-!         real(WP), dimension(this%nQ), intent(in) :: Qc
-!         real(WP), intent(out) :: RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
-!         real(WP), dimension(2) :: y
-!         RHOL=0.0_WP; RHOG=0.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP; eL=0.0_WP; eG=0.0_WP; Yv=0.0_WP
-!         if (VFc.gt.0.0_WP.and.Qc(1).gt.0.0_WP) then
-!            RHOL=Qc(1)/VFc
-!            eL=Qc(3)/Qc(1)
-!            PL=this%liq%get_p_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
-!            TL=this%liq%get_T_from_p_rho(p=PL,rho=RHOL,y=[1.0_WP])
-!         end if
-!         if (VFc.lt.1.0_WP.and.Qc(2).gt.0.0_WP) then
-!            RHOG=Qc(2)/(1.0_WP-VFc)
-!            eG=Qc(4)/Qc(2)
-!            Yv=Qc(8)/Qc(2)
-!            y=[Yv,1.0_WP-Yv]
-!            PG=this%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=y)
-!            TG=this%gas%get_T_from_p_rho(p=PG,rho=RHOG,y=y)
-!         end if
-!      end subroutine get_thermo
-!      !> 
-!      subroutine apply_redist(VFold,Qold,valid,hexm,nrmm,dm_,wl,VFnew,Qnew)
-!         real(WP), intent(in) :: VFold,wl,dm_
-!         real(WP), dimension(this%nQ), intent(in) :: Qold
-!         logical, intent(in) :: valid
-!         real(WP), dimension(3,8), intent(in) :: hexm
-!         real(WP), dimension(3), intent(in) :: nrmm
-!         real(WP), intent(out) :: VFnew
-!         real(WP), dimension(this%nQ), intent(out) :: Qnew
-!         select case (this%redist_method)
-!         case (cap_redist)
-!            call redist(VFold,Qold,wl,s,VFnew,Qnew)
-!         case (geo_redist_multi)
-!            VFnew=eval_VFnew(valid,hexm,nrmm,dm_,delta,VFold)
-!            call redist_geo(Qold,VFnew,Qnew)
-!         case (geo_redist_shared)
-!            ! Always cut (valid=.true.) -- a member with no PLIC of its own is still cut by the
-!            ! pool's shared plane, which is exactly what lets a pure cell pick up a genuinely new
-!            ! interface through clustering (unlike geo_redist_multi, which excludes it entirely)
-!            VFnew=eval_VFnew(.true.,hexm,shared_nrm,shared_d,0.0_WP,VFold)
-!            call redist_geo(Qold,VFnew,Qnew)
-!         case default
-!            call die('[cluster_relax] unknown redist_method')
-!         end select
-!      end subroutine apply_redist
-!      !> Build an axis-aligned cell's 8 hex corners from its (lo,hi) box, in the vertex ordering
-!      !> cut_hex_vol expects (matching apply_relax's own hex construction for the per-cell PLIC
-!      !> reposition, amrmpcomp_class.f90:~3308)
-!      subroutine build_hex(clo,chi,hexout)
-!         real(WP), dimension(3), intent(in) :: clo,chi
-!         real(WP), dimension(3,8), intent(out) :: hexout
-!         hexout(:,1)=[clo(1),clo(2),clo(3)]; hexout(:,2)=[chi(1),clo(2),clo(3)]
-!         hexout(:,3)=[chi(1),chi(2),clo(3)]; hexout(:,4)=[clo(1),chi(2),clo(3)]
-!         hexout(:,5)=[clo(1),clo(2),chi(3)]; hexout(:,6)=[chi(1),clo(2),chi(3)]
-!         hexout(:,7)=[chi(1),chi(2),chi(3)]; hexout(:,8)=[clo(1),chi(2),chi(3)]
-!      end subroutine build_hex
-!      !> Sum of VF over every geometrically-mobile pool member (valid PLIC) with each one's own
-!      !> interface plane advanced by delta_ along its own fixed normal; members with no valid
-!      !> interface (pure cells) don't appear here -- their VF is fixed, folded into geo_split's
-!      !> target instead. Host-associated: valid0,hex0,nrm0,d0 (own), acc,validf,hexf,nrmf,df
-!      !> (members), cell_vol.
-!      real(WP) function mobile_VF_sum(delta_) result(vsum)
-!         real(WP), intent(in) :: delta_
-!         real(WP) :: vl,vg
-!         real(WP), dimension(3) :: bl,bg
-!         integer :: ff
-!         vsum=0.0_WP
-!         if (valid0) then
-!            call cut_hex_vol(hex0,[nrm0(1),nrm0(2),nrm0(3),d0+delta_],vl,vg,bl,bg)
-!            vsum=vsum+vl/cell_vol
-!         end if
-!         do ff=1,6
-!            if (acc(ff).and.validf(ff)) then
-!               call cut_hex_vol(hexf(:,:,ff),[nrmf(1,ff),nrmf(2,ff),nrmf(3,ff),df(ff)+delta_],vl,vg,bl,bg)
-!               vsum=vsum+vl/cell_vol
-!            end if
-!         end do
-!      end function mobile_VF_sum
-!      !> A pure reservoir (valid0=.false.) has no PLIC of its own to advance. Claimants are never
-!      !> pure (lclaim/gclaim only accept cells strictly inside the mixture band), and a pool always
-!      !> has at least one, so borrow the VF-weighted-dominant claimant's normal as the reservoir's
-!      !> orientation, then place its own offset with get_plane_dist so it exactly reproduces the
-!      !> reservoir's own current (pure) VF at delta=0.
-!      subroutine seed_reservoir_plane()
-!         real(WP), dimension(3) :: nrm_guess
-!         real(WP) :: wf,wbest,magn
-!         integer :: ff,fbest
-!         if (valid0) return
-!         nrm_guess=0.0_WP; wbest=-1.0_WP; fbest=0
-!         do ff=1,6
-!            if (.not.acc(ff)) cycle
-!            wf=min(mVF(ff),1.0_WP-mVF(ff))
-!            nrm_guess=nrm_guess+wf*nrmf(:,ff)
-!            if (wf.gt.wbest) then; wbest=wf; fbest=ff; end if
-!         end do
-!         magn=sqrt(sum(nrm_guess**2))
-!         if (magn.gt.1.0e-30_WP) then; nrm_guess=nrm_guess/magn; else; nrm_guess=nrmf(:,fbest); end if
-!         nrm0=nrm_guess
-!         d0=get_plane_dist(nrm0,hex0(:,1),hex0(:,7),pVF(i,j,k,1))
-!         valid0=.true.
-!      end subroutine seed_reservoir_plane
-!      !> Solve for the ONE shared physical interface displacement delta such that advancing every
-!      !> pool member's own PLIC plane by delta reproduces the pool's required total VF change
-!      !> exactly (bisection on mobile_VF_sum, monotonic since advancing any member's plane along
-!      !> its own normal can only increase its own VF). seed_reservoir_plane above guarantees every
-!      !> member is valid by this point. Host-associated: nM, VFpool1, dx,dy,dz (bisection bracket),
-!      !> plus everything mobile_VF_sum needs.
-!      subroutine geo_split(delta_out)
-!         real(WP), intent(out) :: delta_out
-!         real(WP) :: target_mobile,Lmax,dlo,dhi,dmid,fmid
-!         integer :: iter
-!         real(WP), parameter :: tol_VF=1.0e-10_WP ! bisection exits once the VF-sum residual, relative to
-!         ! target_mobile itself (the standard |error|/|reference| form), drops below this. Near
-!         ! target_mobile=0 the threshold shrinks toward zero too and the loop just runs its full
-!         ! course -- appropriate (a near-zero target deserves tight absolute precision), not a bug.
-!         target_mobile=nM*VFpool1
-!         Lmax=2.0_WP*sqrt(dx**2+dy**2+dz**2)
-!         dlo=-Lmax; dhi=Lmax
-!         delta_out=0.5_WP*(dlo+dhi) ! fallback if the loop below exits without ever setting it (can't happen, dhi>dlo)
-!         do iter=1,60
-!            dmid=0.5_WP*(dlo+dhi)
-!            fmid=mobile_VF_sum(dmid)
-!            delta_out=dmid
-!            if (abs(fmid-target_mobile).lt.tol_VF*abs(target_mobile)) exit ! converged -- no need to keep bisecting
-!            if (fmid.lt.target_mobile) then; dlo=dmid; else; dhi=dmid; end if
-!         end do
-!      end subroutine geo_split
-!      !> The pool's one interface: VF-weighted average of the two cells' own normals, offset solved
-!      !> exactly (get_plane_dist, closed-form, no iteration) for VFpool1 on the pair's real union
-!      !> box -- exact because pass 1 caps geo_redist_shared pools at one member, so that union is
-!      !> always a genuine hexahedron (two face-adjacent unit cells), never approximated.
-!      subroutine shared_plane(shared_nrm_out,shared_d_out)
-!         use amrvof_geometry, only: get_plane_dist
-!         real(WP), dimension(3), intent(out) :: shared_nrm_out
-!         real(WP), intent(out) :: shared_d_out
-!         real(WP) :: wR,wM,magn
-!         real(WP), dimension(3) :: raw,lo,hi
-!         integer :: ff
-!         wR=min(pVF(i,j,k,1),1.0_WP-pVF(i,j,k,1))
-!         raw=wR*nrm0
-!         lo=hex0(:,1); hi=hex0(:,7)
-!         do ff=1,6
-!            if (.not.acc(ff)) cycle
-!            wM=min(mVF(ff),1.0_WP-mVF(ff))
-!            raw=raw+wM*nrmf(:,ff)
-!            lo=min(lo,hexf(:,1,ff)); hi=max(hi,hexf(:,7,ff))
-!         end do
-!         magn=sqrt(sum(raw**2))
-!         if (magn.gt.1.0e-30_WP) then
-!            shared_nrm_out=raw/magn
-!         else
-!            shared_nrm_out=[1.0_WP,0.0_WP,0.0_WP] ! degenerate: no member has a real interface
-!         end if
-!         shared_d_out=get_plane_dist(shared_nrm_out,lo,hi,VFpool1)
-!      end subroutine shared_plane
-!      !> This member's new VF: geometric (interface advanced by delta_ along its own normal) if it
-!      !> has a valid PLIC, else unchanged (pure cell, no interface to move). Also snaps a result
-!      !> that lands in the "fragile sliver" band (0,eps_safe)/(1-eps_safe,1) to the nearer exact
-!      !> boundary, unless the member already started there -- same danger the old bound_scale's
-!      !> docstring above describes (get_dQdt's barycenter projection dividing by a near-zero
-!      !> absolute phasic volume), but resolved here by rounding to completion rather than vetoing
-!      !> the whole pool's change, since the geometric solve (unlike the old linear scheme) has no
-!      !> single shared "s" left to zero out.
-!      real(WP) function eval_VFnew(valid,hexm,nrmm,dm_,delta_,VFold) result(VFnew)
-!         logical, intent(in) :: valid
-!         real(WP), dimension(3,8), intent(in) :: hexm
-!         real(WP), dimension(3), intent(in) :: nrmm
-!         real(WP), intent(in) :: dm_,delta_,VFold
-!         real(WP), parameter :: eps_safe=1.0e-4_WP
-!         real(WP) :: vl,vg
-!         real(WP), dimension(3) :: bl,bg
-!         logical :: already_fragile
-!         if (valid) then
-!            call cut_hex_vol(hexm,[nrmm(1),nrmm(2),nrmm(3),dm_+delta_],vl,vg,bl,bg)
-!            VFnew=vl/cell_vol
-!         else
-!            VFnew=VFold
-!         end if
-!         already_fragile=(VFold.gt.0.0_WP.and.VFold.lt.eps_safe).or.(VFold.gt.1.0_WP-eps_safe.and.VFold.lt.1.0_WP)
-!         if (.not.already_fragile) then
-!            if (VFnew.gt.0.0_WP.and.VFnew.lt.eps_safe) VFnew=0.0_WP
-!            if (VFnew.gt.1.0_WP-eps_safe.and.VFnew.lt.1.0_WP) VFnew=1.0_WP
-!         end if
-!      end function eval_VFnew
-!      !> Rebuild a member's Q from its geometrically-determined VFnew and the CLUSTER's shared
-!      !> post-relax intensive state (RHOL_c,eL_c,Yl_c / RHOG_c,eG_c,Yg_c; host-associated), exactly
-!      !> as the old redist() above did -- this part of the design is unchanged, only the source of
-!      !> VFnew is different now (geometric, not capacity-weight+s)
-!      subroutine redist_geo(Qold,VFnew,Qnew)
-!         real(WP), dimension(this%nQ), intent(in) :: Qold
-!         real(WP), intent(in) :: VFnew
-!         real(WP), dimension(this%nQ), intent(out) :: Qnew
-!         real(WP) :: dm
-!         Qnew=Qold
-!         Qnew(1)=VFnew*RHOL_c; Qnew(3)=Qnew(1)*eL_c
-!         if (this%liq%ns.gt.1) Qnew(this%Yl_lo:this%Yl_hi)=Qnew(1)*Yl_c
-!         Qnew(2)=(1.0_WP-VFnew)*RHOG_c; Qnew(4)=Qnew(2)*eG_c
-!         if (this%gas%ns.gt.1) Qnew(this%Yg_lo:this%Yg_hi)=Qnew(2)*Yg_c
-!         dm=(Qnew(1)-Qold(1))+(Qnew(2)-Qold(2))
-!         Qnew(5:7)=Qold(5:7)+dm*u_pool
-!      end subroutine redist_geo
-!   end subroutine cluster_relax
-
-   !> Symmetric pairwise clustering: matches each thin/spiking cell with one face neighbour via
-   !> mutual "deferred acceptance" negotiation, relaxes the pair once, splits back geometrically.
-   !> rhog_mode=.false.: Pass A, VF-based (cluster_VFlo/cluster_VFhi). rhog_mode=.true.: Pass B,
-   !> RHOG-spike-based, only on cells Pass A left untouched (cskip comp 1).
-   subroutine relax_clustered(this,dt,time,cskip,rhog_mode)
+   !> rhog_mode=.false. (default): today's VF-only claimant rule (cluster_VFlo/cluster_VFhi),
+   !> unaware of cskip. rhog_mode=.true.: a SECOND pass, called from apply_relax strictly after
+   !> Pass A (this same subroutine, rhog_mode=.false.) plus the individual per-cell relax have
+   !> both already run for every cell -- so by the time this pass evaluates RHOG, every cell holds
+   !> its REAL post-relaxation state, not a stale pre-relax or throwaway-probed one. In this mode
+   !> claimant status ignores VF thresholds entirely and instead requires (a) cskip's comp 1 still
+   !> 0 (this cell was individually relaxed in Pass A, not already pooled -- "cells that have not
+   !> been clustered") and (b) a real RHOG excess over cluster_rhoG_K times the local reference
+   !> (rhoG_excess_frac). Reservoir eligibility is untouched in both modes (still pure VF-based) --
+   !> a Pass-A-clustered cell can still lend gas to a Pass-B claimant.
+   subroutine cluster_relax(this,dt,time,cskip,rhog_mode)
       use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
-      use amrvof_geometry,  only: cut_hex_vol,get_plane_dist
       use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j,dbg_k,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
+      use amrvof_geometry, only: cut_hex_vol,get_plane_dist
+      use messager, only: die
       implicit none
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: dt,time
       type(amrex_multifab), intent(inout) :: cskip
       logical, intent(in), optional :: rhog_mode
       logical :: use_rhog
-      integer :: lvl,i,j,k,ig,jg,kg,ih,jh,kh,d,ierr,local_id
+      integer :: lvl,i,j,k,f,d,ia,ja,ka,ierr,npay,nc,nmem,msk
       integer, dimension(3,6) :: foff
-      integer, dimension(6) :: fopp
-      real(WP) :: dx,dy,dz,cell_vol
+      integer, dimension(6)   :: fopp
       type(amrex_mfiter) :: mfi
-      type(amrex_box) :: bx
-      type(amrex_multifab) :: need,matchdir,clustbuf
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pPLIC,pS,pNeed,pMatchdir,pClustbuf,pCidx,pStrand
-      real(WP) :: VFclust0,VFclust1,Pjclust,VFnew_h,VFnew_g,RHOL_c,eL_c,RHOG_c,eG_c,Yv_c,cid
-      real(WP), dimension(this%nQ) :: Qclust0,Qclust1,Qnew_h,Qnew_g
-      real(WP), dimension(3) :: u_clust,shared_nrm
+      type(amrex_box)    :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pP,pS,pS0,pI,pCidx,pPLIC,pVF0,pQ0,pStrand,pMatch,pRGC
+      type(amrex_multifab) :: pool,idpool,vfsnap,qsnap,csnap,matchdir,rgclaim
+      logical, dimension(6) :: acc
+      real(WP), dimension(6) :: mVF,wlf,rawcapf ! Capacity-weight scheme
+      real(WP), dimension(this%nQ,6) :: mQ
+      real(WP) :: VFpool0,VFpool1,dVF,Pjpool,rawVFsum,rawGFsum,nM,wl0,s,newVF
+      real(WP) :: rawcap0,rawcapsum
+      real(WP) :: Mtot,KEtot,KEpool,Ediss,cid
+      real(WP), dimension(3) :: u_pool
+      real(WP), dimension(this%nQ) :: Qpool0,Qpool1,dQ,newQ
+      integer :: nclust_events,nclust_cells,local_id ! debug: activation counters
+      logical :: dbg ! debug: trace one cluster in detail
+      logical :: adopted ! pass 2: did this claimant end up pooled by any reservoir
+      logical :: member_claim ! pass 1: is a candidate member itself a claimant (see claimant_lookup)
+      real(WP) :: RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_ ! debug: pool thermo trace
+      ! Cluster's post-relax intensive state -- shared by every member on redistribution (see
+      ! redist below) so that every cell of the pool ends up at the SAME TL,PL,RHOL and
+      ! TG,PG,RHOG as the cluster, not merely conserving the pool's totals under independent
+      ! mass/energy weighting.
+      real(WP) :: RHOL_c,RHOG_c,eL_c,eG_c
+      real(WP), dimension(this%liq%ns-1) :: Yl_c
+      real(WP), dimension(this%gas%ns-1) :: Yg_c
+      ! Geometric redistribution: each pool member's own PLIC (normal+offset, from this%plic) and
+      ! cell box, used to find the ONE shared physical interface displacement (delta) that
+      ! reproduces the pool's exact VF change -- see geo_split/eval_VFnew below.
+      real(WP) :: dx,dy,dz,cell_vol
+      real(WP), dimension(3) :: nrm0
+      real(WP) :: d0
+      logical :: valid0
+      real(WP), dimension(3,8) :: hex0
+      real(WP), dimension(3,6) :: nrmf
+      real(WP), dimension(6) :: df
+      logical, dimension(6) :: validf
+      real(WP), dimension(3,8,6) :: hexf
+      real(WP) :: delta
+      ! Shared-plane redistribution (geo_redist_shared): one averaged normal + one closed-form
+      ! offset for the whole pool -- see shared_plane below. Stored once per pool (reservoir's
+      ! cell, pool payload components nc+1:nc+4) and written to this%plic for every member in
+      ! pass 2, since it is identical for the whole pool.
+      real(WP), dimension(3) :: shared_nrm
       real(WP) :: shared_d
-      real(WP), dimension(3,8) :: hex_h,hex_g
-      real(WP) :: dbgRHOL,dbgRHOG,dbgPL,dbgPG,dbgTL,dbgTG,dbgeL,dbgeG,dbgYv ! debug
+      nclust_events=0; nclust_cells=0; local_id=0 ! debug
       use_rhog=.false.; if (present(rhog_mode)) use_rhog=rhog_mode
+      ! Return if disabled
       if (.not.this%cluster_on) return
       if (.not.associated(this%relax)) return
+      ! Finest level only (mixture cells live there)
       if (this%amr%clvl().lt.this%amr%maxlvl) return
       lvl=this%amr%maxlvl
       dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl); cell_vol=this%amr%cell_vol(lvl)
       foff(:,1)=[-1,0,0]; foff(:,2)=[1,0,0]; foff(:,3)=[0,-1,0]; foff(:,4)=[0,1,0]; foff(:,5)=[0,0,-1]; foff(:,6)=[0,0,1]
       fopp=[2,1,4,3,6,5]
-      local_id=0
-      call this%amr%mfab_build(lvl,need,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
-      call need%setval(0.0_WP)
+      ! Pooled-state field: 1 own slot + 6 face slots, each (nQ+1) reals (Q then VF), plus 1 acceptance
+      ! bitmask, plus 4 more for geo_redist_shared's pool-wide PLIC plane (normal+offset, stored once
+      ! per pool at components nc+1:nc+4, not per-slot -- identical for every member)
+      npay=this%nQ+1; nc=7*npay+1
+      call this%amr%mfab_build(lvl,pool,ncomp=nc+4,nover=1,atface=[.false.,.false.,.false.])
+      call pool%setval(0.0_WP)
+      ! idpool: per-slot pool id (0=unpooled), 1 own + 6 face slots, mirrors pool's slot layout
+      call this%amr%mfab_build(lvl,idpool,ncomp=7,nover=1,atface=[.false.,.false.,.false.])
+      call idpool%setval(0.0_WP)
+      ! matchdir: for geo_redist_shared only, each claimant cell's negotiated reservoir direction
+      ! (0=unmatched, else 1..6), precomputed below by negotiate_shared_pairing so it stays fixed
+      ! and symmetric while pass 1/2 read it -- left all-zero (unused) for cap_redist/geo_redist_multi,
+      ! which keep today's greedy partner_dir via pair_match's dispatch below
       call this%amr%mfab_build(lvl,matchdir,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
       call matchdir%setval(0.0_WP)
-      call this%amr%mfab_build(lvl,clustbuf,ncomp=this%nQ+6,nover=1,atface=[.false.,.false.,.false.])
-      call clustbuf%setval(0.0_WP)
-      ! ---- Phase 1: compute and ghost-fill every cell's own Need (host association not used here
-      ! since negotiate() below scores a NEIGHBOUR's Need too -- must always read the precomputed,
-      ! ghost-filled field, never recompute it live on a neighbour (see rhoG_ref's 2-ring reach) ----
-      call this%amr%mfiter_build(lvl,mfi)
-      do while (mfi%next())
-         pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi); pS=>cskip%dataptr(mfi)
-         pNeed=>need%dataptr(mfi)
-         bx=mfi%tilebox()
-         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-            pNeed(i,j,k,1)=calc_need(i,j,k,pVF,pQ,pS)
-         end do; end do; end do
-      end do
-      call this%amr%mfiter_destroy(mfi)
-      call need%fill_boundary(this%amr%geom(lvl))
-      ! ---- Phase 2: 6-round symmetric mutual matching -> frozen matchdir ----
-      call negotiate()
-      ! ---- Phase 3a: host solves the cluster once, writes its own state + guest's into clustbuf ----
+      ! rhog_mode only: precompute each cell's gclaim status AND rhoG_excess_frac value ONCE (each
+      ! needs a 2-ring rhoG_ref scan, safe here -- every tile evaluates only its OWN valid cells
+      ! against the live this%VF/this%Q, which already carry nover>=2 ghost cells), then
+      ! fill_boundary into a 1-ring-safe lookup field (comp 1=claimant flag, comp 2=excess_frac).
+      ! Without this, best_avail_claimant's neighbour loop and pass 1's member-acceptance loop each
+      ! hop 1 ring out and THEN call claimant()/gclaim()/rhoG_excess_frac() on that neighbour --
+      ! which in rhog_mode triggers ANOTHER 2-ring rhoG_ref scan from there, a compounded 3-ring
+      ! reach from the original cell that exceeds VF/Q's actual nover=2 allocation and crashed with
+      ! a SIGBUS at a domain/AMR-box edge (Session 20). rgclaim/claimant_lookup below replace those
+      ! sites' direct claimant()/rhoG_excess_frac() calls on a neighbour with a cheap, non-recursive
+      ! field read instead.
+      if (use_rhog) then
+         call this%amr%mfab_build(lvl,rgclaim,ncomp=2,nover=1,atface=[.false.,.false.,.false.])
+         call rgclaim%setval(0.0_WP)
+         call this%amr%mfiter_build(lvl,mfi)
+         do while (mfi%next())
+            pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
+            pS=>cskip%dataptr(mfi); pRGC=>rgclaim%dataptr(mfi)
+            bx=mfi%tilebox()
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               if (gclaim(i,j,k,pVF,pQ,pS)) pRGC(i,j,k,1)=1.0_WP
+               pRGC(i,j,k,2)=rhoG_excess_frac(i,j,k,pVF,pQ)
+            end do; end do; end do
+         end do
+         call this%amr%mfiter_destroy(mfi)
+         call rgclaim%fill_boundary(this%amr%geom(lvl))
+      end if
+      if (this%redist_method.eq.geo_redist_shared) call negotiate_shared_pairing()
+      ! ---- Pass 1: each eligible reservoir pools with its accepted claimants and solves once ----
       call this%amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
          pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
-         pCurv=>this%curv%dataptr(mfi); pPLIC=>this%plic%dataptr(mfi); pS=>cskip%dataptr(mfi)
-         pMatchdir=>matchdir%dataptr(mfi); pClustbuf=>clustbuf%dataptr(mfi)
-         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi)
+         pCurv=>this%curv%dataptr(mfi); pP=>pool%dataptr(mfi); pI=>idpool%dataptr(mfi)
+         pPLIC=>this%plic%dataptr(mfi); pMatch=>matchdir%dataptr(mfi); pS=>cskip%dataptr(mfi)
+         if (use_rhog) pRGC=>rgclaim%dataptr(mfi)
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-            d=nint(pMatchdir(i,j,k,1))
-            if (d.eq.0) cycle
-            if (.not.is_host(d)) cycle
-            ig=i+foff(1,d); jg=j+foff(2,d); kg=k+foff(3,d)
-            dbg_cell=in_dbg_box(i,j,k).or.in_dbg_box(ig,jg,kg) ! debug
-            if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug
-            call clust_state(i,j,k,ig,jg,kg,VFclust0,Qclust0,Pjclust,u_clust)
-            VFclust1=VFclust0; Qclust1=Qclust0
+            ! reservoir-eligible cells build a pool; a thin-liquid claimant paired with a
+            ! thin-gas neighbour (thin_pair_leader) may also lead one -- see thin_pair_leader above
+            if (claimant(i,j,k,pVF,pQ,pS).and..not.thin_pair_leader(i,j,k)) cycle
+            VFpool0=pVF(i,j,k,1); Qpool0=pQ(i,j,k,1:this%nQ); Pjpool=this%sigma*pCurv(i,j,k,1); nmem=0
+            ! Own cell's PLIC (normal,offset) and cell box -- geometric redistribution below
+            nrm0=pPLIC(i,j,k,1:3); d0=pPLIC(i,j,k,4); valid0=(abs(d0).lt.1.0e9_WP)
+            call build_hex([this%amr%xlo+real(i,WP)*dx,this%amr%ylo+real(j,WP)*dy,this%amr%zlo+real(k,WP)*dz], &
+            &              [this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz],hex0)
+            do f=1,6
+               acc(f)=.false.
+               ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
+               ! geo_redist_shared needs its super-cell to stay a real hexahedron, so it only ever
+               ! pairs with ONE neighbour -- which one is negotiate_shared_pairing's symmetric
+               ! match (via pair_match below), not just the first qualifying face -- see shared_plane
+               if (this%redist_method.eq.geo_redist_shared.and.nmem.ge.1) cycle
+               ! member_claim: is the NEIGHBOUR (ia,ja,ka) itself a claimant. Uses the precomputed
+               ! rgclaim lookup in rhog_mode (claimant() here would hop 1 ring then trigger ANOTHER
+               ! 2-ring rhoG_ref scan from the neighbour -- see rgclaim's build-site comment).
+               if (use_rhog) then
+                  member_claim=claimant_lookup(ia,ja,ka,pRGC)
+               else
+                  member_claim=claimant(ia,ja,ka,pVF,pQ,pS)
+               end if
+               if (member_claim.and.pair_match(ia,ja,ka,pVF,pQ,pS,pMatch).eq.fopp(f)) then
+                  acc(f)=.true.; nmem=nmem+1
+                  mVF(f)=pVF(ia,ja,ka,1); mQ(:,f)=pQ(ia,ja,ka,1:this%nQ)
+                  VFpool0=VFpool0+mVF(f); Qpool0=Qpool0+mQ(:,f); Pjpool=Pjpool+this%sigma*pCurv(ia,ja,ka,1)
+                  ! Member's own PLIC (normal,offset) and cell box -- geometric redistribution below
+                  nrmf(:,f)=pPLIC(ia,ja,ka,1:3); df(f)=pPLIC(ia,ja,ka,4); validf(f)=(abs(df(f)).lt.1.0e9_WP)
+                  call build_hex([this%amr%xlo+real(ia,WP)*dx,this%amr%ylo+real(ja,WP)*dy,this%amr%zlo+real(ka,WP)*dz], &
+                  &              [this%amr%xlo+real(ia+1,WP)*dx,this%amr%ylo+real(ja+1,WP)*dy,this%amr%zlo+real(ka+1,WP)*dz], &
+                  &              hexf(:,:,f))
+               end if
+            end do
+            ! dbg_cell: does this pool (reservoir i,j,k + its accepted members) touch the debug
+            ! box [dbg_ilo,dbg_ihi]x[dbg_jlo,dbg_jhi]x[dbg_klo,dbg_khi], either as the reservoir
+            ! itself or as an accepted member? dbg_i/j/k are then set to the RESERVOIR's own
+            ! indices (not the member's) since apply() below always acts on the pooled reservoir.
+            dbg_cell=(i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) ! debug
+            do f=1,6
+               if (acc(f).and.i+foff(1,f).ge.dbg_ilo.and.i+foff(1,f).le.dbg_ihi.and. &
+               &   j+foff(2,f).ge.dbg_jlo.and.j+foff(2,f).le.dbg_jhi.and. &
+               &   k+foff(3,f).ge.dbg_klo.and.k+foff(3,f).le.dbg_khi) dbg_cell=.true. ! debug
+            end do
+            if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug: label prints with the reservoir's own index
+            if (nmem.eq.0) cycle
+            nclust_events=nclust_events+1; nclust_cells=nclust_cells+nmem+1 ! debug
+            ! dbg=(this%amr%rank.eq.0.and.nclust_events.eq.1) ! debug: trace only the first pool on rank 0
+            ! if (dbg) then
+            !    print*,'CLUSTER reservoir i=',i,' j=',j,' k=',k,' VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
+            !    do f=1,6
+            !       if (acc(f)) print*,'CLUSTER member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f),&
+            !       &                  ' VF=',mVF(f),' Q=',mQ(:,f)
+            !    end do
+            ! end if
             if (dbg_cell) then ! debug
-               call get_thermo(VFclust0,Qclust0,dbgRHOL,dbgRHOG,dbgPL,dbgPG,dbgTL,dbgTG,dbgeL,dbgeG,dbgYv)
-               print*,'[relax_clustered] host',i,j,k,'guest',ig,jg,kg,'pre VF=',VFclust0,'TL=',dbgTL,'TG=',dbgTG
+               print*,'--------------------------------------------------'
+               print*,'inside cluster_relax, reservoir i=',i,' j=',j,' k=',k
+               print*,'   this cell is part of a CLUSTER of',nmem+1,' cells (this reservoir + ',nmem,' accepted member(s))'
+               print*,'   VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
+               do f=1,6
+                  if (acc(f)) then
+                     print*,'   member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
+                     print*,'   VF=',mVF(f),' Q=',mQ(:,f)
+                  end if
+               end do
             end if
-            call this%relax%apply(dt=dt,VF=VFclust1,Q=Qclust1,Pjump=Pjclust,ierr=ierr)
-            if (dbg_cell) then ! debug
-               call get_thermo(VFclust1,Qclust1,dbgRHOL,dbgRHOG,dbgPL,dbgPG,dbgTL,dbgTG,dbgeL,dbgeG,dbgYv)
-               print*,'[relax_clustered] post VF=',VFclust1,'TL=',dbgTL,'TG=',dbgTG,'ierr=',ierr
+            ! debug: reservoir-alone diagnostic -- relax this reservoir's own (unpooled) state on a
+            ! throwaway copy, to see whether the overshoot is already present before pooling.
+            ! dbg_cell is left ON (not suppressed) during this call, so the internal pTg_relax/
+            ! solve_lvg iteration trace prints too -- needed to see exactly how a bad result arose.
+            if (dbg_cell) then
+               block
+                  real(WP) :: VFdiag,TLd0,TGd0,TLd1,TGd1,RHOLd,RHOGd,PLd,PGd,eLd,eGd,Yvd
+                  real(WP), dimension(this%nQ) :: Qdiag
+                  integer :: ierrd
+                  VFdiag=pVF(i,j,k,1); Qdiag=pQ(i,j,k,1:this%nQ)
+                  call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd0,TGd0,eLd,eGd,Yvd)
+                  print*,'   [diag] reservoir ALONE (unpooled), pre : VF=',pVF(i,j,k,1),' TL=',TLd0,' TG=',TGd0
+                  call this%relax%apply(dt=dt,VF=VFdiag,Q=Qdiag,Pjump=this%sigma*pCurv(i,j,k,1),ierr=ierrd)
+                  call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd1,TGd1,eLd,eGd,Yvd)
+                  print*,'   [diag] reservoir ALONE (unpooled), post: VF=',VFdiag,' TL=',TLd1,' TG=',TGd1,' ierr=',ierrd
+               end block
             end if
-            RHOL_c=0.0_WP; eL_c=0.0_WP
-            if (VFclust1.gt.0.0_WP.and.Qclust1(1).gt.0.0_WP) then
-               RHOL_c=Qclust1(1)/VFclust1; eL_c=Qclust1(3)/Qclust1(1)
+            ! debug: member-alone diagnostic -- same idea as the reservoir-alone one above, but for
+            ! each accepted member on its own throwaway copy, to see whether IT would already be in
+            ! trouble unpooled too (not just the reservoir)
+            if (dbg_cell) then
+               do f=1,6
+                  if (.not.acc(f)) cycle
+                  block
+                     real(WP) :: VFdiag,TLd0,TGd0,TLd1,TGd1,RHOLd,RHOGd,PLd,PGd,eLd,eGd,Yvd
+                     real(WP), dimension(this%nQ) :: Qdiag
+                     integer :: ierrd
+                     VFdiag=mVF(f); Qdiag=mQ(:,f)
+                     call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd0,TGd0,eLd,eGd,Yvd)
+                     print*,'   [diag] member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f), &
+                     &      ' ALONE (unpooled), pre : VF=',mVF(f),' TL=',TLd0,' TG=',TGd0
+                     call this%relax%apply(dt=dt,VF=VFdiag,Q=Qdiag,Pjump=this%sigma*pCurv(i+foff(1,f),j+foff(2,f),k+foff(3,f),1),ierr=ierrd)
+                     call get_thermo(VFdiag,Qdiag,RHOLd,RHOGd,PLd,PGd,TLd1,TGd1,eLd,eGd,Yvd)
+                     print*,'   [diag] member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f), &
+                     &      ' ALONE (unpooled), post: VF=',VFdiag,' TL=',TLd1,' TG=',TGd1,' ierr=',ierrd
+                  end block
+               end do
             end if
-            RHOG_c=0.0_WP; eG_c=0.0_WP; Yv_c=0.0_WP
-            if (VFclust1.lt.1.0_WP.and.Qclust1(2).gt.0.0_WP) then
-               RHOG_c=Qclust1(2)/(1.0_WP-VFclust1); eG_c=Qclust1(4)/Qclust1(2)
-               Yv_c=Qclust1(this%Yg_lo)/Qclust1(2)
-            end if
-            call clust_plane(i,j,k,ig,jg,kg,VFclust1,shared_nrm,shared_d)
-            call cell_hex(i,j,k,hex_h); call cell_hex(ig,jg,kg,hex_g)
-            VFnew_h=cut_clust(hex_h,shared_nrm,shared_d,pVF(i,j,k,1))
-            VFnew_g=cut_clust(hex_g,shared_nrm,shared_d,pVF(ig,jg,kg,1))
-            Qnew_h=redist_clust(pQ(i,j,k,1:this%nQ),VFnew_h,RHOL_c,eL_c,RHOG_c,eG_c,Yv_c,u_clust)
-            Qnew_g=redist_clust(pQ(ig,jg,kg,1:this%nQ),VFnew_g,RHOL_c,eL_c,RHOG_c,eG_c,Yv_c,u_clust)
             local_id=local_id+1; cid=real(this%amr%rank,WP)*1.0e4_WP+real(local_id,WP)
-            pVF(i,j,k,1)=VFnew_h; pQ(i,j,k,1:this%nQ)=Qnew_h
-            pPLIC(i,j,k,1:3)=shared_nrm; pPLIC(i,j,k,4)=shared_d
-            pS(i,j,k,1)=1.0_WP; pS(i,j,k,3)=1.0_WP; pCidx(i,j,k,1)=cid
-            pClustbuf(i,j,k,1:this%nQ)=Qnew_g; pClustbuf(i,j,k,this%nQ+1)=VFnew_g
-            pClustbuf(i,j,k,this%nQ+2:this%nQ+4)=shared_nrm; pClustbuf(i,j,k,this%nQ+5)=shared_d
-            pClustbuf(i,j,k,this%nQ+6)=cid
-            if (dbg_cell) print*,'[relax_clustered] host adopted VF=',VFnew_h,'guest will adopt VF=',VFnew_g ! debug
-         end do; end do; end do
-      end do
-      call this%amr%mfiter_destroy(mfi)
-      call clustbuf%fill_boundary(this%amr%geom(lvl))
-      ! ---- Phase 3b: guest adopts its share from clustbuf; unmatched-but-needy cells are stranded ----
-      call this%amr%mfiter_build(lvl,mfi)
-      do while (mfi%next())
-         pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
-         pPLIC=>this%plic%dataptr(mfi); pS=>cskip%dataptr(mfi)
-         pMatchdir=>matchdir%dataptr(mfi); pClustbuf=>clustbuf%dataptr(mfi)
-         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi); pStrand=>this%stranded%mf(lvl)%dataptr(mfi)
-         pNeed=>need%dataptr(mfi)
-         bx=mfi%tilebox()
-         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-            d=nint(pMatchdir(i,j,k,1))
-            if (d.ne.0) then
-               if (is_host(d)) cycle
-               ih=i+foff(1,d); jh=j+foff(2,d); kh=k+foff(3,d)
-               pQ(i,j,k,1:this%nQ)=pClustbuf(ih,jh,kh,1:this%nQ)
-               pVF(i,j,k,1)=pClustbuf(ih,jh,kh,this%nQ+1)
-               pPLIC(i,j,k,1:3)=pClustbuf(ih,jh,kh,this%nQ+2:this%nQ+4)
-               pPLIC(i,j,k,4)=pClustbuf(ih,jh,kh,this%nQ+5)
-               pS(i,j,k,1)=1.0_WP; pS(i,j,k,3)=1.0_WP
-               pCidx(i,j,k,1)=pClustbuf(ih,jh,kh,this%nQ+6)
-               if (in_dbg_box(i,j,k)) print*,'[relax_clustered] guest',i,j,k,'adopted from host',ih,jh,kh,'VF=',pVF(i,j,k,1) ! debug
-            else if (pNeed(i,j,k,1).gt.0.0_WP) then
-               pStrand(i,j,k,1)=1.0_WP; this%strand_acc=this%strand_acc+1.0_WP
+            pI(i,j,k,1)=cid
+            do f=1,6
+               if (acc(f)) pI(i,j,k,f+1)=cid
+            end do
+            nM=real(nmem+1,WP)
+            ! Pool velocity and mixing dissipation, computed from raw (un-normalized) sums before
+            ! dividing by nM. u_pool is the pool's TOTAL-mass-weighted velocity (own+claimants,
+            ! each member's own u_m=Q_m(5:7)/(Q_m(1)+Q_m(2))); since Qpool0(5:7) is already the raw
+            ! sum of every member's own momentum at this point, Qpool0(5:7)/[Qpool0(1)+Qpool0(2)]
+            ! *is* that mass-weighted average -- no extra loop needed. Forcing every member to this
+            ! one shared velocity (see redist) loses kinetic energy (mixing dissipation, mirroring
+            ! merge_Q's eG=(sE+0.5*(sKE-|sMom|^2/sM))/sM); that lost KE is added to the pool's
+            ! internal energy (split by mass fraction) so apply()'s energy conservation isn't
+            ! silently violated by pooling itself.
+            Mtot=Qpool0(1)+Qpool0(2)
+            u_pool=Qpool0(5:7)/Mtot
+            KEtot=sum(pQ(i,j,k,5:7)**2)/(pQ(i,j,k,1)+pQ(i,j,k,2))
+            do f=1,6
+               if (acc(f)) KEtot=KEtot+sum(mQ(5:7,f)**2)/(mQ(1,f)+mQ(2,f))
+            end do
+            KEpool=sum(Qpool0(5:7)**2)/Mtot
+            Ediss=max(0.0_WP,0.5_WP*(KEtot-KEpool))
+            Qpool0(3)=Qpool0(3)+Ediss*(Qpool0(1)/Mtot)
+            Qpool0(4)=Qpool0(4)+Ediss*(Qpool0(2)/Mtot)
+            VFpool0=VFpool0/nM; Qpool0=Qpool0/nM; Pjpool=Pjpool/nM
+            ! if (dbg) print*,'CLUSTER pool nM=',nM,' u_pool=',u_pool,' Ediss=',Ediss,' PRE  VF=',VFpool0,' Q=',Qpool0
+            if (dbg_cell) then ! debug
+               call get_thermo(VFpool0,Qpool0,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   pool nM=',nM,' u_pool=',u_pool,' Ediss=',Ediss
+               print*,'   PRE VF=',VFpool0,' Q=',Qpool0
+               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+            end if
+            VFpool1=VFpool0; Qpool1=Qpool0
+            if (dbg_cell) print*,'   relax%apply below runs on the POOLED cluster state, not on this cell alone' ! debug
+            call this%relax%apply(dt=dt,VF=VFpool1,Q=Qpool1,Pjump=Pjpool,ierr=ierr) ! debug: dbg_cell already set above, gates apply()'s own trace
+            dVF=VFpool1-VFpool0; dQ=Qpool1-Qpool0
+            ! Cluster's post-relax intensive state, shared by every member below
+            RHOL_c=0.0_WP; eL_c=0.0_WP
+            if (VFpool1.gt.0.0_WP.and.Qpool1(1).gt.0.0_WP) then
+               RHOL_c=Qpool1(1)/VFpool1; eL_c=Qpool1(3)/Qpool1(1)
+            end if
+            RHOG_c=0.0_WP; eG_c=0.0_WP
+            if (VFpool1.lt.1.0_WP.and.Qpool1(2).gt.0.0_WP) then
+               RHOG_c=Qpool1(2)/(1.0_WP-VFpool1); eG_c=Qpool1(4)/Qpool1(2)
+            end if
+            if (this%liq%ns.gt.1.and.Qpool1(1).gt.0.0_WP) Yl_c=Qpool1(this%Yl_lo:this%Yl_hi)/Qpool1(1)
+            if (this%gas%ns.gt.1.and.Qpool1(2).gt.0.0_WP) Yg_c=Qpool1(this%Yg_lo:this%Yg_hi)/Qpool1(2)
+            ! if (dbg) print*,'CLUSTER pool ierr=',ierr,' POST VF=',VFpool1,' Q=',Qpool1,' dVF=',dVF,' dQ=',dQ
+            if (dbg_cell) then ! debug
+               call get_thermo(VFpool1,Qpool1,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   pool ierr=',ierr
+               print*,'   POST VF=',VFpool1,' Q=',Qpool1,' dVF=',dVF,' dQ=',dQ
+               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+            end if
+            ! ---- Solve this pool's redistribution ----
+            select case (this%redist_method)
+            case (cap_redist)
+               ! Split-back weights, capacity-based: give more of the pool's delta to whichever
+               ! member has more room in the direction the pool is moving -- remaining gas volume
+               ! (1-VF) when condensing (dVF>=0), remaining liquid volume (VF) when evaporating
+               ! (dVF<0). One weight per member governs its VF share; redist() (called from
+               ! apply_redist below) rebuilds that member's liquid and gas Q directly from the
+               ! shared cluster state, so there is no separate gas-side weight to track.
+               if (dVF.ge.0.0_WP) then; rawcap0=1.0_WP-pVF(i,j,k,1); else; rawcap0=pVF(i,j,k,1); end if
+               rawcapsum=rawcap0
+               rawcapf=0.0_WP
+               do f=1,6
+                  if (.not.acc(f)) cycle
+                  if (dVF.ge.0.0_WP) then; rawcapf(f)=1.0_WP-mVF(f); else; rawcapf(f)=mVF(f); end if
+                  rawcapsum=rawcapsum+rawcapf(f)
+               end do
+               if (rawcapsum.gt.0.0_WP) then; wl0=rawcap0/rawcapsum; else; wl0=1.0_WP/nM; end if
+               do f=1,6
+                  if (.not.acc(f)) cycle
+                  if (rawcapsum.gt.0.0_WP) then; wlf(f)=rawcapf(f)/rawcapsum; else; wlf(f)=1.0_WP/nM; end if
+               end do
+               ! Safety scale: the weight factor nM*w_m applied to a dominant member (large w_m)
+               ! is NOT bounded by 1 -- e.g. a 7-member group's dominant reservoir can have w_m
+               ! close to 1, so it would receive up to nM (7x) the pool's raw change, easily
+               ! pushing its own VF far outside [0,1]. s in [0,1] is the largest common (whole-
+               ! group, so conservation is preserved for ANY s) fraction of the pooled VF change
+               ! that keeps every member's VF in [0,1]
+               s=1.0_WP
+               call bound_scale(pVF(i,j,k,1),wl0,s)
+               do f=1,6
+                  if (acc(f)) call bound_scale(mVF(f),wlf(f),s)
+               end do
+               if (dbg_cell) print*,'   weights wl0=',wl0,' wlf=',wlf,' s=',s ! debug
+            case (geo_redist_multi)
+               ! Geometric redistribution: find the ONE shared physical interface displacement
+               ! (delta) that, applied along each pool member's OWN fixed PLIC normal, reproduces
+               ! the pool's exact VF change (geo_split/eval_VFnew below). Unlike cap_redist, this
+               ! is a genuine root-find to the exact target, so mass/energy conservation is exact
+               ! for any pool (not just when no member needed bound_scale's clipping), and VF
+               ! boundedness comes from the interface's own geometric saturation at VF=0/1, not an
+               ! artificial linear clamp.
+               call seed_reservoir_plane()
+               call geo_split(delta)
+               if (dbg_cell) print*,'   geo delta=',delta,' own valid0=',valid0 ! debug
+            case (geo_redist_shared)
+               ! One averaged normal + direct offset (shared_plane), cuts every member incl. pure cells
+               call shared_plane(shared_nrm,shared_d)
+               if (dbg_cell) print*,'   shared_nrm=',shared_nrm,' shared_d=',shared_d ! debug
+            case default
+               call die('[cluster_relax] unknown redist_method')
+            end select
+            ! Own (reservoir) share
+            if (dbg_cell) then ! debug
+               call get_thermo(pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   cluster cell role=RESERVOIR i=',i,' j=',j,' k=',k
+               print*,'   PRE  VF=',pVF(i,j,k,1),' Q=',pQ(i,j,k,1:this%nQ)
+               print*,'   PRE  TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
+            end if
+            call apply_redist(pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),valid0,hex0,nrm0,d0,wl0,newVF,newQ)
+            if (dbg_cell) then ! debug
+               call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   POST VF=',newVF,' Q=',newQ
+               print*,'   POST TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
+            end if
+            pP(i,j,k,1:this%nQ)=newQ; pP(i,j,k,this%nQ+1)=newVF
+            msk=0
+            do f=1,6
+               if (.not.acc(f)) cycle
+               ! dbg_cell already announced 'inside cluster_relax' above if this pool touches the
+               ! target -- print every member of the cluster here, not just the traced one, so the
+               ! whole cluster's post-redistribution state is visible together
+               if (dbg_cell) then ! debug
+                  call get_thermo(mVF(f),mQ(:,f),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+                  print*,'   cluster cell role=MEMBER f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
+                  print*,'   PRE  VF=',mVF(f),' Q=',mQ(:,f),' validf=',validf(f)
+                  print*,'   PRE  TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
+               end if
+               call apply_redist(mVF(f),mQ(:,f),validf(f),hexf(:,:,f),nrmf(:,f),df(f),wlf(f),newVF,newQ)
+               if (dbg_cell) then ! debug
+                  call get_thermo(newVF,newQ,RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+                  print*,'   POST VF=',newVF,' Q=',newQ
+                  print*,'   POST TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_,' RHOL=',RHOL_,' RHOG=',RHOG_
+               end if
+               pP(i,j,k,f*npay+1:f*npay+this%nQ)=newQ; pP(i,j,k,f*npay+this%nQ+1)=newVF
+               msk=ibset(msk,f)
+            end do
+            pP(i,j,k,nc)=real(msk,WP)
+            ! Stash the pool's single shared PLIC plane once (reservoir's own slot only, not
+            ! per-member) so pass 2 can write it into this%plic for every member of this pool
+            if (this%redist_method.eq.geo_redist_shared) then
+               pP(i,j,k,nc+1:nc+3)=shared_nrm; pP(i,j,k,nc+4)=shared_d
+            end if
+            ! Clean summary: final individual (VF,Q,thermo) of every cell in this cluster,
+            ! read back from pP (already holds each cell's post-redistribution share), all
+            ! together in one place instead of scattered across the weight/redist steps above
+            if (dbg_cell) then ! debug
+               print*,'--------------------------------------------------'
+               print*,'inside cluster_relax, final state of every cell in this cluster:'
+               call get_thermo(pP(i,j,k,this%nQ+1),pP(i,j,k,1:this%nQ),RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+               print*,'   reservoir i=',i,' j=',j,' k=',k
+               print*,'   VF=',pP(i,j,k,this%nQ+1),' Q=',pP(i,j,k,1:this%nQ)
+               print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+               print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+               do f=1,6
+                  if (.not.acc(f)) cycle
+                  call get_thermo(pP(i,j,k,f*npay+this%nQ+1),pP(i,j,k,f*npay+1:f*npay+this%nQ), &
+                  &               RHOL_,RHOG_,PL_,PG_,TL_,TG_,eL_,eG_,Yv_)
+                  print*,'   member f=',f,' i=',i+foff(1,f),' j=',j+foff(2,f),' k=',k+foff(3,f)
+                  print*,'   VF=',pP(i,j,k,f*npay+this%nQ+1),' Q=',pP(i,j,k,f*npay+1:f*npay+this%nQ)
+                  print*,'   TL=',TL_,' TG=',TG_,' PL=',PL_,' PG=',PG_
+                  print*,'   RHOL=',RHOL_,' RHOG=',RHOG_,' EL=',eL_,' EG=',eG_,' Yv=',Yv_
+               end do
             end if
          end do; end do; end do
       end do
       call this%amr%mfiter_destroy(mfi)
-      call amrex_multifab_destroy(need)
+      call pool%fill_boundary(this%amr%geom(lvl))
+      call idpool%fill_boundary(this%amr%geom(lvl))
+      ! Freeze a read-only VF snapshot from BEFORE pass 2 writes anything, for pass 2's own
+      ! claimant/partner_dir calls to read. Pass 2 below writes pVF in place as it resolves each
+      ! cell, cell-by-cell within one mfi/i/j/k sweep -- if claimant/partner_dir kept reading that
+      ! same live pVF, a claimant visited later in the sweep could see an ALREADY-UPDATED neighbour
+      ! (its post-redistribution VF, not the pre-relax VF pass 1 actually paired it against), pick
+      ! a different partner_dir than pass 1 did, look up the wrong neighbour's pP slot, and be
+      ! silently left unresolved (stale VF/Q, never picking up its pass-1-computed redistributed
+      ! share). vfsnap freezes the same pre-cluster state pass 1 saw (pVF is never written during
+      ! pass 1), so pass 2's own claim decisions always agree with pass 1's. qsnap is the same
+      ! idea for Q, needed because gclaim's density-spike term (rhoG_excess_frac) reads Q too --
+      ! pass 2 also writes pQ in place cell-by-cell, so its own claimant/pair_match calls must read
+      ! this frozen pre-pass-2 Q, not the live, partly-updated one, for the same reason as pVF0.
+      ! csnap is the same idea again for cskip's comp 1 (rhog_mode's "not already Pass-A-clustered"
+      ! gate) -- pass 2 writes cskip comp 1 too (pS(i,j,k,1)=1.0 on adoption), so rhog_mode's own
+      ! claimant/pair_match calls in pass 2 must read the frozen pre-pass-2 cskip, not the live one.
+      ! nover=2 (not 1) on all three: rhoG_ref's reference is a 2-ring stencil (see rhoG_ref), and
+      ! gclaim/claimant/pair_match run against these frozen snapshots in pass 2 exactly as they run
+      ! against the live fields in pass 1/negotiate, so they need the same ghost depth in both cases.
+      call this%amr%mfab_build(lvl,vfsnap,ncomp=1,nover=2,atface=[.false.,.false.,.false.])
+      call this%amr%mfab_build(lvl,qsnap,ncomp=this%nQ,nover=2,atface=[.false.,.false.,.false.])
+      call this%amr%mfab_build(lvl,csnap,ncomp=1,nover=2,atface=[.false.,.false.,.false.])
+      call this%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>this%VF%mf(lvl)%dataptr(mfi); pVF0=>vfsnap%dataptr(mfi)
+         pQ=>this%Q%mf(lvl)%dataptr(mfi); pQ0=>qsnap%dataptr(mfi)
+         pS=>cskip%dataptr(mfi); pS0=>csnap%dataptr(mfi)
+         bx=mfi%tilebox()
+         pVF0(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)= &
+         &   pVF(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)
+         pQ0(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),:)= &
+         &   pQ(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),:)
+         pS0(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)= &
+         &   pS(bx%lo(1):bx%hi(1),bx%lo(2):bx%hi(2),bx%lo(3):bx%hi(3),1)
+      end do
+      call this%amr%mfiter_destroy(mfi)
+      call vfsnap%fill_boundary(this%amr%geom(lvl))
+      call qsnap%fill_boundary(this%amr%geom(lvl))
+      call csnap%fill_boundary(this%amr%geom(lvl))
+      ! ---- Pass 2: every touched cell adopts its share (claimant <- reservoir's slot; reservoir <- own slot) ----
+      call this%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
+         pP=>pool%dataptr(mfi); pS=>cskip%dataptr(mfi); pI=>idpool%dataptr(mfi)
+         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi); pVF0=>vfsnap%dataptr(mfi); pQ0=>qsnap%dataptr(mfi)
+         pS0=>csnap%dataptr(mfi)
+         pStrand=>this%stranded%mf(lvl)%dataptr(mfi)
+         pPLIC=>this%plic%dataptr(mfi); pMatch=>matchdir%dataptr(mfi)
+         if (use_rhog) pRGC=>rgclaim%dataptr(mfi)
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            dbg_cell=(i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) ! debug
+            if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug
+            if (dbg_cell) then ! debug
+               print*,'--------------------------------------------------'
+               print*,'inside cluster_relax, pass2 claimant=',claimant(i,j,k,pVF0,pQ0,pS0),' VF0=',pVF0(i,j,k,1)
+               print*,'   own pP(nc)=',nint(pP(i,j,k,nc))
+               if (nint(pP(i,j,k,nc)).eq.0.and.claimant(i,j,k,pVF0,pQ0,pS0)) then
+                  ! this cell did not lead a pool of its own (own pP(nc)=0) and needs a
+                  ! reservoir partner to adopt into -- that check reads the PARTNER's pool bit.
+                  ! pair_match uses pVF0/pQ0/pS0 (the pre-pass-2 snapshots), the SAME arrays pass 1
+                  ! used to decide this cell's pairing, so it reproduces pass 1's decision exactly
+                  ! even though pass 2 has already overwritten some neighbours' live pVF/pQ/cskip by now.
+                  d=pair_match(i,j,k,pVF0,pQ0,pS0,pMatch)
+                  print*,'   pair_match=',d
+                  ! debug: dump every face neighbour's VF0 (frozen) against the cluster_VFlo/VFhi
+                  ! bounds partner_dir searches against, to see why none (or one) qualified
+                  print*,'   cluster_VFlo=',this%cluster_VFlo,' cluster_VFhi=',this%cluster_VFhi
+                  do f=1,6
+                     ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
+                     print*,'   neighbour f=',f,' i=',ia,' j=',ja,' k=',ka,' VF0=',pVF0(ia,ja,ka,1)
+                  end do
+                  if (d.gt.0) then
+                     ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
+                     print*,'   partner i=',ia,' j=',ja,' k=',ka,' partner VF0=',pVF0(ia,ja,ka,1)
+                     print*,'   partner pP(nc)=',nint(pP(ia,ja,ka,nc)),' bit f=',f
+                     print*,'   partner accepted this cell=',btest(nint(pP(ia,ja,ka,nc)),f)
+                  else
+                     print*,'   no qualifying reservoir neighbour found -- will NOT be adopted'
+                  end if
+               end if
+            end if
+            ! Own pP(nc)!=0 covers BOTH a normal (non-claimant) reservoir and a claimant that
+            ! led a pool as thin_pair_leader (see pass 1) -- either way this cell's own slot holds
+            ! its post-relax share directly. Only a claimant that did NOT lead falls through to
+            ! looking up its partner's slot.
+            if (nint(pP(i,j,k,nc)).ne.0) then
+               pQ(i,j,k,1:this%nQ)=pP(i,j,k,1:this%nQ)
+               pVF(i,j,k,1)=pP(i,j,k,this%nQ+1)
+               pS(i,j,k,1)=1.0_WP
+               pCidx(i,j,k,1)=pI(i,j,k,1)
+               if (this%redist_method.eq.geo_redist_shared) then
+                  pPLIC(i,j,k,1:4)=pP(i,j,k,nc+1:nc+4); pS(i,j,k,3)=1.0_WP
+               end if
+               if (dbg_cell) then ! debug
+                  print*,'   pass2 adopted own reservoir/pair-leader share'
+                  print*,'   newVF=',pVF(i,j,k,1),' newQ=',pQ(i,j,k,1:this%nQ),' cidx=',pCidx(i,j,k,1)
+               end if
+            else if (claimant(i,j,k,pVF0,pQ0,pS0)) then
+               ! pair_match keyed off pVF0/pQ0/pS0 (frozen), matching pass 1's own pairing decision
+               ! -- see the dbg_cell block above for why this must NOT be the live, partly-updated
+               ! pVF/pQ/cskip
+               d=pair_match(i,j,k,pVF0,pQ0,pS0,pMatch); adopted=.false.
+               if (d.gt.0) then
+                  ia=i+foff(1,d); ja=j+foff(2,d); ka=k+foff(3,d); f=fopp(d)
+                  if (btest(nint(pP(ia,ja,ka,nc)),f)) then
+                     pQ(i,j,k,1:this%nQ)=pP(ia,ja,ka,f*npay+1:f*npay+this%nQ)
+                     pVF(i,j,k,1)=pP(ia,ja,ka,f*npay+this%nQ+1)
+                     pS(i,j,k,1)=1.0_WP
+                     pCidx(i,j,k,1)=pI(ia,ja,ka,f+1)
+                     if (this%redist_method.eq.geo_redist_shared) then
+                        pPLIC(i,j,k,1:4)=pP(ia,ja,ka,nc+1:nc+4); pS(i,j,k,3)=1.0_WP
+                     end if
+                     adopted=.true.
+                     if (dbg_cell) then ! debug
+                        print*,'   pass2 adopted from reservoir i=',ia,' j=',ja,' k=',ka
+                        print*,'   newVF=',pVF(i,j,k,1),' newQ=',pQ(i,j,k,1:this%nQ),' cidx=',pCidx(i,j,k,1)
+                     end if
+                  end if
+               end if
+               ! Stranded: this claimant needed a reservoir but ended up in none (no qualifying
+               ! neighbour, or its only candidate's pool already had a member and rejected it).
+               ! this%stranded is already zeroed for the whole level above, once per apply_relax call.
+               if (.not.adopted) then
+                  this%strand_acc=this%strand_acc+1.0_WP
+                  pStrand(i,j,k,1)=1.0_WP
+                  ! print*,'STRAND rank=',this%amr%rank,' i=',i,' j=',j,' k=',k,' VF=',pVF0(i,j,k,1), &
+                  ! &      ' neighbours=',(pVF0(i+foff(1,f),j+foff(2,f),k+foff(3,f),1),f=1,6) ! debug: pattern check
+               end if
+            end if
+         end do; end do; end do
+      end do
+      call this%amr%mfiter_destroy(mfi)
+      call amrex_multifab_destroy(pool)
+      call amrex_multifab_destroy(idpool)
+      call amrex_multifab_destroy(vfsnap)
+      call amrex_multifab_destroy(qsnap)
+      call amrex_multifab_destroy(csnap)
       call amrex_multifab_destroy(matchdir)
-      call amrex_multifab_destroy(clustbuf)
+      if (use_rhog) call amrex_multifab_destroy(rgclaim)
+      ! print*,'CLUSTER_CENSUS t=',time,' events=',nclust_events,' cells=',nclust_cells ! debug: independent of cluster_idx viz field, for cross-checking
    contains
-      !> Debug trace box hit test, see relax_igmix_sg_class's dbg_ilo..dbg_khi.
-      logical function in_dbg_box(ci,cj,ck) result(l)
+      !> Thin-liquid claimant: too little liquid, needs a liquid-rich partner. Takes vf explicitly
+      !> (rather than reading host-associated pVF) so pass 2 can evaluate this against a frozen
+      !> snapshot instead of the live, partly-already-updated field -- see vfsnap above.
+      logical function lclaim(ci,cj,ck,vf)
          integer, intent(in) :: ci,cj,ck
-         l=(ci.ge.dbg_ilo.and.ci.le.dbg_ihi.and.cj.ge.dbg_jlo.and.cj.le.dbg_jhi.and.ck.ge.dbg_klo.and.ck.le.dbg_khi)
-      end function in_dbg_box
-      !> Local gas density, mirrors get_primitive's RHOG=Q(2)/(1-VF).
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf
+         real(WP) :: myVF
+         myVF=vf(ci,cj,ck,1)
+         lclaim=(myVF.ge.VFlo.and.myVF.lt.this%cluster_VFlo)
+      end function lclaim
+      !> Thin-gas claimant. rhog_mode=.false. (Pass A, today's rule): too little gas by the VF
+      !> bound alone, needs a gas-rich partner (see lclaim re: vf). rhog_mode=.true. (Pass B):
+      !> ignores VF entirely -- claimant iff this cell was NOT already clustered by Pass A
+      !> (cs comp 1 still 0, "cells that have not been clustered") AND its now-REAL post-Pass-A
+      !> RHOG has spiked past cluster_rhoG_K times its reservoir-eligible neighbours' median RHOG
+      !> (rhoG_excess_frac below) -- RHOG runaway was found to compound continuously well before
+      !> VF ever crosses cluster_VFhi (Session 19 J/N), and forcing Pass B to run strictly after
+      !> Pass A + the individual per-cell relax (see apply_relax) means rhoG_at here reads each
+      !> cell's REAL relaxed density, not a stale pre-relax or throwaway-probed one (Session 20).
+      logical function gclaim(ci,cj,ck,vf,q,cs)
+         integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
+         real(WP) :: myVF
+         if (use_rhog) then
+            gclaim=(cs(ci,cj,ck,1).lt.0.5_WP).and.(rhoG_excess_frac(ci,cj,ck,vf,q).gt.0.0_WP)
+         else
+            myVF=vf(ci,cj,ck,1)
+            gclaim=(myVF.gt.this%cluster_VFhi.and.myVF.le.VFhi)
+         end if
+      end function gclaim
+      !> Non-recursive claimant lookup, rhog_mode only -- reads the precomputed rgclaim field
+      !> (built once per cluster_relax call, above) instead of calling claimant()/gclaim() again,
+      !> which would trigger a further 2-ring rhoG_ref scan and compound past VF/Q's allocated
+      !> ghost depth (see rgclaim's build-site comment). Use this, never claimant(), for a NEIGHBOUR
+      !> (any position reached via a foff hop, not the caller's own loop position) in rhog_mode.
+      logical function claimant_lookup(ci,cj,ck,rgc) result(cl)
+         integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: rgc
+         cl=(rgc(ci,cj,ck,1).gt.0.5_WP)
+      end function claimant_lookup
+      !> Claimant predicate: thin liquid or thin gas by cluster_relax's own bounds (Pass A), or
+      !> gclaim's rhog_mode rule (Pass B) -- excludes pure cells in Pass A; lclaim is never
+      !> density-aware (RHOG-only trigger, see Session 20), so it always uses the plain VF bound.
+      logical function claimant(ci,cj,ck,vf,q,cs)
+         integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
+         if (use_rhog) then
+            claimant=gclaim(ci,cj,ck,vf,q,cs)
+         else
+            claimant=lclaim(ci,cj,ck,vf).or.gclaim(ci,cj,ck,vf,q,cs)
+         end if
+      end function claimant
+      !> Local gas density RHOG at a cell, from a given (vf,q) pair -- mirrors get_primitive's own
+      !> formula exactly (RHOG=Q(2)/(1-VF), valid only when VF<=VFhi and Q(2)>0, else 0/undefined).
+      !> Needed standalone because this%RHOG (the amrdata field) is stale here -- cluster_relax
+      !> runs on live post-advection Q, one stage before this timestep's own get_primitive call
+      !> (see apply_relax's call order in simulation.f90) -- so RHOG must be recomputed locally
+      !> from whichever snapshot is current: live (pVF,pQ) in pass 1/negotiate, frozen (pVF0,pQ0)
+      !> in pass 2.
       real(WP) function rhoG_at(ci,cj,ck,vf,q) result(rg)
          integer, intent(in) :: ci,cj,ck
          real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
@@ -4052,8 +3367,25 @@ contains
             rg=0.0_WP
          end if
       end function rhoG_at
-      !> Median RHOG over a 2-ring shell of VF-eligible neighbours; excludes a bit-identical
-      !> periodic self-image (thin-domain wrap). -1 if no valid neighbour.
+      !> Median RHOG among a 2-ring shell (each of the 6 axis directions, at distance 1 AND 2 --
+      !> 12 candidates) that are reservoir-eligible on the VF side alone (own VF<=cluster_VFhi,
+      !> i.e. NOT already a VF-based gas-thin claimant) with a well-defined RHOG -- deliberately
+      !> VF-only so the reference set can never itself already be density-flagged (avoids
+      !> circularity). Widened from a 1-ring (face-neighbour-only) reference after Session 20 found
+      !> the 1-ring version topped out around a 1.2-1.5x ratio on the one known-bad cell traced --
+      !> not enough margin over K to fire without likely false-positiving on ordinary healthy
+      !> gradients -- because the whole local front compounds together, diluting even the widened
+      !> reference; distance-2 needs this%nover>=2 ghost cells on VF/Q, already guaranteed
+      !> (this%nover=max(this%nover,2), set at initialize). Returns -1 if no such neighbour exists.
+      !> Skips a "neighbour" that's actually the same cell -- happens for this case's thin (nz=1),
+      !> periodic-in-z domain, where the z-faces wrap a cell onto itself. The wrap is via ghost-fill
+      !> (a memory copy from the same source cell into a distinctly-indexed ghost location), so an
+      !> INDEX check (ia2.eq.ci etc.) does NOT catch it -- k=-1 and k=0 are different indices even
+      !> though they hold identical data. Detect it by VALUE instead (bit-identical VF and gas
+      !> payload -- astronomically unlikely for two genuinely different physical cells, and the
+      !> degenerate VF=1/VF=0 cases that WOULD coincide are already excluded by the checks below).
+      !> Without this guard the self-reference drags the median toward the cell's OWN RHOG, silently
+      !> killing the excess signal in exactly the VF-mid-range region this trigger exists to catch.
       real(WP) function rhoG_ref(ci,cj,ck,vf,q) result(ref)
          integer, intent(in) :: ci,cj,ck
          real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
@@ -4077,116 +3409,230 @@ contains
             end do
             vals(pp+1)=tmp
          end do
-         if (mod(nvalid,2).eq.1) then; ref=vals(nvalid/2+1)
-         else; ref=0.5_WP*(vals(nvalid/2)+vals(nvalid/2+1)); end if
+         if (mod(nvalid,2).eq.1) then
+            ref=vals(nvalid/2+1)
+         else
+            ref=0.5_WP*(vals(nvalid/2)+vals(nvalid/2+1))
+         end if
       end function rhoG_ref
-      !> Fractional RHOG excess over cluster_rhoG_K times the local reference.
+      !> Fractional RHOG excess over cluster_rhoG_K times the local reference (rhoG_ref); 0 if the
+      !> reference is unavailable or this cell's own RHOG doesn't exceed the K-scaled ceiling --
+      !> this is the density-spike half of gclaim's OR condition.
       real(WP) function rhoG_excess_frac(ci,cj,ck,vf,q) result(ex)
          integer, intent(in) :: ci,cj,ck
          real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
          real(WP) :: ref,ceil
-         ex=0.0_WP; ref=rhoG_ref(ci,cj,ck,vf,q)
+         ex=0.0_WP
+         ref=rhoG_ref(ci,cj,ck,vf,q)
          if (ref.le.0.0_WP) return
          ceil=this%cluster_rhoG_K*ref
          ex=max(rhoG_at(ci,cj,ck,vf,q)-ceil,0.0_WP)/ceil
       end function rhoG_excess_frac
-      !> Pass A Need: 0 for a pure cell (VF outside [VFlo,VFhi]) or a well-inside-band cell.
-      real(WP) function need_geo(vf) result(nd)
-         real(WP), intent(in) :: vf
-         nd=0.0_WP
-         if (vf.lt.VFlo.or.vf.gt.VFhi) return
-         if (vf.lt.this%cluster_VFlo) then
-            nd=this%cluster_VFlo-vf
-         else if (vf.gt.this%cluster_VFhi) then
-            nd=vf-this%cluster_VFhi
-         end if
-      end function need_geo
-      !> Pass B Need: 0 if already clustered by Pass A this stage.
-      real(WP) function need_rhog(ci,cj,ck,vf,q,cs) result(nd)
+      !> A thin-liquid claimant may still LEAD pass 1's gathering if its best partner (by
+      !> partner_dir) is itself a thin-gas claimant: the liquid-starved cell has gas to
+      !> offer, the gas-starved cell has liquid to offer, so the pair is healthy together
+      !> even though neither qualifies as a reservoir alone. Only the liquid side is granted
+      !> this extra eligibility (never the gas side), so a mutual pair is never led from both ends.
+      !> Only ever called from pass 1, always against the live pVF (safe there -- pass 1 never
+      !> writes pVF, so it stays a frozen snapshot for the whole pass on its own). Meaningless in
+      !> rhog_mode (Pass B): its whole premise is pairing a VF-thin-liquid claimant that leads with
+      !> a VF-thin-gas neighbour, but in rhog_mode gclaim no longer means "thin gas by VF" -- it
+      !> means "unclustered density-spike claimant", an unrelated condition on the candidate
+      !> partner -- so this always returns false in that mode rather than evaluate a mismatched check.
+      logical function thin_pair_leader(ci,cj,ck)
+         integer, intent(in) :: ci,cj,ck
+         integer :: d
+         thin_pair_leader=.false.
+         if (use_rhog) return
+         if (.not.lclaim(ci,cj,ck,pVF)) return
+         d=partner_dir(ci,cj,ck,pVF,pQ,pS)
+         if (d.eq.0) return
+         thin_pair_leader=gclaim(ci+foff(1,d),cj+foff(2,d),ck+foff(3,d),pVF,pQ,pS)
+      end function thin_pair_leader
+      !> Best-partner direction for a claimant: liquid reservoir (highest VF) if thin liquid,
+      !> gas reservoir (lowest VF) if thin gas OR density-triggered (gclaim's OR condition) --
+      !> the gas-side branch gate is gclaim itself (not a raw VF compare) so a density-only
+      !> claimant (own VF still below cluster_VFhi) still gets a search direction; the neighbour
+      !> ranking inside stays VF-only (lowest-VF = most gas to donate) either way. 0 if not a
+      !> claimant or no qualifying neighbour. Takes vf,q,cs explicitly (see lclaim) so pass 1 and
+      !> pass 2 can be made to agree exactly. In rhog_mode the liquid-reservoir branch is skipped
+      !> unconditionally -- a density-spike claimant can sit at ANY VF (RHOG is defined across the
+      !> whole range), so it always needs a GAS-rich partner regardless of its own VF, never a
+      !> liquid-rich one; only gclaim's rhog-mode gate decides eligibility here.
+      integer function partner_dir(ci,cj,ck,vf,q,cs) result(d)
          integer, intent(in) :: ci,cj,ck
          real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
-         nd=0.0_WP
-         if (cs(ci,cj,ck,1).ge.0.5_WP) return
-         nd=rhoG_excess_frac(ci,cj,ck,vf,q)
-      end function need_rhog
-      real(WP) function calc_need(ci,cj,ck,vf,q,cs) result(nd)
-         integer, intent(in) :: ci,cj,ck
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
-         if (use_rhog) then
-            nd=need_rhog(ci,cj,ck,vf,q,cs)
-         else
-            nd=need_geo(vf(ci,cj,ck,1))
+         integer :: g; real(WP) :: vc,vm,vv
+         logical :: own_gclaim
+         d=0; vc=vf(ci,cj,ck,1)
+         if (use_rhog) then; own_gclaim=claimant_lookup(ci,cj,ck,pRGC)
+         else; own_gclaim=gclaim(ci,cj,ck,vf,q,cs); end if
+         if (.not.use_rhog.and.vc.lt.this%cluster_VFlo) then
+            vm=this%cluster_VFlo
+            do g=1,6
+               vv=vf(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
+               if (vv.gt.this%cluster_VFlo.and.vv.gt.vm) then; vm=vv; d=g; end if
+            end do
+         else if (own_gclaim) then
+            vm=this%cluster_VFhi
+            do g=1,6
+               vv=vf(ci+foff(1,g),cj+foff(2,g),ck+foff(3,g),1)
+               if (vv.lt.this%cluster_VFhi.and.vv.lt.vm) then; vm=vv; d=g; end if
+            end do
          end if
-      end function calc_need
-      !> Bit-identical periodic self-image at face g (thin-domain wrap) -- never a valid partner.
-      logical function is_self_wrap(ci,cj,ck,g,vf,q) result(l)
-         integer, intent(in) :: ci,cj,ck,g
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
-         integer :: ia2,ja2,ka2
-         ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
-         l=(vf(ia2,ja2,ka2,1).eq.vf(ci,cj,ck,1).and.q(ia2,ja2,ka2,2).eq.q(ci,cj,ck,2))
-      end function is_self_wrap
-      !> Symmetric edge score: -1 if invalid (blueprint's Healthy-Healthy/Starved-* guards).
-      real(WP) function score(needA,needB,vfA,vfB) result(sc)
-         real(WP), intent(in) :: needA,needB,vfA,vfB
-         sc=-1.0_WP
-         if (max(needA,needB).le.0.0_WP) return
-         if (vfA.lt.this%cluster_VFlo.and.vfB.lt.this%cluster_VFlo) return
-         if (vfA.gt.this%cluster_VFhi.and.vfB.gt.this%cluster_VFhi) return
-         if (use_rhog) then
-            sc=max(needA,needB)*1000.0_WP+(1.0_WP-min(vfA,vfB))
-         else
-            sc=max(needA,needB)*1000.0_WP-abs(0.5_WP-0.5_WP*(vfA+vfB))
-         end if
-      end function score
-      !> Best still-free, non-self-wrap face by symmetric score; 0 if none.
-      integer function best_face(ci,cj,ck,vf,q,nd,tk) result(g)
+      end function partner_dir
+      !> Dispatch for pass 1/2's pairing test: cap_redist/geo_redist_multi keep today's greedy
+      !> partner_dir unchanged (they accept every qualifying neighbour, no one-member cap, so they
+      !> never had the stranding problem below); geo_redist_shared instead reads
+      !> negotiate_shared_pairing's precomputed symmetric match (pmt), since its one-member cap
+      !> means WHICH neighbour gets the slot actually matters.
+      !> The else branch below can be called with ci,cj,ck already 1 ring away from pass 1's own loop
+      !> position (member-acceptance loop's pair_match(ia,ja,ka,...) call) -- partner_dir now reads
+      !> the precomputed rgclaim lookup for its own-position claimant check in rhog_mode instead of
+      !> calling gclaim() live, avoiding the compounding-past-nover=2 hop that used to SIGBUS here.
+      integer function pair_match(ci,cj,ck,vf,q,cs,pmt) result(d)
          integer, intent(in) :: ci,cj,ck
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,nd,tk
-         integer :: f,ia2,ja2,ka2
-         real(WP) :: sc,best
-         g=0; best=-1.0_WP
-         do f=1,6
-            ia2=ci+foff(1,f); ja2=cj+foff(2,f); ka2=ck+foff(3,f)
-            if (tk(ia2,ja2,ka2,1).gt.0.5_WP) cycle
-            if (is_self_wrap(ci,cj,ck,f,vf,q)) cycle
-            sc=score(nd(ci,cj,ck,1),nd(ia2,ja2,ka2,1),vf(ci,cj,ck,1),vf(ia2,ja2,ka2,1))
-            if (sc.gt.best) then
-               best=sc; g=f
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs,pmt
+         if (this%redist_method.eq.geo_redist_shared) then
+            d=nint(pmt(ci,cj,ck,1))
+         else
+            d=partner_dir(ci,cj,ck,vf,q,cs)
+         end if
+      end function pair_match
+      !> Best still-available reservoir neighbour for a claimant, ranked exactly like partner_dir
+      !> (most extreme qualifying VF) but restricted to neighbours with takenf=0 -- used only by
+      !> negotiate_shared_pairing's round loop, where availability shrinks each round. Bounds are
+      !> copied verbatim from partner_dir, including its ONE-sided checks (vv.gt.cluster_VFlo with
+      !> no upper bound; vv.lt.cluster_VFhi with no lower bound) -- a pure cell (VF=0 or 1) is a
+      !> legitimate, even ideal, reservoir on its helpful side (maximum gas/liquid to lend), so it
+      !> must NOT be excluded here. A neighbour that's itself a wrong-side claimant can still pass
+      !> this loose check, exactly as it can in partner_dir, but never reciprocates in Phase 2 (it
+      !> only ever populates its OWN claimant-side pick, never a reservoir-side one), so the mutual
+      !> check downstream is what actually rules it out -- no extra filtering belongs here.
+      integer function best_avail_reservoir(ci,cj,ck,vf,q,cs,takenf) result(d)
+         integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs,takenf
+         integer :: g,ia2,ja2,ka2; real(WP) :: vc,vm,vv
+         d=0; vc=vf(ci,cj,ck,1)
+         if (.not.use_rhog.and.vc.lt.this%cluster_VFlo) then
+            vm=this%cluster_VFlo
+            do g=1,6
+               ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
+               if (takenf(ia2,ja2,ka2,1).gt.0.5_WP) cycle
+               vv=vf(ia2,ja2,ka2,1)
+               if (vv.gt.this%cluster_VFlo.and.vv.gt.vm) then; vm=vv; d=g; end if
+            end do
+         else if (gclaim(ci,cj,ck,vf,q,cs)) then
+            vm=this%cluster_VFhi
+            do g=1,6
+               ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
+               if (takenf(ia2,ja2,ka2,1).gt.0.5_WP) cycle
+               vv=vf(ia2,ja2,ka2,1)
+               if (vv.lt.this%cluster_VFhi.and.vv.lt.vm) then; vm=vv; d=g; end if
+            end do
+         end if
+      end function best_avail_reservoir
+      !> Best still-available (neediest) claimant neighbour for a reservoir-eligible cell --
+      !> mirror image of best_avail_reservoir, ranked by the claimant's own distance past
+      !> whichever threshold it's thin on (or, for a density-only claimant whose own VF is still
+      !> mid-range, by its fractional RHOG excess -- see rhoG_excess_frac), not by raw VF
+      !> (reservoirs don't have a "most extreme" side of their own the way claimants do).
+      integer function best_avail_claimant(ci,cj,ck,vf,q,cs,takenf) result(d)
+         integer, intent(in) :: ci,cj,ck
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs,takenf
+         integer :: g,ia2,ja2,ka2; real(WP) :: vv,need,best_need
+         d=0; best_need=0.0_WP
+         do g=1,6
+            ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
+            if (takenf(ia2,ja2,ka2,1).gt.0.5_WP) cycle
+            ! claimant() (not a raw threshold check) is essential here -- it alone applies lclaim/
+            ! gclaim's VFlo/VFhi guard, which excludes an EXACTLY pure cell (VF=0 or 1). Without
+            ! it, a pure cell's "need" hits the same capped maximum as a genuinely at-risk near-
+            ! pure claimant and wins ties against it, even though a pure cell has no RHOL/RHOG
+            ! overshoot risk at all (its missing phase isn't even computed) -- this starved the
+            ! actual at-risk claimant of the reservoir it needed. rhog_mode reads the precomputed
+            ! rgclaim lookup instead of calling claimant()/rhoG_excess_frac() directly on this
+            ! NEIGHBOUR -- doing so would hop 1 ring here then trigger ANOTHER 2-ring rhoG_ref scan
+            ! from (ia2,ja2,ka2), compounding past VF/Q's allocated ghost depth (see rgclaim above).
+            if (use_rhog) then
+               if (pRGC(ia2,ja2,ka2,1).le.0.5_WP) cycle
+               need=pRGC(ia2,ja2,ka2,2)
+            else
+               if (.not.claimant(ia2,ja2,ka2,vf,q,cs)) cycle
+               vv=vf(ia2,ja2,ka2,1)
+               if (vv.lt.this%cluster_VFlo) then
+                  need=this%cluster_VFlo-vv
+               else if (vv.gt.this%cluster_VFhi) then
+                  need=vv-this%cluster_VFhi
+               else
+                  need=rhoG_excess_frac(ia2,ja2,ka2,vf,q)
+               end if
             end if
+            if (need.gt.best_need) then; best_need=need; d=g; end if
          end do
-      end function best_face
-      !> A cluster's host is the cell whose match points to the numerically larger neighbour
-      !> (even face 2,4,6=+x,+y,+z) -- equivalent to "smaller (i,j,k)" since a match differs by
-      !> exactly 1 along exactly one axis, with no global index comparison needed.
-      logical function is_host(g) result(l)
-         integer, intent(in) :: g
-         l=(mod(g,2).eq.0)
-      end function is_host
-      !> 6-round symmetric mutual matching (deferred acceptance) -> frozen matchdir.
-      subroutine negotiate()
+      end function best_avail_claimant
+      !> Symmetric pairing negotiation for geo_redist_shared: decides, for every claimant cell,
+      !> the single reservoir-eligible neighbour (if any) it pairs with, writing the answer into
+      !> matchdir (0=unmatched, else direction 1..6) before pass 1 builds any pools. A pair (C,R)
+      !> is committed only when C's best still-available candidate is R AND R's best
+      !> still-available candidate is C -- both sides check this identical condition independently
+      !> from their own valid region, using a ghost-exchanged 'pick' field, so no cross-rank
+      !> write-back is needed and the result cannot depend on which side is considered "first"
+      !> (unlike today's partner_dir + fixed face-scan-order acceptance, still used by
+      !> cap_redist/geo_redist_multi below, which lets whichever candidate sits on a lower-numbered
+      !> face win regardless of need). Runs in rounds, each removing that round's newly-matched
+      !> cells from availability so the losers of round r get to retry against whatever's left in
+      !> round r+1. Bounded at 6 rounds = max face-degree: a cell can be out-competed for at most 5
+      !> neighbours before either matching its 6th or genuinely having none left.
+      subroutine negotiate_shared_pairing()
          type(amrex_multifab) :: taken,pick
          type(amrex_mfiter) :: mfi2
          type(amrex_box) :: bx2
-         real(WP), dimension(:,:,:,:), contiguous, pointer :: pTaken,pPick,pVFn,pQn,pNeedn,pMd
-         integer :: rr,ii,jj,kk,g,ia2,ja2,ka2
+         real(WP), dimension(:,:,:,:), contiguous, pointer :: pTaken,pPick,pVFn,pQn,pCSn,pMd
+         integer, parameter :: max_rounds=6
+         integer :: rr,g,ii,jj,kk,ia2,ja2,ka2
          call this%amr%mfab_build(lvl,taken,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
          call taken%setval(0.0_WP)
-         do rr=1,6
+         do rr=1,max_rounds
+            ! Phase 1: every still-unmatched cell ranks its best still-available neighbour --
+            ! claimants seek the most extreme-VF reservoir, reservoir-eligible cells seek the
+            ! neediest claimant -- and records it in pick
             call this%amr%mfab_build(lvl,pick,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
             call pick%setval(0.0_WP)
             call this%amr%mfiter_build(lvl,mfi2)
             do while (mfi2%next())
                pVFn=>this%VF%mf(lvl)%dataptr(mfi2); pQn=>this%Q%mf(lvl)%dataptr(mfi2)
-               pNeedn=>need%dataptr(mfi2); pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2)
+               pCSn=>cskip%dataptr(mfi2)
+               if (use_rhog) pRGC=>rgclaim%dataptr(mfi2)
+               pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2)
                bx2=mfi2%tilebox()
                do kk=bx2%lo(3),bx2%hi(3); do jj=bx2%lo(2),bx2%hi(2); do ii=bx2%lo(1),bx2%hi(1)
                   if (pTaken(ii,jj,kk,1).gt.0.5_WP) cycle
-                  pPick(ii,jj,kk,1)=real(best_face(ii,jj,kk,pVFn,pQn,pNeedn,pTaken),WP)
+                  if (claimant(ii,jj,kk,pVFn,pQn,pCSn)) then
+                     pPick(ii,jj,kk,1)=real(best_avail_reservoir(ii,jj,kk,pVFn,pQn,pCSn,pTaken),WP)
+                  else
+                     pPick(ii,jj,kk,1)=real(best_avail_claimant(ii,jj,kk,pVFn,pQn,pCSn,pTaken),WP)
+                  end if
+                  if (ii.ge.dbg_ilo.and.ii.le.dbg_ihi.and.jj.ge.dbg_jlo.and.jj.le.dbg_jhi.and.kk.ge.dbg_klo.and.kk.le.dbg_khi) then ! debug
+                     print*,'   negotiate round=',rr,' i=',ii,' j=',jj,' k=',kk,' claimant=',claimant(ii,jj,kk,pVFn,pQn,pCSn), &
+                     &         ' VF=',pVFn(ii,jj,kk,1),' pick=',nint(pPick(ii,jj,kk,1)), &
+                     &         ' RHOG=',rhoG_at(ii,jj,kk,pVFn,pQn),' ref=',rhoG_ref(ii,jj,kk,pVFn,pQn), &
+                     &         ' excess_frac=',rhoG_excess_frac(ii,jj,kk,pVFn,pQn) ! debug
+                     if (rr.eq.1) then ! debug: raw per-neighbour VF/RHOG breakdown, round 1 only
+                        do g=1,6
+                           ia2=ii+foff(1,g); ja2=jj+foff(2,g); ka2=kk+foff(3,g)
+                           print*,'      neighbour f=',g,' i=',ia2,' j=',ja2,' VF=',pVFn(ia2,ja2,ka2,1), &
+                           &      ' RHOG=',rhoG_at(ia2,ja2,ka2,pVFn,pQn),' ref-eligible=',(pVFn(ia2,ja2,ka2,1).le.this%cluster_VFhi)
+                        end do
+                     end if
+                  end if ! debug
                end do; end do; end do
             end do
             call this%amr%mfiter_destroy(mfi2)
             call pick%fill_boundary(this%amr%geom(lvl))
+            ! Phase 2: commit mutual matches -- both sides independently check the same symmetric
+            ! condition (my pick's target picks me back) using only their own valid region plus
+            ! the ghost-exchanged pick field
             call this%amr%mfiter_build(lvl,mfi2)
             do while (mfi2%next())
                pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2); pMd=>matchdir%dataptr(mfi2)
@@ -4197,7 +3643,6 @@ contains
                   ia2=ii+foff(1,g); ja2=jj+foff(2,g); ka2=kk+foff(3,g)
                   if (nint(pPick(ia2,ja2,ka2,1)).eq.fopp(g)) then
                      pMd(ii,jj,kk,1)=real(g,WP); pTaken(ii,jj,kk,1)=1.0_WP
-                     if (in_dbg_box(ii,jj,kk)) print*,'[relax_clustered] round',rr,'matched',ii,jj,kk,'dir=',g ! debug
                   end if
                end do; end do; end do
             end do
@@ -4206,114 +3651,249 @@ contains
             call amrex_multifab_destroy(pick)
          end do
          call amrex_multifab_destroy(taken)
+         ! matchdir itself is only ever written over each tile's own valid region above -- pass
+         ! 1/2 read it at NEIGHBOUR indices that can fall in another tile's ghost region, so it
+         ! needs its own sync here (once, not per round -- nothing reads it mid-negotiation)
          call matchdir%fill_boundary(this%amr%geom(lvl))
-      end subroutine negotiate
-      !> Gather host+guest pre-state (mass-weighted average), fold mixing-dissipation KE loss into
-      !> the pooled internal energies so total energy is conserved once both cells share u_clust.
-      subroutine clust_state(ih_,jh_,kh_,ig_,jg_,kg_,VFc,Qc,Pjc,u_c)
-         integer, intent(in) :: ih_,jh_,kh_,ig_,jg_,kg_
-         real(WP), intent(out) :: VFc,Pjc
-         real(WP), dimension(this%nQ), intent(out) :: Qc
-         real(WP), dimension(3), intent(out) :: u_c
-         real(WP) :: Mtot,KEtot,KEpool,Ediss
-         VFc=pVF(ih_,jh_,kh_,1)+pVF(ig_,jg_,kg_,1)
-         Qc=pQ(ih_,jh_,kh_,1:this%nQ)+pQ(ig_,jg_,kg_,1:this%nQ)
-         Pjc=this%sigma*(pCurv(ih_,jh_,kh_,1)+pCurv(ig_,jg_,kg_,1))
-         Mtot=Qc(1)+Qc(2)
-         u_c=Qc(5:7)/Mtot
-         KEtot=sum(pQ(ih_,jh_,kh_,5:7)**2)/(pQ(ih_,jh_,kh_,1)+pQ(ih_,jh_,kh_,2)) &
-         &    +sum(pQ(ig_,jg_,kg_,5:7)**2)/(pQ(ig_,jg_,kg_,1)+pQ(ig_,jg_,kg_,2))
-         KEpool=sum(Qc(5:7)**2)/Mtot
-         Ediss=max(0.0_WP,0.5_WP*(KEtot-KEpool))
-         Qc(3)=Qc(3)+Ediss*(Qc(1)/Mtot); Qc(4)=Qc(4)+Ediss*(Qc(2)/Mtot)
-         VFc=0.5_WP*VFc; Qc=0.5_WP*Qc; Pjc=0.5_WP*Pjc
-      end subroutine clust_state
-      !> Axis-aligned cell hex corners, vertex order matching cut_hex_vol's convention.
-      subroutine cell_hex(ci,cj,ck,hexout)
-         integer, intent(in) :: ci,cj,ck
+      end subroutine negotiate_shared_pairing
+      !> Shrink the common scale s (in [0,1]) as needed so this member's post-redistribution VF stays in [0,1].
+      subroutine bound_scale(VFold,wl,s)
+         real(WP), intent(in) :: VFold,wl
+         real(WP), intent(inout) :: s
+         real(WP), parameter :: eps_safe=1.0e-4_WP
+         real(WP) :: A,VFtarget
+         logical :: already_fragile
+         A=nM*wl*dVF
+         if (A.gt.0.0_WP) then; s=min(s,(1.0_WP-VFold)/A); else if (A.lt.0.0_WP) then; s=min(s,-VFold/A); end if
+         VFtarget=VFold+A
+         already_fragile=(VFold.gt.0.0_WP.and.VFold.lt.eps_safe).or.(VFold.gt.1.0_WP-eps_safe.and.VFold.lt.1.0_WP)
+         if (.not.already_fragile.and.((VFtarget.gt.0.0_WP.and.VFtarget.lt.eps_safe).or. &
+         &   (VFtarget.gt.1.0_WP-eps_safe.and.VFtarget.lt.1.0_WP))) s=0.0_WP
+         s=max(s,0.0_WP)
+      end subroutine bound_scale
+      !> 
+      subroutine redist(VFold,Qold,wl,s,VFnew,Qnew)
+         real(WP), intent(in) :: VFold,wl,s
+         real(WP), dimension(this%nQ), intent(in) :: Qold
+         real(WP), intent(out) :: VFnew
+         real(WP), dimension(this%nQ), intent(out) :: Qnew
+         real(WP) :: dm
+         VFnew=VFold+nM*wl*s*dVF
+         Qnew=Qold
+         Qnew(1)=VFnew*RHOL_c; Qnew(3)=Qnew(1)*eL_c
+         if (this%liq%ns.gt.1) Qnew(this%Yl_lo:this%Yl_hi)=Qnew(1)*Yl_c
+         Qnew(2)=(1.0_WP-VFnew)*RHOG_c; Qnew(4)=Qnew(2)*eG_c
+         if (this%gas%ns.gt.1) Qnew(this%Yg_lo:this%Yg_hi)=Qnew(2)*Yg_c
+         ! Transferred mass carries u_pool; dm sums to zero across the pool (apply conserves mass)
+         dm=(Qnew(1)-Qold(1))+(Qnew(2)-Qold(2))
+         Qnew(5:7)=Qold(5:7)+dm*u_pool
+      end subroutine redist
+      !> debug: liquid/gas thermo state (RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv) from a pooled (VF,Q) pair
+      subroutine get_thermo(VFc,Qc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv)
+         real(WP), intent(in) :: VFc
+         real(WP), dimension(this%nQ), intent(in) :: Qc
+         real(WP), intent(out) :: RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
+         real(WP), dimension(2) :: y
+         RHOL=0.0_WP; RHOG=0.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP; eL=0.0_WP; eG=0.0_WP; Yv=0.0_WP
+         if (VFc.gt.0.0_WP.and.Qc(1).gt.0.0_WP) then
+            RHOL=Qc(1)/VFc
+            eL=Qc(3)/Qc(1)
+            PL=this%liq%get_p_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
+            TL=this%liq%get_T_from_p_rho(p=PL,rho=RHOL,y=[1.0_WP])
+         end if
+         if (VFc.lt.1.0_WP.and.Qc(2).gt.0.0_WP) then
+            RHOG=Qc(2)/(1.0_WP-VFc)
+            eG=Qc(4)/Qc(2)
+            Yv=Qc(8)/Qc(2)
+            y=[Yv,1.0_WP-Yv]
+            PG=this%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=y)
+            TG=this%gas%get_T_from_p_rho(p=PG,rho=RHOG,y=y)
+         end if
+      end subroutine get_thermo
+      !> 
+      subroutine apply_redist(VFold,Qold,valid,hexm,nrmm,dm_,wl,VFnew,Qnew)
+         real(WP), intent(in) :: VFold,wl,dm_
+         real(WP), dimension(this%nQ), intent(in) :: Qold
+         logical, intent(in) :: valid
+         real(WP), dimension(3,8), intent(in) :: hexm
+         real(WP), dimension(3), intent(in) :: nrmm
+         real(WP), intent(out) :: VFnew
+         real(WP), dimension(this%nQ), intent(out) :: Qnew
+         select case (this%redist_method)
+         case (cap_redist)
+            call redist(VFold,Qold,wl,s,VFnew,Qnew)
+         case (geo_redist_multi)
+            VFnew=eval_VFnew(valid,hexm,nrmm,dm_,delta,VFold)
+            call redist_geo(Qold,VFnew,Qnew)
+         case (geo_redist_shared)
+            ! Always cut (valid=.true.) -- a member with no PLIC of its own is still cut by the
+            ! pool's shared plane, which is exactly what lets a pure cell pick up a genuinely new
+            ! interface through clustering (unlike geo_redist_multi, which excludes it entirely)
+            VFnew=eval_VFnew(.true.,hexm,shared_nrm,shared_d,0.0_WP,VFold)
+            call redist_geo(Qold,VFnew,Qnew)
+         case default
+            call die('[cluster_relax] unknown redist_method')
+         end select
+      end subroutine apply_redist
+      !> Build an axis-aligned cell's 8 hex corners from its (lo,hi) box, in the vertex ordering
+      !> cut_hex_vol expects (matching apply_relax's own hex construction for the per-cell PLIC
+      !> reposition, amrmpcomp_class.f90:~3308)
+      subroutine build_hex(clo,chi,hexout)
+         real(WP), dimension(3), intent(in) :: clo,chi
          real(WP), dimension(3,8), intent(out) :: hexout
-         real(WP), dimension(3) :: clo,chi
-         clo=[this%amr%xlo+real(ci,WP)*dx,this%amr%ylo+real(cj,WP)*dy,this%amr%zlo+real(ck,WP)*dz]
-         chi=[this%amr%xlo+real(ci+1,WP)*dx,this%amr%ylo+real(cj+1,WP)*dy,this%amr%zlo+real(ck+1,WP)*dz]
          hexout(:,1)=[clo(1),clo(2),clo(3)]; hexout(:,2)=[chi(1),clo(2),clo(3)]
          hexout(:,3)=[chi(1),chi(2),clo(3)]; hexout(:,4)=[clo(1),chi(2),clo(3)]
          hexout(:,5)=[clo(1),clo(2),chi(3)]; hexout(:,6)=[chi(1),clo(2),chi(3)]
          hexout(:,7)=[chi(1),chi(2),chi(3)]; hexout(:,8)=[clo(1),chi(2),chi(3)]
-      end subroutine cell_hex
-      !> One shared PLIC plane for the cluster: VF-weighted averaged normal (a pure side
-      !> contributes zero weight, so it never needs special-casing), closed-form offset on the
-      !> host+guest union box for the post-relax pooled VF.
-      subroutine clust_plane(ih_,jh_,kh_,ig_,jg_,kg_,VFc,nrm_out,d_out)
-         integer, intent(in) :: ih_,jh_,kh_,ig_,jg_,kg_
-         real(WP), intent(in) :: VFc
-         real(WP), dimension(3), intent(out) :: nrm_out
-         real(WP), intent(out) :: d_out
-         real(WP) :: wh,wg,magn
+      end subroutine build_hex
+      !> Sum of VF over every geometrically-mobile pool member (valid PLIC) with each one's own
+      !> interface plane advanced by delta_ along its own fixed normal; members with no valid
+      !> interface (pure cells) don't appear here -- their VF is fixed, folded into geo_split's
+      !> target instead. Host-associated: valid0,hex0,nrm0,d0 (own), acc,validf,hexf,nrmf,df
+      !> (members), cell_vol.
+      real(WP) function mobile_VF_sum(delta_) result(vsum)
+         real(WP), intent(in) :: delta_
+         real(WP) :: vl,vg
+         real(WP), dimension(3) :: bl,bg
+         integer :: ff
+         vsum=0.0_WP
+         if (valid0) then
+            call cut_hex_vol(hex0,[nrm0(1),nrm0(2),nrm0(3),d0+delta_],vl,vg,bl,bg)
+            vsum=vsum+vl/cell_vol
+         end if
+         do ff=1,6
+            if (acc(ff).and.validf(ff)) then
+               call cut_hex_vol(hexf(:,:,ff),[nrmf(1,ff),nrmf(2,ff),nrmf(3,ff),df(ff)+delta_],vl,vg,bl,bg)
+               vsum=vsum+vl/cell_vol
+            end if
+         end do
+      end function mobile_VF_sum
+      !> A pure reservoir (valid0=.false.) has no PLIC of its own to advance. Claimants are never
+      !> pure (lclaim/gclaim only accept cells strictly inside the mixture band), and a pool always
+      !> has at least one, so borrow the VF-weighted-dominant claimant's normal as the reservoir's
+      !> orientation, then place its own offset with get_plane_dist so it exactly reproduces the
+      !> reservoir's own current (pure) VF at delta=0.
+      subroutine seed_reservoir_plane()
+         real(WP), dimension(3) :: nrm_guess
+         real(WP) :: wf,wbest,magn
+         integer :: ff,fbest
+         if (valid0) return
+         nrm_guess=0.0_WP; wbest=-1.0_WP; fbest=0
+         do ff=1,6
+            if (.not.acc(ff)) cycle
+            wf=min(mVF(ff),1.0_WP-mVF(ff))
+            nrm_guess=nrm_guess+wf*nrmf(:,ff)
+            if (wf.gt.wbest) then; wbest=wf; fbest=ff; end if
+         end do
+         magn=sqrt(sum(nrm_guess**2))
+         if (magn.gt.1.0e-30_WP) then; nrm_guess=nrm_guess/magn; else; nrm_guess=nrmf(:,fbest); end if
+         nrm0=nrm_guess
+         d0=get_plane_dist(nrm0,hex0(:,1),hex0(:,7),pVF(i,j,k,1))
+         valid0=.true.
+      end subroutine seed_reservoir_plane
+      !> Solve for the ONE shared physical interface displacement delta such that advancing every
+      !> pool member's own PLIC plane by delta reproduces the pool's required total VF change
+      !> exactly (bisection on mobile_VF_sum, monotonic since advancing any member's plane along
+      !> its own normal can only increase its own VF). seed_reservoir_plane above guarantees every
+      !> member is valid by this point. Host-associated: nM, VFpool1, dx,dy,dz (bisection bracket),
+      !> plus everything mobile_VF_sum needs.
+      subroutine geo_split(delta_out)
+         real(WP), intent(out) :: delta_out
+         real(WP) :: target_mobile,Lmax,dlo,dhi,dmid,fmid
+         integer :: iter
+         real(WP), parameter :: tol_VF=1.0e-10_WP ! bisection exits once the VF-sum residual, relative to
+         ! target_mobile itself (the standard |error|/|reference| form), drops below this. Near
+         ! target_mobile=0 the threshold shrinks toward zero too and the loop just runs its full
+         ! course -- appropriate (a near-zero target deserves tight absolute precision), not a bug.
+         target_mobile=nM*VFpool1
+         Lmax=2.0_WP*sqrt(dx**2+dy**2+dz**2)
+         dlo=-Lmax; dhi=Lmax
+         delta_out=0.5_WP*(dlo+dhi) ! fallback if the loop below exits without ever setting it (can't happen, dhi>dlo)
+         do iter=1,60
+            dmid=0.5_WP*(dlo+dhi)
+            fmid=mobile_VF_sum(dmid)
+            delta_out=dmid
+            if (abs(fmid-target_mobile).lt.tol_VF*abs(target_mobile)) exit ! converged -- no need to keep bisecting
+            if (fmid.lt.target_mobile) then; dlo=dmid; else; dhi=dmid; end if
+         end do
+      end subroutine geo_split
+      !> The pool's one interface: VF-weighted average of the two cells' own normals, offset solved
+      !> exactly (get_plane_dist, closed-form, no iteration) for VFpool1 on the pair's real union
+      !> box -- exact because pass 1 caps geo_redist_shared pools at one member, so that union is
+      !> always a genuine hexahedron (two face-adjacent unit cells), never approximated.
+      subroutine shared_plane(shared_nrm_out,shared_d_out)
+         use amrvof_geometry, only: get_plane_dist
+         real(WP), dimension(3), intent(out) :: shared_nrm_out
+         real(WP), intent(out) :: shared_d_out
+         real(WP) :: wR,wM,magn
          real(WP), dimension(3) :: raw,lo,hi
-         real(WP), dimension(3,8) :: hexh,hexg
-         call cell_hex(ih_,jh_,kh_,hexh); call cell_hex(ig_,jg_,kg_,hexg)
-         wh=min(pVF(ih_,jh_,kh_,1),1.0_WP-pVF(ih_,jh_,kh_,1))
-         wg=min(pVF(ig_,jg_,kg_,1),1.0_WP-pVF(ig_,jg_,kg_,1))
-         raw=wh*pPLIC(ih_,jh_,kh_,1:3)+wg*pPLIC(ig_,jg_,kg_,1:3)
+         integer :: ff
+         wR=min(pVF(i,j,k,1),1.0_WP-pVF(i,j,k,1))
+         raw=wR*nrm0
+         lo=hex0(:,1); hi=hex0(:,7)
+         do ff=1,6
+            if (.not.acc(ff)) cycle
+            wM=min(mVF(ff),1.0_WP-mVF(ff))
+            raw=raw+wM*nrmf(:,ff)
+            lo=min(lo,hexf(:,1,ff)); hi=max(hi,hexf(:,7,ff))
+         end do
          magn=sqrt(sum(raw**2))
-         if (magn.gt.1.0e-30_WP) then; nrm_out=raw/magn; else; nrm_out=[1.0_WP,0.0_WP,0.0_WP]; end if
-         lo=min(hexh(:,1),hexg(:,1)); hi=max(hexh(:,7),hexg(:,7))
-         d_out=get_plane_dist(nrm_out,lo,hi,VFc)
-      end subroutine clust_plane
-      !> Cut one cell's own hex with the cluster's shared plane; snap a fragile sliver result to
-      !> the nearer exact boundary, unless the cell started there already.
-      real(WP) function cut_clust(hexm,nrm,doff,VFold) result(VFnew)
+         if (magn.gt.1.0e-30_WP) then
+            shared_nrm_out=raw/magn
+         else
+            shared_nrm_out=[1.0_WP,0.0_WP,0.0_WP] ! degenerate: no member has a real interface
+         end if
+         shared_d_out=get_plane_dist(shared_nrm_out,lo,hi,VFpool1)
+      end subroutine shared_plane
+      !> This member's new VF: geometric (interface advanced by delta_ along its own normal) if it
+      !> has a valid PLIC, else unchanged (pure cell, no interface to move). Also snaps a result
+      !> that lands in the "fragile sliver" band (0,eps_safe)/(1-eps_safe,1) to the nearer exact
+      !> boundary, unless the member already started there -- same danger the old bound_scale's
+      !> docstring above describes (get_dQdt's barycenter projection dividing by a near-zero
+      !> absolute phasic volume), but resolved here by rounding to completion rather than vetoing
+      !> the whole pool's change, since the geometric solve (unlike the old linear scheme) has no
+      !> single shared "s" left to zero out.
+      real(WP) function eval_VFnew(valid,hexm,nrmm,dm_,delta_,VFold) result(VFnew)
+         logical, intent(in) :: valid
          real(WP), dimension(3,8), intent(in) :: hexm
-         real(WP), dimension(3), intent(in) :: nrm
-         real(WP), intent(in) :: doff,VFold
+         real(WP), dimension(3), intent(in) :: nrmm
+         real(WP), intent(in) :: dm_,delta_,VFold
          real(WP), parameter :: eps_safe=1.0e-4_WP
          real(WP) :: vl,vg
          real(WP), dimension(3) :: bl,bg
          logical :: already_fragile
-         call cut_hex_vol(hexm,[nrm(1),nrm(2),nrm(3),doff],vl,vg,bl,bg)
-         VFnew=vl/cell_vol
+         if (valid) then
+            call cut_hex_vol(hexm,[nrmm(1),nrmm(2),nrmm(3),dm_+delta_],vl,vg,bl,bg)
+            VFnew=vl/cell_vol
+         else
+            VFnew=VFold
+         end if
          already_fragile=(VFold.gt.0.0_WP.and.VFold.lt.eps_safe).or.(VFold.gt.1.0_WP-eps_safe.and.VFold.lt.1.0_WP)
          if (.not.already_fragile) then
             if (VFnew.gt.0.0_WP.and.VFnew.lt.eps_safe) VFnew=0.0_WP
             if (VFnew.gt.1.0_WP-eps_safe.and.VFnew.lt.1.0_WP) VFnew=1.0_WP
          end if
-      end function cut_clust
-      !> Rebuild one cell's Q from its new VF and the cluster's shared post-relax intensive state;
-      !> transferred mass carries u_clust so momentum stays consistent with apply()'s conservation.
-      function redist_clust(Qold,VFnew,RHOL_c,eL_c,RHOG_c,eG_c,Yv_c,u_c) result(Qnew)
+      end function eval_VFnew
+      !> Rebuild a member's Q from its geometrically-determined VFnew and the CLUSTER's shared
+      !> post-relax intensive state (RHOL_c,eL_c,Yl_c / RHOG_c,eG_c,Yg_c; host-associated), exactly
+      !> as the old redist() above did -- this part of the design is unchanged, only the source of
+      !> VFnew is different now (geometric, not capacity-weight+s)
+      subroutine redist_geo(Qold,VFnew,Qnew)
          real(WP), dimension(this%nQ), intent(in) :: Qold
-         real(WP), intent(in) :: VFnew,RHOL_c,eL_c,RHOG_c,eG_c,Yv_c
-         real(WP), dimension(3), intent(in) :: u_c
-         real(WP), dimension(this%nQ) :: Qnew
+         real(WP), intent(in) :: VFnew
+         real(WP), dimension(this%nQ), intent(out) :: Qnew
          real(WP) :: dm
          Qnew=Qold
          Qnew(1)=VFnew*RHOL_c; Qnew(3)=Qnew(1)*eL_c
+         if (this%liq%ns.gt.1) Qnew(this%Yl_lo:this%Yl_hi)=Qnew(1)*Yl_c
          Qnew(2)=(1.0_WP-VFnew)*RHOG_c; Qnew(4)=Qnew(2)*eG_c
-         Qnew(this%Yg_lo)=Qnew(2)*Yv_c
+         if (this%gas%ns.gt.1) Qnew(this%Yg_lo:this%Yg_hi)=Qnew(2)*Yg_c
          dm=(Qnew(1)-Qold(1))+(Qnew(2)-Qold(2))
-         Qnew(5:7)=Qold(5:7)+dm*u_c
-      end function redist_clust
-      !> Debug-only thermo readout for a (VF,Q) pair; single-species liquid, vapor+air gas.
-      subroutine get_thermo(VFc,Qc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv)
-         real(WP), intent(in) :: VFc
-         real(WP), dimension(this%nQ), intent(in) :: Qc
-         real(WP), intent(out) :: RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv
-         RHOL=0.0_WP; RHOG=0.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP; eL=0.0_WP; eG=0.0_WP; Yv=0.0_WP
-         if (VFc.gt.0.0_WP.and.Qc(1).gt.0.0_WP) then
-            RHOL=Qc(1)/VFc; eL=Qc(3)/Qc(1)
-            PL=this%liq%get_p_from_rho_e(RHOL,eL,[1.0_WP])
-            TL=this%liq%get_T_from_rho_e(RHOL,eL,[1.0_WP])
-         end if
-         if (VFc.lt.1.0_WP.and.Qc(2).gt.0.0_WP) then
-            RHOG=Qc(2)/(1.0_WP-VFc); eG=Qc(4)/Qc(2)
-            Yv=Qc(this%Yg_lo)/Qc(2)
-            PG=this%gas%get_p_from_rho_e(RHOG,eG,[Yv,1.0_WP-Yv])
-            TG=this%gas%get_T_from_rho_e(RHOG,eG,[Yv,1.0_WP-Yv])
-         end if
-      end subroutine get_thermo
-   end subroutine relax_clustered
+         Qnew(5:7)=Qold(5:7)+dm*u_pool
+      end subroutine redist_geo
+   end subroutine cluster_relax
 
-   !> Apply relaxation to mixture cells. Two relax_clustered passes now, not one:
+   !> Apply relaxation to mixture cells. Two cluster_relax passes now, not one:
    !>   Pass A (VF-based, today's rule) -- pools thin-VF cells with a neighbour, then every
    !>     still-untouched cell is relaxed individually. This is exactly the old single-pass
    !>     behaviour, unchanged.
@@ -4321,7 +3901,7 @@ contains
    !>     PLIC/barycenter/ghost sync, so every cell already holds its REAL post-relaxation state
    !>     (not a stale pre-relax or throwaway-probed one) by the time RHOG ratios are evaluated.
    !>     Only cells Pass A did NOT cluster (cskip comp 1 still 0) are eligible as NEW claimants;
-   !>     any cell (clustered or not) can still serve as a reservoir. Pass B's own relax_clustered
+   !>     any cell (clustered or not) can still serve as a reservoir. Pass B's own cluster_relax
    !>     call relaxes whatever it pools directly -- no further individual relax step after it,
    !>     just another PLIC/barycenter pass for whatever it touched.
    subroutine apply_relax(this,dt,time)
@@ -4345,12 +3925,12 @@ contains
       lvl=this%amr%maxlvl
       dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl)
       cell_vol=this%amr%cell_vol(lvl)
-      ! cskip: comp 1 = 1.0 for a cell already relaxed by relax_clustered this stage (either pass --
+      ! cskip: comp 1 = 1.0 for a cell already relaxed by cluster_relax this stage (either pass --
       !        skip Pass A's individual relax for it; Pass B's own gclaim rhog_mode check also
       !        reads this comp, via cs, to mean "not yet clustered"),
-      !        comp 2 = VF snapshot from BEFORE Pass A's relax_clustered ran (so oldmix below
+      !        comp 2 = VF snapshot from BEFORE Pass A's cluster_relax ran (so oldmix below
       !        reflects true STAGE-entry state throughout both passes, not just Pass A's),
-      !        comp 3 = 1.0 if relax_clustered (either pass) already wrote
+      !        comp 3 = 1.0 if cluster_relax (geo_redist_shared, either pass) already wrote
       !        this%plic for this cell this stage -- guards the "randomize normal if previously
       !        pure" step below from clobbering a freshly-built shared PLIC plane.
       ! nover=2 (not 0): Pass B's gclaim/rhoG_ref read cskip/VF/Q at up to 2-ring neighbour offsets
@@ -4364,7 +3944,7 @@ contains
       call this%stranded%setval(val=0.0_WP,lvl=lvl)
       call snapshot_VF_into_cskip()
       ! ---- Pass A: VF-based clustering (unchanged) + individual relax for everything else ----
-      call this%relax_clustered(dt=dt,time=time,cskip=cskip)
+      call this%cluster_relax(dt=dt,time=time,cskip=cskip)
       call relax_unclustered()
       call postprocess_plic()
       ! Sync VF/Q (individual relax above changed them) and cskip's ghosts, so Pass B's neighbour
@@ -4375,7 +3955,7 @@ contains
       call cskip%fill_boundary(this%amr%geom(lvl))
       ! ---- Pass B: RHOG-based clustering on cells Pass A left untouched ----
       if (this%cluster_rhog_on) then
-         call this%relax_clustered(dt=dt,time=time,cskip=cskip,rhog_mode=.true.)
+         call this%cluster_relax(dt=dt,time=time,cskip=cskip,rhog_mode=.true.)
          call dissolve_stranded_gas()
          call postprocess_plic()
       end if
@@ -4403,7 +3983,7 @@ contains
          end do
          call this%amr%mfiter_destroy(mfi)
       end subroutine snapshot_VF_into_cskip
-      !> Relax every cell relax_clustered (Pass A) did not already pool -- unchanged from the old
+      !> Relax every cell cluster_relax (Pass A) did not already pool -- unchanged from the old
       !> single-pass behaviour, just its own standalone loop now (Pass B needs the PLIC/barycenter
       !> pass to run for everyone before it starts, so this can no longer be fused with that).
       subroutine relax_unclustered()
@@ -4425,7 +4005,7 @@ contains
                   if (pS(i,j,k,1).lt.0.5_WP) then
                      print*,'inside apply_relax Pass A, relax%apply below runs on THIS CELL ALONE (not clustered)'
                   else
-                     print*,'inside apply_relax Pass A, this cell was already relaxed as part of a CLUSTER by relax_clustered above'
+                     print*,'inside apply_relax Pass A, this cell was already relaxed as part of a CLUSTER by cluster_relax above'
                      print*,'   skipping the standalone relax%apply call below'
                   end if
                end if
@@ -4545,8 +4125,8 @@ contains
                   cycle
                end if
                ! If mixture cell, post-process PLIC and barycenters
-               ! (skip the random-normal seed if relax_clustered already built a real shared normal
-               ! for this cell this stage -- pS(i,j,k,3))
+               ! (skip the random-normal seed if cluster_relax already built a real shared normal
+               ! for this cell this stage -- pS(i,j,k,3), set only under geo_redist_shared)
                if (.not.oldmix.and.pS(i,j,k,3).lt.0.5_WP) then
                   rand_dir=[random_uniform(-1.0_WP,1.0_WP),random_uniform(-1.0_WP,1.0_WP),random_uniform(-1.0_WP,1.0_WP)]
                   pPLIC(i,j,k,1:3)=normalize(rand_dir)
