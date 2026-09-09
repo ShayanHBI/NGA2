@@ -87,3 +87,20 @@ Max time   : 15
 Output period     : 0.1
 Checkpoint period : 1
 Restart from      : 
+
+# Relaxation clustering
+Thermal clustering    : .true.
+Mechanical clustering : .true.
+Dissolve stranded gas : .true.
+RHOG clustering       : .false.
+
+# Diagnostics
+Diag stride : 1000000
+
+# Debug trace box
+Debug ilo : 871
+Debug ihi : 871
+Debug jlo : 1033
+Debug jhi : 1033
+Debug klo : 0
+Debug khi : 0

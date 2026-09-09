@@ -53,7 +53,7 @@ VIEW_YLIM = (-6, 6)
 ROTATE_CCW = True
 
 CMAP = "jet"
-INTERFACE_COLOR = "white"
+INTERFACE_COLOR = "black"
 INTERFACE_LINEWIDTH = 0.025
 
 # Paper-style figure geometry (inches). Each field gets its own panel and its

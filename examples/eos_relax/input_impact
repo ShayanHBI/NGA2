@@ -13,4 +13,4 @@ Air specific heat capacity ratio                 : 1.3
 Air reference energy shift                       : 0
 Air reference entropy shift                      : 0
 Cavitation pressure threshold                    : -43.4883592
-Condensation temperature tolerance               : 0.075
+Condensation temperature tolerance               : 0.1

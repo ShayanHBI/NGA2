@@ -1,6 +1,6 @@
 !> Single-cell test for the PTg relaxation model, standalone against the
 !> thermo-branch EOS/relaxation library (no AMReX/MPI needed).
-!> Reads EOS parameters from input_NASG and input_SG, test/sweep conditions
+!> Reads EOS parameters from input_impact and input_SG, test/sweep conditions
 !> from input, then writes saturation-curve CSVs for comparison with
 !> IAPWS-IF97 (NGA2_VS_IAPWS.py).
 !>
@@ -93,22 +93,22 @@ program eos_relax
       real(WP) :: CvA,GammaA,      qA,qpA
       real(WP) :: p_cav,Tctol
 
-      call read_real('input_NASG','Liquid specific heat capacity at constant volume',CvL)
-      call read_real('input_NASG','Liquid specific heat capacity ratio',             GammaL)
-      call read_real('input_NASG','Liquid reference energy shift',                   qL)
-      call read_real('input_NASG','Liquid reference entropy shift',                  qpL)
-      call read_real('input_NASG','Liquid stiffening pressure',                      PinfL)
-      call read_real('input_NASG','Liquid co-volume',                                bL)
-      call read_real('input_NASG','Vapor specific heat capacity at constant volume', CvV)
-      call read_real('input_NASG','Vapor specific heat capacity ratio',              GammaV)
-      call read_real('input_NASG','Vapor reference energy shift',                    qV)
-      call read_real('input_NASG','Vapor reference entropy shift',                   qpV)
-      call read_real('input_NASG','Air specific heat capacity at constant volume',   CvA)
-      call read_real('input_NASG','Air specific heat capacity ratio',                GammaA)
-      call read_real('input_NASG','Air reference energy shift',                      qA)
-      call read_real('input_NASG','Air reference entropy shift',                     qpA)
-      call read_real('input_NASG','Cavitation pressure threshold',                   p_cav)
-      call read_real('input_NASG','Condensation temperature tolerance',              Tctol)
+      call read_real('input_impact','Liquid specific heat capacity at constant volume',CvL)
+      call read_real('input_impact','Liquid specific heat capacity ratio',             GammaL)
+      call read_real('input_impact','Liquid reference energy shift',                   qL)
+      call read_real('input_impact','Liquid reference entropy shift',                  qpL)
+      call read_real('input_impact','Liquid stiffening pressure',                      PinfL)
+      call read_real('input_impact','Liquid co-volume',                                bL)
+      call read_real('input_impact','Vapor specific heat capacity at constant volume', CvV)
+      call read_real('input_impact','Vapor specific heat capacity ratio',              GammaV)
+      call read_real('input_impact','Vapor reference energy shift',                    qV)
+      call read_real('input_impact','Vapor reference entropy shift',                   qpV)
+      call read_real('input_impact','Air specific heat capacity at constant volume',   CvA)
+      call read_real('input_impact','Air specific heat capacity ratio',                GammaA)
+      call read_real('input_impact','Air reference energy shift',                      qA)
+      call read_real('input_impact','Air reference entropy shift',                     qpA)
+      call read_real('input_impact','Cavitation pressure threshold',                   p_cav)
+      call read_real('input_impact','Condensation temperature tolerance',              Tctol)
       call liq%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
       call gas%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,qA],qp=[qpV,qpA], &
       &                    species_names=['vapor','air  '],name='gas')

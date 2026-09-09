@@ -54,6 +54,7 @@ module simulation
    !> Relaxation model
    type(relax_igmix_nasg), target :: relax_model
    character(len=str_medium) :: relaxation_type,case_name
+   integer :: nsteps_diag                            !< diag run: bounded number of steps (-1 = unlimited)
    real(WP) :: p_cav_cof
 
    !> Flow parameters
@@ -588,6 +589,8 @@ contains
             call io%get_scalar('dt',time%dt)
             time%t=restart_time
             time%n=restart_step
+            call param_read('Max steps',nsteps_diag,default=-1)
+            if (nsteps_diag.gt.0) time%nmax=restart_step+nsteps_diag   ! diag run: bounded step count
          end if
       end block initialize_timetracker
 
@@ -627,7 +630,20 @@ contains
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
          ! Set relaxation model for the flow solver
          fs%relax=>relax_model
-         fs%cluster_rhog_on=.true.
+         fs%cluster_on=.true.         ! diag run: clustering ON (set .false. to relax every cell alone)
+         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A1
+         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A2
+         call param_read('RHOG clustering',fs%cluster_rhog_on,default=.true.)      ! Pass B
+         call param_read('Dissolve stranded gas',fs%dissolve_on,default=.true.)
+         fs%relax_diag_on=.true.      ! diag run: write solo-vs-clustered CSV
+         call param_read('Diag stride',fs%relax_diag_stride,default=20)
+         ! debug trace box: inclusive index range the relax/cluster prints trace (empty by default)
+         call param_read('Debug ilo',dbg_ilo,default=100000000)
+         call param_read('Debug ihi',dbg_ihi,default=-100000000)
+         call param_read('Debug jlo',dbg_jlo,default=100000000)
+         call param_read('Debug jhi',dbg_jhi,default=-100000000)
+         call param_read('Debug klo',dbg_klo,default=100000000)
+         call param_read('Debug khi',dbg_khi,default=-100000000)
          ! Set initial conditions
          fs%user_init=>shockdrop_init
 
@@ -890,6 +906,7 @@ contains
             call time%adjust_dt()
          end if
          call time%increment()
+         fs%relax_diag_step=time%n   ! diag: drives relax_diag_stride
 
          ! Remember old state
          call fs%store_old()

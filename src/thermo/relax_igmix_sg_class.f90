@@ -96,6 +96,7 @@ module relax_igmix_sg_class
       procedure :: dpTsatdp_lv
       procedure :: dpTsatdlnp
       procedure :: get_Tsat
+      procedure :: get_psat
       procedure :: get_pvsat
       procedure :: get_xv
    end type relax_igmix_sg
@@ -614,16 +615,29 @@ contains
             else
                if (dbg_cell) print*,'pure gas not stable: conv=',conv,' TG=',TG,' Tsat=',Tsat
             end if
-         else if (Q(8).eq.Q(2)) then
-            if (VF.gt.pure_VFhi) then
+         else if (VF.gt.pure_VFhi) then
+            ! Near-pure liquid. This path folds the WHOLE gas phase into the liquid, so it is only
+            ! valid when that gas is essentially all condensable: a cell carrying real air keeps a
+            ! gas phase however little room it has, and falls through to the general solve, which
+            ! retains the air (see boundary_all_liquid). The old gate was Q(8).eq.Q(2) -- an exact
+            ! floating-point equality on two independently advected variables, which almost never
+            ! holds, and which sat on the OUTER branch so a near-pure-liquid cell with any air
+            ! never even reached this VF test.
+            if (Q(2).gt.0.0_WP.and.Q(8).lt.(1.0_WP-Y_small)*Q(2)) then
+               if (dbg_cell) print*,'near-pure liquid but gas carries inert air -- falling through to general chem_relax'
+            else
                if (dbg_cell) print*,'attempting pure liquid'
                ! Transfer all vapor mass and energy to liquid
                rhoL=Q(1)+Q(2)
                eL=(Q(3)+Q(4))/rhoL
                pL=this%liq%get_p_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
                TL=this%liq%get_T_from_rho_e(rho=rhoL,e=eL,y=[1.0_WP])
-               pVsat=this%get_pvsat(pL,TL)
-               if (pL.ge.pVsat) then
+               ! Liquid compressed above its saturation pressure is stable -- no vapor survives.
+               ! Testing pL against get_pvsat(pL,TL) puts p on both sides of the comparison, and
+               ! pvsat grows exponentially in p, so that test stops being monotone in pressure and
+               ! calls strongly compressed liquid superheated (see get_psat).
+               call this%get_psat(TL,pVsat,conv)
+               if (conv.and.pL.ge.pVsat) then
                   VF=1.0_WP
                   Q(1)=Q(1)+Q(2)
                   Q(2)=0.0_WP
@@ -631,13 +645,11 @@ contains
                   Q(3)=Q(3)+Q(4)
                   Q(4)=0.0_WP
                   if (present(ierr)) ierr=RELAX_OK
-                  if (dbg_cell) print*,'pure liquid is stable'
+                  if (dbg_cell) print*,'pure liquid is stable: pL=',pL,' psat=',pVsat
                   return
                else
-                  if (dbg_cell) print*,'pure liquid not stable: pL=',pL,' pVsat=',pVsat
+                  if (dbg_cell) print*,'pure liquid not stable: pL=',pL,' psat=',pVsat,' conv=',conv
                end if
-            else
-               if (dbg_cell) print*,'interfacial, no inert gas, falling through to general chem_relax'
             end if
          else
             if (dbg_cell) print*,'falling through to general chemical relaxation'
@@ -1165,7 +1177,7 @@ contains
          real(WP) :: p_try,Yv_try,T_try,xv_try,pv_try,F1_try,F2_try
          real(WP) :: Yv_max_phys,Yv_hi
          integer  :: it,lsit,hi_lock
-         logical  :: accepted
+         logical  :: accepted,bnd_ok
          Yv_max_phys=1.0_WP-(rhoA0/rho0)
          Yv_hi=min(Yvmax,Yv_max_phys)
          if (dbg_cell) then
@@ -1272,9 +1284,24 @@ contains
             ! solution (fixed mass rho0, fixed energy rhoe0, fixed composition Yv_hi, single gas
             ! phase, no saturation condition left to satisfy since no liquid remains).
             if (hi_lock.ge.3) then
-               if (dbg_cell) print*,'EXIT-K pinned at Yv_hi for',hi_lock,' iterations -- resolving as complete evaporation' ! debug
-               call boundary_all_vapor(Yv_hi,p_eq,T_eq,Yv_eq)
-               conv=.true.
+               call boundary_all_vapor(Yv_hi,p_eq,T_eq,Yv_eq,bnd_ok)
+               if (bnd_ok) then
+                  if (dbg_cell) print*,'EXIT-K pinned at Yv_hi for',hi_lock,' iterations -- resolving as complete evaporation' ! debug
+                  conv=.true.
+                  return
+               end if
+               ! The cell cannot supply the latent heat, so complete evaporation is not the answer.
+               ! The saturation residual is positive on BOTH sides of the two-phase region, so a
+               ! Newton pinned against the vapor ceiling here is really sitting on compressed
+               ! liquid: resolve at the opposite boundary instead.
+               call boundary_all_liquid(p_eq,T_eq,Yv_eq,bnd_ok)
+               if (bnd_ok) then
+                  if (dbg_cell) print*,'EXIT-K pinned at Yv_hi but all-vapor infeasible -- resolving as complete condensation' ! debug
+                  conv=.true.
+                  return
+               end if
+               if (dbg_cell) print*,'EXIT-K pinned at Yv_hi, neither boundary feasible -- rejecting' ! debug
+               conv=.false.
                return
             end if
             ! Damped update with line search
@@ -1346,16 +1373,85 @@ contains
       !> fixed energy rhoe0, and fixed composition Yv_hi_ -- there is no liquid left for a
       !> saturation condition to hold against, so p,T follow directly from the gas EOS, the same
       !> (rho,e)->p->T route apply() itself uses for a single-phase gas cell.
-      subroutine boundary_all_vapor(Yv_hi_,p_eq,T_eq,Yv_eq)
-         real(WP), intent(in)  :: Yv_hi_
-         real(WP), intent(out) :: p_eq,T_eq,Yv_eq
-         real(WP) :: p_gas
-         Yv_eq=Yv_hi_
-         y(this%indV)=Yv_eq; y(this%indA)=1.0_WP-Yv_eq
+      subroutine boundary_all_vapor(Yv_hi_,p_eq,T_eq,Yv_eq,feasible)
+         real(WP), intent(in)    :: Yv_hi_
+         real(WP), intent(inout) :: p_eq,T_eq,Yv_eq
+         logical,  intent(out)   :: feasible
+         real(WP) :: p_gas,T_gas
+         y(this%indV)=Yv_hi_; y(this%indA)=1.0_WP-Yv_hi_
          p_gas=this%gas%get_p_from_rho_e(rho=rho0,e=rhoe0/rho0,y=y)
-         T_eq=this%gas%get_T_from_p_rho(p=p_gas,rho=rho0,y=y)
-         p_eq=p_gas+Pjump
+         T_gas=this%gas%get_T_from_p_rho(p=p_gas,rho=rho0,y=y)
+         ! Boiling off the last of the liquid costs the vapor's formation energy q. A cell whose
+         ! internal energy sits below it cannot BE vapor: e-q is negative, so T and p come out
+         ! negative and this boundary is not an equilibrium at all -- it must be refused, not
+         ! reported as converged.
+         feasible=(T_gas.gt.0.0_WP.and.p_gas.gt.0.0_WP)
+         if (.not.feasible) return
+         Yv_eq=Yv_hi_; T_eq=T_gas; p_eq=p_gas+Pjump
       end subroutine boundary_all_vapor
+      !> Mirror of boundary_all_vapor at the condensation floor: all vapor condensed (VF=1), so the
+      !> cell is single-phase liquid at fixed mass rho0 and fixed energy rhoe0, with no vapor left
+      !> for a saturation condition to hold against. This is the equilibrium for a cell denser than
+      !> saturated liquid -- compressed, subcooled liquid, where no two-phase split exists at any
+      !> temperature and the vapor boundary is energetically out of reach.
+      subroutine boundary_all_liquid(p_eq,T_eq,Yv_eq,feasible)
+         real(WP), intent(inout) :: p_eq,T_eq,Yv_eq
+         logical,  intent(out)   :: feasible
+         real(WP) :: p_l,T_l,r1,r2,r1p,r2p,r1T,r2T,J11,J12,J21,J22,det,dp,dT,escl
+         real(WP), parameter :: fd=1.0e-7_WP,rtol=1.0e-12_WP
+         integer :: itb
+         feasible=.false.
+         if (rho0-rhoA0.le.0.0_WP) return
+         ! Start from the air-free answer: with no air the cell is single-phase liquid and (p,T)
+         ! follow directly from the liquid EOS at fixed mass and energy. Exact when rhoA0=0.
+         T_l=this%liq%get_T_from_rho_e(rho=rho0,e=rhoe0/rho0,y=[1.0_WP])
+         p_l=this%liq%get_p_from_rho_e(rho=rho0,e=rhoe0/rho0,y=[1.0_WP])
+         if (T_l.le.0.0_WP.or.p_l+this%liq%pinf.le.0.0_WP) return
+         if (rhoA0.le.0.0_WP) then
+            feasible=.true.; Yv_eq=Yvmin; T_eq=T_l; p_eq=p_l; return
+         end if
+         ! Air is non-condensable: it cannot enter the liquid, so it stays behind as a pure-air gas
+         ! phase and this boundary is NOT single-phase. Solve the volume closure and the energy
+         ! balance for (p,T) with the liquid holding rho0-rhoA0 and the gas holding rhoA0. Folding
+         ! the air into the liquid instead is exact only as rhoA0->0 (3% error in p at 1% air mass).
+         escl=max(abs(rhoe0),1.0_WP)
+         do itb=1,50
+            call resid_all_liquid(p_l,T_l,r1,r2)
+            if (max(abs(r1),abs(r2)/escl).lt.rtol) then; feasible=.true.; exit; end if
+            call resid_all_liquid(p_l+fd*(abs(p_l)+this%liq%pinf),T_l,r1p,r2p)
+            call resid_all_liquid(p_l,T_l*(1.0_WP+fd),r1T,r2T)
+            J11=(r1p-r1)/(fd*(abs(p_l)+this%liq%pinf)); J21=(r2p-r2)/(fd*(abs(p_l)+this%liq%pinf))
+            J12=(r1T-r1)/(fd*T_l);                      J22=(r2T-r2)/(fd*T_l)
+            det=J11*J22-J12*J21
+            if (abs(det).le.tiny(1.0_WP)) return
+            dp=-( J22*r1-J12*r2)/det
+            dT=-(-J21*r1+J11*r2)/det
+            ! keep the step inside the liquid's pressure floor and positive temperature
+            if (p_l+dp+this%liq%pinf.le.0.0_WP) dp=-0.5_WP*(p_l+this%liq%pinf)
+            if (T_l+dT.le.0.0_WP)               dT=-0.5_WP*T_l
+            p_l=p_l+dp; T_l=T_l+dT
+         end do
+         if (.not.feasible) return
+         feasible=(T_l.gt.0.0_WP.and.p_l+this%liq%pinf.gt.0.0_WP)
+         if (.not.feasible) return
+         Yv_eq=Yvmin; T_eq=T_l; p_eq=p_l
+      end subroutine boundary_all_liquid
+      !> Volume-closure and energy residuals for boundary_all_liquid: liquid mass rho0-rhoA0 and
+      !> air mass rhoA0 must together fill the cell and carry its energy at (p_,T_).
+      subroutine resid_all_liquid(p_,T_,r1,r2)
+         real(WP), intent(in)  :: p_,T_
+         real(WP), intent(out) :: r1,r2
+         real(WP) :: mL,rl,rg
+         r1=0.0_WP; r2=0.0_WP
+         mL=rho0-rhoA0
+         rl=this%liq%get_rho_from_p_T(p=p_,T=T_,y=[1.0_WP])
+         y(this%indV)=0.0_WP; y(this%indA)=1.0_WP
+         rg=this%gas%get_rho_from_p_T(p=p_-Pjump,T=T_,y=y)
+         if (rl.le.0.0_WP.or.rg.le.0.0_WP) then; r1=huge(1.0_WP); return; end if
+         r1=mL/rl+rhoA0/rg-1.0_WP
+         r2=mL*this%liq%get_e_from_p_T(p=p_,T=T_,y=[1.0_WP]) &
+         & +rhoA0*this%gas%get_e_from_p_T(p=p_-Pjump,T=T_,y=y)-rhoe0
+      end subroutine resid_all_liquid
    end subroutine pTg_relax
 
    !> p-T saturation residual (general form: ES=0 for SG, ES=b/RV for NASG)
@@ -1395,26 +1491,50 @@ contains
       real(WP), intent(out) :: Tsat
       logical,  intent(out) :: conv
       integer,  intent(out) :: Tsat_it
-      real(WP) :: Tlo,Thi,Told,Tnew,Flo,Fhi,Fold,Fnew,dFold
+      real(WP) :: Tlo,Thi,Told,Tnew,Flo,Fhi,Fold,Fnew,dFold,Tpeak
       integer  :: it,expand_it
-      conv=.false.; Tsat_it=0
-      ! Bracket relative to the guess temperature (scale/unit-agnostic; was a fixed 250-900 K window)
+      ! Tsat is intent(out), so it must be defined on the early-return paths below too -- leaving it
+      ! undefined there returns whatever was on the stack (a denormal, in practice)
+      conv=.false.; Tsat_it=0; Tsat=Tguess
       if (Tguess.le.0.0_WP) return
-      Tlo=0.3_WP*Tguess; Thi=3.0_WP*Tguess
-      Flo=this%pTsat(pl_,pv_,Tlo)
-      Fhi=this%pTsat(pl_,pv_,Thi)
-      expand_it=0
-      do while ((Flo*Fhi.gt.0.0_WP).and.(expand_it.lt.20))
-         if ((Flo.gt.0.0_WP).and.(Fhi.gt.0.0_WP)) then
-            Tlo=0.8_WP*Tlo;             Flo=this%pTsat(pl_,pv_,Tlo)
-         else if ((Flo.lt.0.0_WP).and.(Fhi.lt.0.0_WP)) then
-            Thi=1.2_WP*Thi;             Fhi=this%pTsat(pl_,pv_,Thi)
-         else
-            exit
+      ! pTsat is NOT monotonic: it rises from -infinity as T->0, peaks where dpTsatdT=0, then falls.
+      ! Only below that peak does the fitted vapor pressure increase with T, so that branch is the
+      ! physical one and carries the root we want. Bracketing off the two ends of a fixed window
+      ! straddles the peak and reports "no root" even when two exist.
+      Tpeak=-1.0_WP
+      if (this%CS.ne.0.0_WP) Tpeak=(this%BS+this%ES*pl_)/this%CS
+      if (Tpeak.gt.0.0_WP) then
+         ! search the rising branch only, starting from the guess (or the peak, if the guess is past it)
+         Thi=min(Tguess,Tpeak); Fhi=this%pTsat(pl_,pv_,Thi)
+         if (Fhi.lt.0.0_WP.and.Thi.lt.Tpeak) then
+            Thi=Tpeak; Fhi=this%pTsat(pl_,pv_,Thi)
          end if
-         expand_it=expand_it+1
-      end do
-      if (Flo*Fhi.gt.0.0_WP) return
+         ! the peak is the largest pTsat can ever be: still negative there means no saturation state
+         if (Fhi.lt.0.0_WP) return
+         Tlo=Thi; Flo=Fhi; expand_it=0
+         do while ((Flo.ge.0.0_WP).and.(expand_it.lt.60))
+            Tlo=0.8_WP*Tlo;             Flo=this%pTsat(pl_,pv_,Tlo)
+            expand_it=expand_it+1
+         end do
+         if (Flo.ge.0.0_WP) return
+      else
+         ! degenerate fit (CS=0): pTsat is monotonic, so the original two-sided expansion applies
+         Tlo=0.3_WP*Tguess; Thi=3.0_WP*Tguess
+         Flo=this%pTsat(pl_,pv_,Tlo)
+         Fhi=this%pTsat(pl_,pv_,Thi)
+         expand_it=0
+         do while ((Flo*Fhi.gt.0.0_WP).and.(expand_it.lt.20))
+            if ((Flo.gt.0.0_WP).and.(Fhi.gt.0.0_WP)) then
+               Tlo=0.8_WP*Tlo;             Flo=this%pTsat(pl_,pv_,Tlo)
+            else if ((Flo.lt.0.0_WP).and.(Fhi.lt.0.0_WP)) then
+               Thi=1.2_WP*Thi;             Fhi=this%pTsat(pl_,pv_,Thi)
+            else
+               exit
+            end if
+            expand_it=expand_it+1
+         end do
+         if (Flo*Fhi.gt.0.0_WP) return
+      end if
       Tsat=max(Tlo,min(Thi,Tguess))
       do it=1,this%Tsat_itmax
          Told=Tsat
@@ -1440,6 +1560,61 @@ contains
          end if
       end do
    end subroutine get_Tsat
+
+   !> Physical saturation pressure at T_: the LOWER fixed point of pvsat(p,T)=p.
+   !>
+   !> The residual ln(pvsat(p,T))-ln(p) falls from +infinity as p->0, passes through a single
+   !> minimum, then climbs back to +infinity, so it has TWO roots. Only the lower one is physical --
+   !> the upper one is the covolume/Poynting terms (ES*p/T, DS*ln(p+pinf)) taking over far outside
+   !> the range the Clausius-Clapeyron fit was calibrated on. Any stability test that compares pL
+   !> against get_pvsat(pL,T) instead flips sign at that spurious root and reports strongly
+   !> compressed liquid as boiling. The minimum is available in closed form (the residual's
+   !> derivative is a quadratic in p), so the lower root can be bracketed on the monotone side.
+   subroutine get_psat(this,T_,psat,conv)
+      implicit none
+      class(relax_igmix_sg), intent(inout) :: this
+      real(WP), intent(in)  :: T_
+      real(WP), intent(out) :: psat
+      logical,  intent(out) :: conv
+      real(WP) :: a,b,c,disc,pmin,plo,phi,pmid
+      integer  :: it
+      conv=.false.; psat=0.0_WP
+      if (T_.le.0.0_WP) return
+      ! d/dp of the residual is ES/T + DS/(p+pinf) - 1/p; clearing denominators gives a quadratic
+      a=this%ES/T_
+      b=this%ES*this%liq%pinf/T_+this%DS-1.0_WP
+      c=-this%liq%pinf
+      if (abs(a).gt.tiny(1.0_WP)) then
+         disc=b*b-4.0_WP*a*c
+         if (disc.lt.0.0_WP) return
+         pmin=0.5_WP*(-b+sqrt(disc))/a
+      else
+         if (abs(b).le.tiny(1.0_WP)) return
+         pmin=-c/b
+      end if
+      if (pmin.le.0.0_WP) return
+      ! the minimum is the lowest the residual ever gets: still positive means no saturation state
+      if (psat_res(pmin).ge.0.0_WP) return
+      ! walk down from the minimum until the residual turns positive, then bisect
+      plo=pmin
+      do it=1,200
+         plo=0.5_WP*plo
+         if (psat_res(plo).ge.0.0_WP) exit
+      end do
+      if (psat_res(plo).lt.0.0_WP) return
+      phi=pmin
+      do it=1,200
+         pmid=0.5_WP*(plo+phi)
+         if (psat_res(pmid).ge.0.0_WP) then; plo=pmid; else; phi=pmid; end if
+         if (phi-plo.le.1.0e-14_WP*max(phi,1.0_WP)) exit
+      end do
+      psat=0.5_WP*(plo+phi); conv=.true.
+   contains
+      real(WP) function psat_res(p_)
+         real(WP), intent(in) :: p_
+         psat_res=log(this%get_pvsat(p_,T_))-log(p_)
+      end function psat_res
+   end subroutine get_psat
 
    real(WP) function get_pvsat(this,pl_,T_)
       implicit none

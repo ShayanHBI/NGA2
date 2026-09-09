@@ -28,10 +28,10 @@ INPUT = "pTg"          # case identifier -> reads amrviz/impact_relax_<INPUT>
 #   "schlieren" numerical schlieren of mixture density (gas-phase wave structure only)
 FIELD = "schlieren"
 
-SHOW_INTERFACE = True   # overlay the PLIC interface contour
-INTERFACE_COLOR = "white"
-INTERFACE_LINEWIDTH = 0.75
-# INTERFACE_LINEWIDTH = 0.025
+SHOW_INTERFACE = True   # overlay the interface contour
+INTERFACE_COLOR = "red"
+# INTERFACE_LINEWIDTH = 0.75
+INTERFACE_LINEWIDTH = 0.2
 
 START_TIME = 0        # skip frames before this simulation time (animation mode only; ignored for a snapshot)
 

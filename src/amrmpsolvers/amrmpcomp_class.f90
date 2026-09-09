@@ -21,6 +21,11 @@ module amrmpcomp_class
 !   integer, parameter, public :: geo_redist_multi=2  !< PLIC-geometric VF split: each member keeps its own normal, advanced by a shared delta (bisection)
 !   integer, parameter, public :: geo_redist_shared=3 !< PLIC-geometric VF split: one shared plane (averaged normal, closed-form offset) cuts every member's own hex
    ! relax_clustered: every cluster is a matched pair (host+guest), see relax_clustered below
+   ! relax_clustered pass selector: each pass carries ONE starvation criterion, computes Need from
+   ! it alone, and ranks candidate partners by that same criterion evaluated on the pooled pair.
+   integer, parameter, public :: clust_thermal=1 !< Pass A1: heat-capacity starvation, ranks by pooled dT excursion
+   integer, parameter, public :: clust_mech   =2 !< Pass A2: compliance starvation,    ranks by pooled dRHO excursion
+   integer, parameter, public :: clust_rhog   =3 !< Pass B:  RHOG spike vs neighbours, ranks by VF (unchanged)
 
    !> AMR compressible multiphase solver type
    type, extends(amrmpflow) :: amrmpcomp
@@ -50,16 +55,35 @@ module amrmpcomp_class
 
       ! Pre-relaxation clustering
       logical  :: cluster_on=.true.    !< enable relax_clustered (called from apply_relax, ahead of its per-cell relax loop)
-      real(WP) :: cluster_VFlo=0.05_WP  !< thin-liquid claimant bound for relax_clustered
-      real(WP) :: cluster_VFhi=0.95_WP  !< thin-gas    claimant bound for relax_clustered
+      real(WP) :: cluster_VFlo=0.05_WP  !< thin-liquid bound: still used by Pass B (rhoG_ref) and dissolve_stranded_gas
+      real(WP) :: cluster_VFhi=0.95_WP  !< thin-gas    bound: still used by Pass B (rhoG_ref) and dissolve_stranded_gas
+      ! Pass A1 (thermal) and Pass A2 (mechanical) triggers. A phase holding a negligible share of
+      ! the cell's heat capacity is pulled the full temperature gap by one instantaneous thermal
+      ! equilibration; a phase holding a negligible share of the cell's compliance is pulled the
+      ! full pressure gap by the mechanical one. Need is that predicted relative excursion, in
+      ! excess of what we tolerate. The two are NEVER merged into one number: they diagnose
+      ! different starvations and want different partners, so each drives its own pass.
+      logical  :: cluster_therm_on=.true.  !< enable Pass A1 (thermal-capacity clustering)
+      logical  :: cluster_mech_on=.true.   !< enable Pass A2 (mechanical-compliance clustering)
+      real(WP) :: cluster_dTtol=0.01_WP    !< tolerated predicted relative temperature excursion per relax call
+      real(WP) :: cluster_dRHOtol=0.01_WP  !< tolerated predicted relative phasic density excursion per relax call
       real(WP) :: cluster_rhoG_K=1.2_WP !< RHOG density-spike claimant multiplier vs. reservoir-eligible neighbours' median RHOG, OR'd into gclaim on top of the VF-based cluster_VFhi trigger (RHOG runaway compounds well before VF crosses cluster_VFhi)
 !      integer  :: redist_method=geo_redist_multi !< cluster_relax split-back method: cap_redist, geo_redist_multi, or geo_redist_shared
+
+      ! Solo-vs-clustered relaxation diagnostic: for every Need>0 cell, logs its pre-relax state,
+      ! a throwaway solo relax%apply counterfactual (never written back), and the actual outcome
+      ! (clustered or stranded), to a CSV. Off by default -- never touches production physics.
+      logical :: relax_diag_on=.false.    !< enable diagnostic CSV logging in relax_clustered
+      logical :: relax_diag_open=.false.  !< CSV already opened (newunit gives a NEGATIVE unit, so the unit itself cannot flag this)
+      integer :: relax_diag_unit=0        !< Fortran unit for the diagnostic CSV, opened lazily on first write
+      integer :: relax_diag_step=0        !< current timestep number, set by the driver each step
+      integer :: relax_diag_stride=1      !< only log every Nth step (the solo counterfactual costs 2 extra relax solves per pair)
 
       ! Post-clustering stranded-gas dissolution: a cell surrounded by near-pure-liquid neighbours
       ! on every face has no reservoir for relax_clustered to pool with -- fold its trace gas back
       ! into the liquid instead of leaving a runaway RHOG in the field.
-      logical  :: dissolve_on=.true.        !< enable dissolve_stranded_gas (called from apply_relax, after Pass B's relax_clustered)
-      logical  :: cluster_rhog_on=.true.    !< enable Pass B (RHOG-based clustering) and dissolve_stranded_gas; off reverts to VF-only clustering
+      logical  :: dissolve_on=.true.        !< enable dissolve_stranded_gas (called from apply_relax, independently of Pass B)
+      logical  :: cluster_rhog_on=.true.    !< enable Pass B (RHOG-based clustering); off reverts to VF-only clustering
       real(WP) :: dissolve_rhoG_K=2.0_WP    !< RHOG must exceed this multiple of the local 2-ring reference RHOG to dissolve
 
       ! Phase rescue: user-specified minimal (P,T) per phase, enforced in clean_Q wherever the
@@ -448,6 +472,7 @@ contains
       call this%visc%finalize(); call this%beta%finalize(); call this%diffL%finalize(); call this%diffG%finalize()
       ! Diagnostics
       call this%cluster_idx%finalize(); call this%stranded%finalize()
+      if (this%relax_diag_open) close(this%relax_diag_unit)
       ! Nullify pointers
       nullify(this%user_init); nullify(this%user_tagging); nullify(this%user_bc); nullify(this%user_vofbc)
       nullify(this%liq); nullify(this%gas)
@@ -3896,9 +3921,10 @@ contains
 
    !> Symmetric pairwise clustering: matches each thin/spiking cell with one face neighbour via
    !> mutual "deferred acceptance" negotiation, relaxes the pair once, splits back geometrically.
-   !> rhog_mode=.false.: Pass A, VF-based (cluster_VFlo/cluster_VFhi). rhog_mode=.true.: Pass B,
-   !> RHOG-spike-based, only on cells Pass A left untouched (cskip comp 1).
-   subroutine relax_clustered(this,dt,time,cskip,rhog_mode)
+   !> mode=clust_thermal: Pass A1, heat-capacity starvation. mode=clust_mech: Pass A2, compliance
+   !> starvation. mode=clust_rhog: Pass B, RHOG-spike-based. Every pass skips cells an earlier pass
+   !> already clustered (cskip comp 1), as claimant AND as partner.
+   subroutine relax_clustered(this,dt,time,cskip,mode)
       use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
       use amrvof_geometry,  only: cut_hex_vol,get_plane_dist
       use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j,dbg_k,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
@@ -3906,7 +3932,10 @@ contains
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: dt,time
       type(amrex_multifab), intent(inout) :: cskip
-      logical, intent(in), optional :: rhog_mode
+      integer, intent(in), optional :: mode
+      integer :: pass
+      integer, parameter :: starve_none=0,starve_liq=1,starve_gas=2 !< which phase a Need says is being dragged
+      character(len=2) :: passlbl   ! debug: which criterion built this cluster (A1/A2/B)
       logical :: use_rhog
       integer :: lvl,i,j,k,ig,jg,kg,ih,jh,kh,d,ierr,local_id
       integer, dimension(3,6) :: foff
@@ -3922,7 +3951,18 @@ contains
       real(WP) :: shared_d
       real(WP), dimension(3,8) :: hex_h,hex_g
       real(WP) :: dbgRHOL,dbgRHOG,dbgPL,dbgPG,dbgTL,dbgTG,dbgeL,dbgeG,dbgYv ! debug
-      use_rhog=.false.; if (present(rhog_mode)) use_rhog=rhog_mode
+      real(WP) :: VFsolo_h,VFsolo_g                                ! diag: solo-relax counterfactual
+      real(WP), dimension(this%nQ) :: Qsolo_h,Qsolo_g,zeroQ        ! diag
+      integer :: ierr_solo                                         ! diag
+      logical :: dolog                                             ! diag: logging active this step
+      pass=clust_thermal; if (present(mode)) pass=mode
+      use_rhog=(pass.eq.clust_rhog)
+      select case (pass)
+      case (clust_mech); passlbl='A2'
+      case (clust_rhog); passlbl='B '
+      case default;      passlbl='A1'
+      end select
+      dolog=this%relax_diag_on.and.mod(this%relax_diag_step,max(this%relax_diag_stride,1)).eq.0
       if (.not.this%cluster_on) return
       if (.not.associated(this%relax)) return
       if (this%amr%clvl().lt.this%amr%maxlvl) return
@@ -3931,6 +3971,7 @@ contains
       foff(:,1)=[-1,0,0]; foff(:,2)=[1,0,0]; foff(:,3)=[0,-1,0]; foff(:,4)=[0,1,0]; foff(:,5)=[0,0,-1]; foff(:,6)=[0,0,1]
       fopp=[2,1,4,3,6,5]
       local_id=0
+      zeroQ=0.0_WP
       call this%amr%mfab_build(lvl,need,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
       call need%setval(0.0_WP)
       call this%amr%mfab_build(lvl,matchdir,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
@@ -3959,7 +4000,7 @@ contains
          pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi)
          pCurv=>this%curv%dataptr(mfi); pPLIC=>this%plic%dataptr(mfi); pS=>cskip%dataptr(mfi)
          pMatchdir=>matchdir%dataptr(mfi); pClustbuf=>clustbuf%dataptr(mfi)
-         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi)
+         pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi); pNeed=>need%dataptr(mfi)
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
             d=nint(pMatchdir(i,j,k,1))
@@ -3969,15 +4010,29 @@ contains
             dbg_cell=in_dbg_box(i,j,k).or.in_dbg_box(ig,jg,kg) ! debug
             if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug
             call clust_state(i,j,k,ig,jg,kg,VFclust0,Qclust0,Pjclust,u_clust)
+            ! diag: what each member would have become on its own (throwaway copies, own curvature
+            ! Pjump -- exactly what relax_unclustered would have done had they never matched)
+            if (dolog) then
+               VFsolo_h=pVF(i,j,k,1); Qsolo_h=pQ(i,j,k,1:this%nQ)
+               call this%relax%apply(dt=dt,VF=VFsolo_h,Q=Qsolo_h,Pjump=this%sigma*pCurv(i,j,k,1),ierr=ierr_solo)
+               VFsolo_g=pVF(ig,jg,kg,1); Qsolo_g=pQ(ig,jg,kg,1:this%nQ)
+               call this%relax%apply(dt=dt,VF=VFsolo_g,Q=Qsolo_g,Pjump=this%sigma*pCurv(ig,jg,kg,1),ierr=ierr_solo)
+            end if
             VFclust1=VFclust0; Qclust1=Qclust0
             if (dbg_cell) then ! debug
                call get_thermo(VFclust0,Qclust0,dbgRHOL,dbgRHOG,dbgPL,dbgPG,dbgTL,dbgTG,dbgeL,dbgeG,dbgYv)
-               print*,'[relax_clustered] host',i,j,k,'guest',ig,jg,kg,'pre VF=',VFclust0,'TL=',dbgTL,'TG=',dbgTG
+               print*,'[relax_clustered ',passlbl,'] host',i,j,k,'guest',ig,jg,kg,'pre VF=',VFclust0,'TL=',dbgTL,'TG=',dbgTG
+               print*,'   pre PL=',dbgPL,'PG=',dbgPG,'RHOL=',dbgRHOL,'RHOG=',dbgRHOG
+               ! what score() bought: this pass's own Need on each member and on the mean-pooled pair
+               print*,'   need host=',pNeed(i,j,k,1),'need guest=',pNeed(ig,jg,kg,1), &
+                  'need pooled=',need_pass(0.5_WP*(pVF(i,j,k,1)+pVF(ig,jg,kg,1)), &
+                  0.5_WP*(pQ(i,j,k,1:this%nQ)+pQ(ig,jg,kg,1:this%nQ)))
             end if
             call this%relax%apply(dt=dt,VF=VFclust1,Q=Qclust1,Pjump=Pjclust,ierr=ierr)
             if (dbg_cell) then ! debug
                call get_thermo(VFclust1,Qclust1,dbgRHOL,dbgRHOG,dbgPL,dbgPG,dbgTL,dbgTG,dbgeL,dbgeG,dbgYv)
-               print*,'[relax_clustered] post VF=',VFclust1,'TL=',dbgTL,'TG=',dbgTG,'ierr=',ierr
+               print*,'[relax_clustered ',passlbl,'] post VF=',VFclust1,'TL=',dbgTL,'TG=',dbgTG,'ierr=',ierr
+               print*,'   post PL=',dbgPL,'PG=',dbgPG,'RHOL=',dbgRHOL,'RHOG=',dbgRHOG
             end if
             RHOL_c=0.0_WP; eL_c=0.0_WP
             if (VFclust1.gt.0.0_WP.and.Qclust1(1).gt.0.0_WP) then
@@ -3994,6 +4049,15 @@ contains
             VFnew_g=cut_clust(hex_g,shared_nrm,shared_d,pVF(ig,jg,kg,1))
             Qnew_h=redist_clust(pQ(i,j,k,1:this%nQ),VFnew_h,RHOL_c,eL_c,RHOG_c,eG_c,Yv_c,u_clust)
             Qnew_g=redist_clust(pQ(ig,jg,kg,1:this%nQ),VFnew_g,RHOL_c,eL_c,RHOG_c,eG_c,Yv_c,u_clust)
+            ! diag: log both members before their pre-cluster state is overwritten below
+            if (dolog) then
+               call diag_log('HOST',i,j,k,ig,jg,kg,.true.,pNeed(i,j,k,1),pNeed(ig,jg,kg,1), &
+                  pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),pVF(ig,jg,kg,1),pQ(ig,jg,kg,1:this%nQ), &
+                  VFsolo_h,Qsolo_h,VFnew_h,Qnew_h)
+               call diag_log('GUEST',ig,jg,kg,i,j,k,.true.,pNeed(ig,jg,kg,1),pNeed(i,j,k,1), &
+                  pVF(ig,jg,kg,1),pQ(ig,jg,kg,1:this%nQ),pVF(i,j,k,1),pQ(i,j,k,1:this%nQ), &
+                  VFsolo_g,Qsolo_g,VFnew_g,Qnew_g)
+            end if
             local_id=local_id+1; cid=real(this%amr%rank,WP)*1.0e4_WP+real(local_id,WP)
             pVF(i,j,k,1)=VFnew_h; pQ(i,j,k,1:this%nQ)=Qnew_h
             pPLIC(i,j,k,1:3)=shared_nrm; pPLIC(i,j,k,4)=shared_d
@@ -4001,7 +4065,7 @@ contains
             pClustbuf(i,j,k,1:this%nQ)=Qnew_g; pClustbuf(i,j,k,this%nQ+1)=VFnew_g
             pClustbuf(i,j,k,this%nQ+2:this%nQ+4)=shared_nrm; pClustbuf(i,j,k,this%nQ+5)=shared_d
             pClustbuf(i,j,k,this%nQ+6)=cid
-            if (dbg_cell) print*,'[relax_clustered] host adopted VF=',VFnew_h,'guest will adopt VF=',VFnew_g ! debug
+            if (dbg_cell) print*,'[relax_clustered ',passlbl,'] host adopted VF=',VFnew_h,'guest will adopt VF=',VFnew_g ! debug
          end do; end do; end do
       end do
       call this%amr%mfiter_destroy(mfi)
@@ -4013,7 +4077,7 @@ contains
          pPLIC=>this%plic%dataptr(mfi); pS=>cskip%dataptr(mfi)
          pMatchdir=>matchdir%dataptr(mfi); pClustbuf=>clustbuf%dataptr(mfi)
          pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi); pStrand=>this%stranded%mf(lvl)%dataptr(mfi)
-         pNeed=>need%dataptr(mfi)
+         pNeed=>need%dataptr(mfi); pCurv=>this%curv%dataptr(mfi)
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
             d=nint(pMatchdir(i,j,k,1))
@@ -4026,9 +4090,18 @@ contains
                pPLIC(i,j,k,4)=pClustbuf(ih,jh,kh,this%nQ+5)
                pS(i,j,k,1)=1.0_WP; pS(i,j,k,3)=1.0_WP
                pCidx(i,j,k,1)=pClustbuf(ih,jh,kh,this%nQ+6)
-               if (in_dbg_box(i,j,k)) print*,'[relax_clustered] guest',i,j,k,'adopted from host',ih,jh,kh,'VF=',pVF(i,j,k,1) ! debug
+               if (in_dbg_box(i,j,k)) print*,'[relax_clustered ',passlbl,'] guest',i,j,k,'adopted from host',ih,jh,kh,'VF=',pVF(i,j,k,1) ! debug
             else if (pNeed(i,j,k,1).gt.0.0_WP) then
                pStrand(i,j,k,1)=1.0_WP; this%strand_acc=this%strand_acc+1.0_WP
+               if (in_dbg_box(i,j,k)) print*,'[relax_clustered ',passlbl,'] STRANDED',i,j,k,'need=',pNeed(i,j,k,1),'VF=',pVF(i,j,k,1) ! debug
+               ! diag: no partner, so relax_unclustered's solo call below IS this cell's outcome --
+               ! run it here on a copy so the row carries pre-state and result together
+               if (dolog) then
+                  VFsolo_h=pVF(i,j,k,1); Qsolo_h=pQ(i,j,k,1:this%nQ)
+                  call this%relax%apply(dt=dt,VF=VFsolo_h,Q=Qsolo_h,Pjump=this%sigma*pCurv(i,j,k,1),ierr=ierr_solo)
+                  call diag_log('STRANDED',i,j,k,-1,-1,-1,.false.,pNeed(i,j,k,1),0.0_WP, &
+                     pVF(i,j,k,1),pQ(i,j,k,1:this%nQ),0.0_WP,zeroQ,VFsolo_h,Qsolo_h,VFsolo_h,Qsolo_h)
+               end if
             end if
          end do; end do; end do
       end do
@@ -4090,17 +4163,142 @@ contains
          ceil=this%cluster_rhoG_K*ref
          ex=max(rhoG_at(ci,cj,ck,vf,q)-ceil,0.0_WP)/ceil
       end function rhoG_excess_frac
-      !> Pass A Need: 0 for a pure cell (VF outside [VFlo,VFhi]) or a well-inside-band cell.
-      real(WP) function need_geo(vf) result(nd)
-         real(WP), intent(in) :: vf
-         nd=0.0_WP
-         if (vf.lt.VFlo.or.vf.gt.VFhi) return
-         if (vf.lt.this%cluster_VFlo) then
-            nd=this%cluster_VFlo-vf
-         else if (vf.gt.this%cluster_VFhi) then
-            nd=vf-this%cluster_VFhi
+!      !> Pass A Need: 0 for a pure cell (VF outside [VFlo,VFhi]) or a well-inside-band cell.
+!      real(WP) function need_geo(vf) result(nd)
+!         real(WP), intent(in) :: vf
+!         nd=0.0_WP
+!         if (vf.lt.VFlo.or.vf.gt.VFhi) return
+!         if (vf.lt.this%cluster_VFlo) then
+!            nd=this%cluster_VFlo-vf
+!         else if (vf.gt.this%cluster_VFhi) then
+!            nd=vf-this%cluster_VFhi
+!         end if
+!      end function need_geo
+      !> Per-phase capacities that set how far each phase is dragged by one relaxation call:
+      !> thermal capacity is mass*cv, mechanical compliance is volume/(rho*a^2). Returns the gas
+      !> share of heat capacity, the liquid share of compliance, and the states the excursions
+      !> need (K is the bulk modulus rho*a^2, taken from the EOS so NASG covolume is included).
+      subroutine phase_capacities(VFc,Qc,capfrac_gas,compfrac_liq,TL,TG,PL,PG,Kliq,Kgas,ok)
+         real(WP), intent(in) :: VFc
+         real(WP), dimension(:), intent(in) :: Qc
+         real(WP), intent(out) :: capfrac_gas,compfrac_liq,TL,TG,PL,PG,Kliq,Kgas
+         logical, intent(out) :: ok
+         real(WP) :: rhoL,rhoG,eL,eG,Yv,cL,cG,Cliq,Cgas,Wliq,Wgas
+         capfrac_gas=-1.0_WP   ! sentinel: no mass at all, never a valid partner
+         compfrac_liq=-1.0_WP
+         TL=0.0_WP
+         TG=0.0_WP
+         PL=0.0_WP
+         PG=0.0_WP
+         Kliq=0.0_WP
+         Kgas=0.0_WP
+         Cliq=0.0_WP
+         Cgas=0.0_WP
+         Wliq=0.0_WP
+         Wgas=0.0_WP
+         ok=.false.
+         ! Each phase contributes only if it is actually present. A pure cell must still report
+         ! truthful fractions (pure gas holds ALL the capacity), or the pairing guards below read
+         ! it as the opposite phase and hand a starved cell a partner with nothing.
+         if (VFc.gt.0.0_WP.and.Qc(1).gt.0.0_WP) then
+            rhoL=Qc(1)/VFc
+            eL=Qc(3)/Qc(1)
+            TL=this%liq%get_T_from_rho_e(rhoL,eL,[1.0_WP])
+            PL=this%liq%get_p_from_rho_e(rhoL,eL,[1.0_WP])
+            cL=this%liq%get_c_from_rho_e(rhoL,eL,[1.0_WP])
+            Cliq=Qc(1)*this%liq%get_cv_from_rho_e(rhoL,eL,[1.0_WP])
+            Kliq=rhoL*cL*cL
+            if (Kliq.gt.0.0_WP) Wliq=VFc/Kliq
          end if
-      end function need_geo
+         if (VFc.lt.1.0_WP.and.Qc(2).gt.0.0_WP) then
+            rhoG=Qc(2)/(1.0_WP-VFc)
+            eG=Qc(4)/Qc(2)
+            Yv=Qc(this%Yg_lo)/Qc(2)
+            TG=this%gas%get_T_from_rho_e(rhoG,eG,[Yv,1.0_WP-Yv])
+            PG=this%gas%get_p_from_rho_e(rhoG,eG,[Yv,1.0_WP-Yv])
+            cG=this%gas%get_c_from_rho_e(rhoG,eG,[Yv,1.0_WP-Yv])
+            Cgas=Qc(2)*this%gas%get_cv_from_rho_e(rhoG,eG,[Yv,1.0_WP-Yv])
+            Kgas=rhoG*cG*cG
+            if (Kgas.gt.0.0_WP) Wgas=(1.0_WP-VFc)/Kgas
+         end if
+         if (Cliq+Cgas.le.0.0_WP) return
+         capfrac_gas=Cgas/(Cliq+Cgas)
+         if (Wliq+Wgas.gt.0.0_WP) compfrac_liq=Wliq/(Wliq+Wgas)
+         ! a predicted excursion only means anything where both phases are actually present
+         ok=(Cliq.gt.0.0_WP.and.Cgas.gt.0.0_WP.and.TL.gt.0.0_WP.and.TG.gt.0.0_WP)
+      end subroutine phase_capacities
+      !> Pass A1 criterion, on an explicit state: thermal equilibration drags each phase by the
+      !> OTHER phase's share of the pooled heat capacity, so a phase holding almost none of it is
+      !> SET EQUAL to the other rather than warmed toward it. Returns that predicted relative
+      !> temperature excursion in excess of what we tolerate. Negative means comfortably inside.
+      real(WP) function need_thermal_state(VFc,Qc,starved) result(nd)
+         real(WP), intent(in) :: VFc
+         real(WP), dimension(:), intent(in) :: Qc
+         integer, intent(out), optional :: starved   !< which phase this Need says is being dragged
+         real(WP) :: capfrac_gas,compfrac_liq,TL,TG,PL,PG,Kliq,Kgas,dTL_rel,dTG_rel
+         logical :: ok
+         nd=0.0_WP
+         if (present(starved)) starved=starve_none
+         call phase_capacities(VFc,Qc,capfrac_gas,compfrac_liq,TL,TG,PL,PG,Kliq,Kgas,ok)
+         if (.not.ok) return
+         dTL_rel=capfrac_gas*abs(TG-TL)/TL
+         dTG_rel=(1.0_WP-capfrac_gas)*abs(TG-TL)/TG
+         nd=max(dTL_rel,dTG_rel)-this%cluster_dTtol
+         ! whichever term wins names the phase holding almost none of the pooled heat capacity --
+         ! that is the phase being dragged, and therefore the phase a partner must supply
+         if (present(starved).and.nd.gt.0.0_WP) then
+            if (dTL_rel.ge.dTG_rel) then; starved=starve_liq; else; starved=starve_gas; end if
+         end if
+      end function need_thermal_state
+      !> Pass A2 criterion, on an explicit state: mechanical equilibration drags each phase's
+      !> density by the OTHER phase's share of the pooled compliance W=volume/K, converted to a
+      !> density change through that phase's own bulk modulus K=rho*a^2 (from the EOS sound speed,
+      !> so NASG's covolume stiffening is included -- hardcoding gamma*(p+pinf) errs by ~60%).
+      real(WP) function need_mech_state(VFc,Qc,starved) result(nd)
+         real(WP), intent(in) :: VFc
+         real(WP), dimension(:), intent(in) :: Qc
+         integer, intent(out), optional :: starved   !< which phase this Need says is being dragged
+         real(WP) :: capfrac_gas,compfrac_liq,TL,TG,PL,PG,Kliq,Kgas,dP,dRHOL_rel,dRHOG_rel
+         logical :: ok
+         nd=0.0_WP
+         if (present(starved)) starved=starve_none
+         call phase_capacities(VFc,Qc,capfrac_gas,compfrac_liq,TL,TG,PL,PG,Kliq,Kgas,ok)
+         if (.not.ok.or.compfrac_liq.lt.0.0_WP) return
+         dP=abs(PL-PG)
+         dRHOG_rel=0.0_WP; if (Kgas.gt.0.0_WP) dRHOG_rel=compfrac_liq*dP/Kgas
+         dRHOL_rel=0.0_WP; if (Kliq.gt.0.0_WP) dRHOL_rel=(1.0_WP-compfrac_liq)*dP/Kliq
+         nd=max(dRHOG_rel,dRHOL_rel)-this%cluster_dRHOtol
+         ! same reading as the thermal criterion, with compliance in place of heat capacity
+         if (present(starved).and.nd.gt.0.0_WP) then
+            if (dRHOL_rel.ge.dRHOG_rel) then; starved=starve_liq; else; starved=starve_gas; end if
+         end if
+      end function need_mech_state
+      !> This pass's criterion evaluated on a cell. The two criteria are never combined: a
+      !> heat-capacity-starved cell and a compliance-starved cell want different partners, so
+      !> merging them into one Need lets whichever number happens to be larger pick for both.
+      real(WP) function need_pass(VFc,Qc,starved) result(nd)
+         real(WP), intent(in) :: VFc
+         real(WP), dimension(:), intent(in) :: Qc
+         integer, intent(out), optional :: starved
+         if (pass.eq.clust_mech) then
+            nd=need_mech_state(VFc,Qc,starved)
+         else
+            nd=need_thermal_state(VFc,Qc,starved)
+         end if
+      end function need_pass
+      !> Can a partner at vfP supply the phase a claimant at vfC is starved of? This is the question
+      !> the VF band was meant to answer but cannot: the band is symmetric, so it happily paired a
+      !> gas-starved cell with a PURE LIQUID neighbour holding no gas at all, which does not donate
+      !> gas -- it dilutes what little the claimant had across twice the volume.
+      logical function supplies(starv,vfC,vfP) result(l)
+         integer, intent(in) :: starv
+         real(WP), intent(in) :: vfC,vfP
+         l=.true.
+         select case (starv)
+         case (starve_gas); l=(vfP.lt.vfC)   ! partner must be the more gas-rich of the two
+         case (starve_liq); l=(vfP.gt.vfC)   ! partner must be the more liquid-rich of the two
+         end select
+      end function supplies
       !> Pass B Need: 0 if already clustered by Pass A this stage.
       real(WP) function need_rhog(ci,cj,ck,vf,q,cs) result(nd)
          integer, intent(in) :: ci,cj,ck
@@ -4109,13 +4307,17 @@ contains
          if (cs(ci,cj,ck,1).ge.0.5_WP) return
          nd=rhoG_excess_frac(ci,cj,ck,vf,q)
       end function need_rhog
+      !> Need for this pass, clipped at 0. A cell an earlier pass already clustered is done for
+      !> this stage: it has been relaxed, and re-pooling it would relax it twice.
       real(WP) function calc_need(ci,cj,ck,vf,q,cs) result(nd)
          integer, intent(in) :: ci,cj,ck
          real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
+         nd=0.0_WP
+         if (cs(ci,cj,ck,1).ge.0.5_WP) return
          if (use_rhog) then
             nd=need_rhog(ci,cj,ck,vf,q,cs)
          else
-            nd=need_geo(vf(ci,cj,ck,1))
+            nd=max(need_pass(vf(ci,cj,ck,1),q(ci,cj,ck,1:this%nQ)),0.0_WP)
          end if
       end function calc_need
       !> Bit-identical periodic self-image at face g (thin-domain wrap) -- never a valid partner.
@@ -4126,33 +4328,76 @@ contains
          ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
          l=(vf(ia2,ja2,ka2,1).eq.vf(ci,cj,ck,1).and.q(ia2,ja2,ka2,2).eq.q(ci,cj,ck,2))
       end function is_self_wrap
-      !> Symmetric edge score: -1 if invalid (blueprint's Healthy-Healthy/Starved-* guards).
-      real(WP) function score(needA,needB,vfA,vfB) result(sc)
-         real(WP), intent(in) :: needA,needB,vfA,vfB
+      !> Symmetric edge score for face g of cell (ci,cj,ck): -1 if the pair is invalid.
+      !>
+      !> Pass A ranks a candidate by THIS PASS'S OWN criterion re-evaluated on the pooled pair --
+      !> how much pooling actually shrinks the worst member's predicted excursion. That keeps the
+      !> two criteria separate all the way through partner selection: the thermal pass rates a
+      !> partner by the pooled temperature excursion, the mechanical pass by the pooled density
+      !> excursion, and neither can be outbid by the other's magnitude. A pair that does not
+      !> improve on relaxing solo scores -1 and is refused.
+      !>
+      !> The VF-band and massless guards stay as a floor, and on top of them a DIRECTIONAL guard:
+      !> every claimant's partner must actually be richer in the phase that claimant is starved of.
+      !> The band alone cannot express this -- being symmetric, it let a gas-starved cell at VF=0.92
+      !> pair with a PURE LIQUID neighbour at VF=1 (rejection needs BOTH above cluster_VFhi), and
+      !> pooling with a cell holding no gas dilutes the claimant's gas instead of replenishing it.
+      real(WP) function score(ci,cj,ck,g,vf,q,nd) result(sc)
+         integer, intent(in) :: ci,cj,ck,g
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,nd
+         integer :: ia2,ja2,ka2,starvA
+         real(WP) :: vfA,vfB,needA,needB,VFpool,ndpool,nddum
+         real(WP), dimension(this%nQ) :: Qpool
+         real(WP) :: capA,capB,cmpA,cmpB,TLd,TGd,PLd,PGd,Kld,Kgd
+         logical :: okd
          sc=-1.0_WP
+         ia2=ci+foff(1,g); ja2=cj+foff(2,g); ka2=ck+foff(3,g)
+         needA=nd(ci,cj,ck,1); needB=nd(ia2,ja2,ka2,1)
          if (max(needA,needB).le.0.0_WP) return
+         vfA=vf(ci,cj,ck,1); vfB=vf(ia2,ja2,ka2,1)
          if (vfA.lt.this%cluster_VFlo.and.vfB.lt.this%cluster_VFlo) return
          if (vfA.gt.this%cluster_VFhi.and.vfB.gt.this%cluster_VFhi) return
          if (use_rhog) then
             sc=max(needA,needB)*1000.0_WP+(1.0_WP-min(vfA,vfB))
-         else
-            sc=max(needA,needB)*1000.0_WP-abs(0.5_WP-0.5_WP*(vfA+vfB))
+            return
          end if
+         ! reject a massless partner outright -- pooling with nothing cannot supply anything
+         call phase_capacities(vfA,q(ci ,cj ,ck ,1:this%nQ),capA,cmpA,TLd,TGd,PLd,PGd,Kld,Kgd,okd)
+         call phase_capacities(vfB,q(ia2,ja2,ka2,1:this%nQ),capB,cmpB,TLd,TGd,PLd,PGd,Kld,Kgd,okd)
+         if (capA.lt.0.0_WP.or.capB.lt.0.0_WP) return
+         ! Directional guard, applied to the DOMINANT claimant only: the pair exists to help the
+         ! worse member and the other is its donor. Constraining both sides over-rejects, because on
+         ! a capacity measure nearly any cell holding liquid reads as gas-starved (see the note
+         ! above), so two gas-starved cells would refuse each other even when one is genuinely
+         ! gas-rich -- observed on a VF=0.64 claimant refusing a 93%-gas partner at VF=0.068.
+         starvA=starve_none
+         if (needA.ge.needB) then
+            nddum=need_pass(vfA,q(ci ,cj ,ck ,1:this%nQ),starvA)
+            if (.not.supplies(starvA,vfA,vfB)) return
+         else
+            nddum=need_pass(vfB,q(ia2,ja2,ka2,1:this%nQ),starvA)
+            if (.not.supplies(starvA,vfB,vfA)) return
+         end if
+         ! clust_state's pooled state, without its mixing-dissipation KE correction (a small
+         ! addition to Q3/Q4 that cannot change which face wins)
+         VFpool=0.5_WP*(vfA+vfB)
+         Qpool=0.5_WP*(q(ci,cj,ck,1:this%nQ)+q(ia2,ja2,ka2,1:this%nQ))
+         ndpool=need_pass(VFpool,Qpool)
+         sc=max(needA,needB)-ndpool
+         if (sc.le.0.0_WP) sc=-1.0_WP
       end function score
-      !> Best still-free, non-self-wrap face by symmetric score; 0 if none.
-      integer function best_face(ci,cj,ck,vf,q,nd,tk) result(g)
+      !> Best still-free, not-yet-rejected face by precomputed symmetric score; 0 if none.
+      integer function best_face(ci,cj,ck,sc,tk) result(g)
          integer, intent(in) :: ci,cj,ck
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,nd,tk
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: sc,tk
          integer :: f,ia2,ja2,ka2
-         real(WP) :: sc,best
+         real(WP) :: best
          g=0; best=-1.0_WP
          do f=1,6
             ia2=ci+foff(1,f); ja2=cj+foff(2,f); ka2=ck+foff(3,f)
             if (tk(ia2,ja2,ka2,1).gt.0.5_WP) cycle
-            if (is_self_wrap(ci,cj,ck,f,vf,q)) cycle
-            sc=score(nd(ci,cj,ck,1),nd(ia2,ja2,ka2,1),vf(ci,cj,ck,1),vf(ia2,ja2,ka2,1))
-            if (sc.gt.best) then
-               best=sc; g=f
+            if (sc(ci,cj,ck,f).gt.best) then
+               best=sc(ci,cj,ck,f); g=f
             end if
          end do
       end function best_face
@@ -4164,25 +4409,55 @@ contains
          l=(mod(g,2).eq.0)
       end function is_host
       !> 6-round symmetric mutual matching (deferred acceptance) -> frozen matchdir.
+      !>
+      !> Face scores are computed ONCE up front (they depend only on the pair's frozen pre-relax
+      !> state, not on who is still free) and then consumed as a preference list. A cell whose top
+      !> choice does not reciprocate strikes that face off before the next round, so it falls
+      !> through to its second choice: without that, best_face re-proposes to the same face every
+      !> round and any preference cycle (A->B->C->A) strands all its members no matter how many
+      !> rounds run.
       subroutine negotiate()
-         type(amrex_multifab) :: taken,pick
+         type(amrex_multifab) :: taken,pick,facesc
          type(amrex_mfiter) :: mfi2
          type(amrex_box) :: bx2
-         real(WP), dimension(:,:,:,:), contiguous, pointer :: pTaken,pPick,pVFn,pQn,pNeedn,pMd
-         integer :: rr,ii,jj,kk,g,ia2,ja2,ka2
+         real(WP), dimension(:,:,:,:), contiguous, pointer :: pTaken,pPick,pVFn,pQn,pNeedn,pMd,pSc,pSk
+         integer :: rr,ii,jj,kk,g,ia2,ja2,ka2,f
          call this%amr%mfab_build(lvl,taken,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
          call taken%setval(0.0_WP)
+         call this%amr%mfab_build(lvl,facesc,ncomp=6,nover=0,atface=[.false.,.false.,.false.])
+         call facesc%setval(-1.0_WP)
+         ! ---- preference lists: one symmetric score per face, frozen for the whole negotiation ----
+         call this%amr%mfiter_build(lvl,mfi2)
+         do while (mfi2%next())
+            pVFn=>this%VF%mf(lvl)%dataptr(mfi2); pQn=>this%Q%mf(lvl)%dataptr(mfi2)
+            pNeedn=>need%dataptr(mfi2); pSc=>facesc%dataptr(mfi2); pSk=>cskip%dataptr(mfi2)
+            bx2=mfi2%tilebox()
+            do kk=bx2%lo(3),bx2%hi(3); do jj=bx2%lo(2),bx2%hi(2); do ii=bx2%lo(1),bx2%hi(1)
+               ! A cell an earlier pass already clustered is done for this stage: it has been
+               ! relaxed, and re-pooling it would relax it twice. Pass B is exempt by design --
+               ! it lets any cell serve as a reservoir, clustered or not (see apply_relax).
+               if (.not.use_rhog.and.pSk(ii,jj,kk,1).ge.0.5_WP) cycle
+               do f=1,6
+                  ia2=ii+foff(1,f); ja2=jj+foff(2,f); ka2=kk+foff(3,f)
+                  if (.not.use_rhog.and.pSk(ia2,ja2,ka2,1).ge.0.5_WP) cycle
+                  ! nothing to negotiate unless one side of this face wants a partner
+                  if (max(pNeedn(ii,jj,kk,1),pNeedn(ia2,ja2,ka2,1)).le.0.0_WP) cycle
+                  if (is_self_wrap(ii,jj,kk,f,pVFn,pQn)) cycle
+                  pSc(ii,jj,kk,f)=score(ii,jj,kk,f,pVFn,pQn,pNeedn)
+               end do
+            end do; end do; end do
+         end do
+         call this%amr%mfiter_destroy(mfi2)
          do rr=1,6
             call this%amr%mfab_build(lvl,pick,ncomp=1,nover=1,atface=[.false.,.false.,.false.])
             call pick%setval(0.0_WP)
             call this%amr%mfiter_build(lvl,mfi2)
             do while (mfi2%next())
-               pVFn=>this%VF%mf(lvl)%dataptr(mfi2); pQn=>this%Q%mf(lvl)%dataptr(mfi2)
-               pNeedn=>need%dataptr(mfi2); pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2)
+               pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2); pSc=>facesc%dataptr(mfi2)
                bx2=mfi2%tilebox()
                do kk=bx2%lo(3),bx2%hi(3); do jj=bx2%lo(2),bx2%hi(2); do ii=bx2%lo(1),bx2%hi(1)
                   if (pTaken(ii,jj,kk,1).gt.0.5_WP) cycle
-                  pPick(ii,jj,kk,1)=real(best_face(ii,jj,kk,pVFn,pQn,pNeedn,pTaken),WP)
+                  pPick(ii,jj,kk,1)=real(best_face(ii,jj,kk,pSc,pTaken),WP)
                end do; end do; end do
             end do
             call this%amr%mfiter_destroy(mfi2)
@@ -4190,6 +4465,7 @@ contains
             call this%amr%mfiter_build(lvl,mfi2)
             do while (mfi2%next())
                pTaken=>taken%dataptr(mfi2); pPick=>pick%dataptr(mfi2); pMd=>matchdir%dataptr(mfi2)
+               pSc=>facesc%dataptr(mfi2)
                bx2=mfi2%tilebox()
                do kk=bx2%lo(3),bx2%hi(3); do jj=bx2%lo(2),bx2%hi(2); do ii=bx2%lo(1),bx2%hi(1)
                   if (pTaken(ii,jj,kk,1).gt.0.5_WP) cycle
@@ -4197,7 +4473,11 @@ contains
                   ia2=ii+foff(1,g); ja2=jj+foff(2,g); ka2=kk+foff(3,g)
                   if (nint(pPick(ia2,ja2,ka2,1)).eq.fopp(g)) then
                      pMd(ii,jj,kk,1)=real(g,WP); pTaken(ii,jj,kk,1)=1.0_WP
-                     if (in_dbg_box(ii,jj,kk)) print*,'[relax_clustered] round',rr,'matched',ii,jj,kk,'dir=',g ! debug
+                     if (in_dbg_box(ii,jj,kk)) print*,'[relax_clustered ',passlbl,'] round',rr,'matched',ii,jj,kk,'dir=',g,'score=',pSc(ii,jj,kk,g) ! debug
+                  else
+                     ! rejected this round: strike the face off so the next round tries the next
+                     ! best one instead of re-proposing here forever
+                     pSc(ii,jj,kk,g)=-1.0_WP
                   end if
                end do; end do; end do
             end do
@@ -4205,6 +4485,7 @@ contains
             call taken%fill_boundary(this%amr%geom(lvl))
             call amrex_multifab_destroy(pick)
          end do
+         call amrex_multifab_destroy(facesc)
          call amrex_multifab_destroy(taken)
          call matchdir%fill_boundary(this%amr%geom(lvl))
       end subroutine negotiate
@@ -4311,17 +4592,63 @@ contains
             TG=this%gas%get_T_from_rho_e(RHOG,eG,[Yv,1.0_WP-Yv])
          end if
       end subroutine get_thermo
+      !> Diagnostic-only CSV row: self pre-state, partner pre-state, solo-relax counterfactual, and
+      !> the actual outcome. Pass label comes from use_rhog (A=VF-based, B=RHOG-based).
+      subroutine diag_log(event,ci,cj,ck,cip,cjp,ckp,has_partner,nd_self,nd_partner,VF0,Q0,VF0p,Q0p,VFs,Qs,VFa,Qa)
+         character(len=*), intent(in) :: event
+         integer, intent(in) :: ci,cj,ck,cip,cjp,ckp
+         logical, intent(in) :: has_partner
+         real(WP), intent(in) :: nd_self,nd_partner,VF0,VF0p,VFs,VFa
+         real(WP), dimension(this%nQ), intent(in) :: Q0,Q0p,Qs,Qa
+         real(WP) :: RHOL0,RHOG0,PL0,PG0,TL0,TG0,eL0,eG0,Yv0
+         real(WP) :: RHOL0p,RHOG0p,PL0p,PG0p,TL0p,TG0p,eL0p,eG0p,Yv0p
+         real(WP) :: RHOLs,RHOGs,PLs,PGs,TLs,TGs,eLs,eGs,Yvs
+         real(WP) :: RHOLa,RHOGa,PLa,PGa,TLa,TGa,eLa,eGa,Yva
+         real(WP), dimension(59) :: row
+         character(len=8) :: rankstr,stepstr
+         if (.not.this%relax_diag_open) then
+            this%relax_diag_open=.true.
+            write(rankstr,'(I0)') this%amr%rank
+            write(stepstr,'(I0)') this%relax_diag_step
+            open(newunit=this%relax_diag_unit, &
+               file=trim(this%name)//'_relaxdiag_n'//trim(stepstr)//'_rank'//trim(rankstr)//'.csv', &
+               status='replace',action='write')
+            write(this%relax_diag_unit,'(A)') 'event,pass,step,time,i,j,k,ip,jp,kp,has_partner,need_self,need_partner,'// &
+               'VF0,Q1_0,Q2_0,Q3_0,Q4_0,RHOL0,RHOG0,PL0,PG0,TL0,TG0,Yv0,'// &
+               'VF0p,Q1_0p,Q2_0p,Q3_0p,Q4_0p,RHOL0p,RHOG0p,PL0p,PG0p,TL0p,TG0p,Yv0p,'// &
+               'VFs,Q1_s,Q2_s,Q3_s,Q4_s,RHOLs,RHOGs,PLs,PGs,TLs,TGs,Yvs,'// &
+               'VFa,Q1_a,Q2_a,Q3_a,Q4_a,RHOLa,RHOGa,PLa,PGa,TLa,TGa,Yva'
+         end if
+         call get_thermo(VF0,Q0,RHOL0,RHOG0,PL0,PG0,TL0,TG0,eL0,eG0,Yv0)
+         call get_thermo(VF0p,Q0p,RHOL0p,RHOG0p,PL0p,PG0p,TL0p,TG0p,eL0p,eG0p,Yv0p)
+         call get_thermo(VFs,Qs,RHOLs,RHOGs,PLs,PGs,TLs,TGs,eLs,eGs,Yvs)
+         call get_thermo(VFa,Qa,RHOLa,RHOGa,PLa,PGa,TLa,TGa,eLa,eGa,Yva)
+         row=[real(this%relax_diag_step,WP),time,real(ci,WP),real(cj,WP),real(ck,WP),real(cip,WP),real(cjp,WP),real(ckp,WP), &
+            merge(1.0_WP,0.0_WP,has_partner),nd_self,nd_partner, &
+            VF0,Q0(1),Q0(2),Q0(3),Q0(4),RHOL0,RHOG0,PL0,PG0,TL0,TG0,Yv0, &
+            VF0p,Q0p(1),Q0p(2),Q0p(3),Q0p(4),RHOL0p,RHOG0p,PL0p,PG0p,TL0p,TG0p,Yv0p, &
+            VFs,Qs(1),Qs(2),Qs(3),Qs(4),RHOLs,RHOGs,PLs,PGs,TLs,TGs,Yvs, &
+            VFa,Qa(1),Qa(2),Qa(3),Qa(4),RHOLa,RHOGa,PLa,PGa,TLa,TGa,Yva]
+         write(this%relax_diag_unit,'(A,",",A,",",*(ES14.6,:,","))') trim(event),trim(passlbl),row
+      end subroutine diag_log
    end subroutine relax_clustered
 
-   !> Apply relaxation to mixture cells. Two relax_clustered passes now, not one:
-   !>   Pass A (VF-based, today's rule) -- pools thin-VF cells with a neighbour, then every
-   !>     still-untouched cell is relaxed individually. This is exactly the old single-pass
-   !>     behaviour, unchanged.
-   !>   Pass B (RHOG-based, Session 20) -- runs strictly AFTER Pass A's individual relax and a
+   !> Apply relaxation to mixture cells. Three relax_clustered passes, each carrying exactly ONE
+   !> starvation criterion -- they are never merged into a single Need, because a cell starved of
+   !> heat capacity and a cell starved of compliance want different partners, and a merged Need
+   !> lets whichever number is momentarily larger pick for both:
+   !>   Pass A1 (thermal)    -- a phase holding almost none of the cell's heat capacity is SET
+   !>     EQUAL to the other by one thermal equilibration. Ranks partners by the pooled pair's
+   !>     predicted temperature excursion.
+   !>   Pass A2 (mechanical) -- a phase holding almost none of the cell's compliance is dragged to
+   !>     the other's pressure, collapsing its volume and spiking its density. Ranks partners by
+   !>     the pooled pair's predicted density excursion. Runs on cells A1 left alone, and BEFORE
+   !>     the individual relax: a cell relaxed solo has already taken its overshoot.
+   !>   Pass B (RHOG-based, Session 20) -- runs strictly AFTER A1/A2's individual relax and a
    !>     PLIC/barycenter/ghost sync, so every cell already holds its REAL post-relaxation state
    !>     (not a stale pre-relax or throwaway-probed one) by the time RHOG ratios are evaluated.
-   !>     Only cells Pass A did NOT cluster (cskip comp 1 still 0) are eligible as NEW claimants;
-   !>     any cell (clustered or not) can still serve as a reservoir. Pass B's own relax_clustered
+   !>     Only cells an earlier pass did NOT cluster (cskip comp 1 still 0) are eligible, as
+   !>     claimant AND as partner -- re-pooling one would relax it twice. Pass B's own relax_clustered
    !>     call relaxes whatever it pools directly -- no further individual relax step after it,
    !>     just another PLIC/barycenter pass for whatever it touched.
    subroutine apply_relax(this,dt,time)
@@ -4363,8 +4690,18 @@ contains
       call this%cluster_idx%setval(val=0.0_WP,lvl=lvl)
       call this%stranded%setval(val=0.0_WP,lvl=lvl)
       call snapshot_VF_into_cskip()
-      ! ---- Pass A: VF-based clustering (unchanged) + individual relax for everything else ----
-      call this%relax_clustered(dt=dt,time=time,cskip=cskip)
+      ! ---- Pass A1: thermal-capacity clustering ----
+      if (this%cluster_therm_on) call this%relax_clustered(dt=dt,time=time,cskip=cskip,mode=clust_thermal)
+      ! ---- Pass A2: mechanical-compliance clustering, on cells A1 left untouched. Both run before
+      ! relax_unclustered: a cell relaxed solo has already taken its overshoot, so a later pass
+      ! cannot undo it. cskip's ghosts carry A1's marks so A2 refuses A1's cells as partners too.
+      if (this%cluster_mech_on) then
+         ! A1 rewrote VF/Q in place, so refresh them (and cskip) before A2 reads any neighbour
+         call this%VF%average_down(); call this%fill(lvl=this%amr%maxlvl,time=time)
+         call this%Q%average_down(); call this%Q%fill(time=time)
+         call cskip%fill_boundary(this%amr%geom(lvl))
+         call this%relax_clustered(dt=dt,time=time,cskip=cskip,mode=clust_mech)
+      end if
       call relax_unclustered()
       call postprocess_plic()
       ! Sync VF/Q (individual relax above changed them) and cskip's ghosts, so Pass B's neighbour
@@ -4375,7 +4712,13 @@ contains
       call cskip%fill_boundary(this%amr%geom(lvl))
       ! ---- Pass B: RHOG-based clustering on cells Pass A left untouched ----
       if (this%cluster_rhog_on) then
-         call this%relax_clustered(dt=dt,time=time,cskip=cskip,rhog_mode=.true.)
+         call this%relax_clustered(dt=dt,time=time,cskip=cskip,mode=clust_rhog)
+         call postprocess_plic()
+      end if
+      ! ---- Dissolve trace gas left stranded inside near-pure liquid. Gated ONLY on dissolve_on:
+      ! it is a last-resort cleanup for cells no pass could pair, which is not Pass B's business,
+      ! and it must stay available when Pass B is off.
+      if (this%dissolve_on) then
          call dissolve_stranded_gas()
          call postprocess_plic()
       end if
