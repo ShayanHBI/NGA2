@@ -8,35 +8,18 @@ Test pressure                        : 1e6
 Test temperature                     : 350
 Test initial liquid volume fraction  : 0
 Test initial vapor mass fraction     : 0
-Test Pjump                           : 5.8789364360062462E-006
+Test Pjump                           : 1.9865230370162334E-006
 
-# Raw-state override: when true, skip make_Q(p,T,VF_in,Yv_in) (which forces both
-# phases to start at the same p,T) and feed VF/Q(1:8) directly -- use to replay an
-# exact (possibly disequilibrium) cell state pulled from a real-run debug log.
-# CASE A -- regular. Twin of case B below: identical phase intensives (rhoL=182.4603,
-# eL=0.842160, rhoG=785.1606, eG=1.853329, Yv=0.910812 -> TL=0.356402, TG=0.392574,
-# PL=132.3238, PG=96.9523) and only VF differs, so only the heat-capacity split changes.
-# Here capfrac_gas=Cgas/(Cliq+Cgas)=0.1359: the liquid holds 86% of the capacity and the
-# GAS is the dragged phase. Predicted dTL/TL=+1.38%, TL 0.356402 -> 0.361317.
-# Case B is the sampled cell itself: VF=8.7338E-02 with Q1=15.93572, Q2=716.5862,
-# Q3=13.42042, Q4=1328.070, Q8=652.67531 -> capfrac_gas=0.9562, dTL/TL=+9.70%.
-# CASE C  -- solo cell.    VF=4.617E-03, Pjump=+4.689E-06
-#   Raw VF : 4.6170602273467023E-003
-#   Q1 : 5.8135472980742708E-001   Q2 : 1.5887552842064927E+001
-#   Q3 : 4.3661277452146097E-001   Q4 : 3.0740288515558412E+000
-#   Q5 : -1.5472915953681293E+001  Q6 : 5.4523917494504071E-001
-#   Q7 : 1.0334750920906883E-019   Q8 : 3.3753022895410108E-002
-# CASE Cc -- same cell POOLED with its cluster partner. Pjump=+5.879E-06.
 Use raw Q for single-cell test : true
-Raw VF : 5.5814517332462968E-002
-Raw Q1 : 7.0256307578697044E+000
-Raw Q2 : 1.5219311046398445E+001
-Raw Q3 : 5.3070647262131709E+000
-Raw Q4 : 2.8219234700306255E+000
-Raw Q5 : -2.1081639888069198E+001
-Raw Q6 : 6.9754361537603771E-001
-Raw Q7 : 1.5129315320900909E-019
-Raw Q8 : 3.6508361121320373E-002
+Raw VF : 1.2269050101212052E-001
+Raw Q1 : 1.6299917252416169E+001
+Raw Q2 : 7.8169389884809863E+000
+Raw Q3 : 1.1147200933829636E+001
+Raw Q4 : 1.6061403709481556E+000
+Raw Q5 : -2.2316557785241489E+001
+Raw Q6 : 1.2095336211237822E+000
+Raw Q7 : -1.2469573694858170E-019
+Raw Q8 : 6.4628713523691723E-003
 
 # Saturation-curve sweep (shared by the NASG and SG blocks)
 Sweep pressure                       : 1e5

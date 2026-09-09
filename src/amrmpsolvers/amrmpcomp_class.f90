@@ -4001,6 +4001,7 @@ contains
          pCurv=>this%curv%dataptr(mfi); pPLIC=>this%plic%dataptr(mfi); pS=>cskip%dataptr(mfi)
          pMatchdir=>matchdir%dataptr(mfi); pClustbuf=>clustbuf%dataptr(mfi)
          pCidx=>this%cluster_idx%mf(lvl)%dataptr(mfi); pNeed=>need%dataptr(mfi)
+         pStrand=>this%stranded%mf(lvl)%dataptr(mfi)
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
             d=nint(pMatchdir(i,j,k,1))
@@ -4062,6 +4063,7 @@ contains
             pVF(i,j,k,1)=VFnew_h; pQ(i,j,k,1:this%nQ)=Qnew_h
             pPLIC(i,j,k,1:3)=shared_nrm; pPLIC(i,j,k,4)=shared_d
             pS(i,j,k,1)=1.0_WP; pS(i,j,k,3)=1.0_WP; pCidx(i,j,k,1)=cid
+            call unstrand(pStrand,i,j,k)
             pClustbuf(i,j,k,1:this%nQ)=Qnew_g; pClustbuf(i,j,k,this%nQ+1)=VFnew_g
             pClustbuf(i,j,k,this%nQ+2:this%nQ+4)=shared_nrm; pClustbuf(i,j,k,this%nQ+5)=shared_d
             pClustbuf(i,j,k,this%nQ+6)=cid
@@ -4090,6 +4092,7 @@ contains
                pPLIC(i,j,k,4)=pClustbuf(ih,jh,kh,this%nQ+5)
                pS(i,j,k,1)=1.0_WP; pS(i,j,k,3)=1.0_WP
                pCidx(i,j,k,1)=pClustbuf(ih,jh,kh,this%nQ+6)
+               call unstrand(pStrand,i,j,k)
                if (in_dbg_box(i,j,k)) print*,'[relax_clustered ',passlbl,'] guest',i,j,k,'adopted from host',ih,jh,kh,'VF=',pVF(i,j,k,1) ! debug
             else if (pNeed(i,j,k,1).gt.0.0_WP) then
                pStrand(i,j,k,1)=1.0_WP; this%strand_acc=this%strand_acc+1.0_WP
@@ -4370,8 +4373,11 @@ contains
          ! a capacity measure nearly any cell holding liquid reads as gas-starved (see the note
          ! above), so two gas-starved cells would refuse each other even when one is genuinely
          ! gas-rich -- observed on a VF=0.64 claimant refusing a 93%-gas partner at VF=0.068.
+         ! On an exact tie the two ends must still agree on who the claimant is, or the face would
+         ! score differently from each side and the mutual-best matching above could never converge.
+         ! is_host(g) is true from exactly one end of any face, so it breaks the tie symmetrically.
          starvA=starve_none
-         if (needA.ge.needB) then
+         if (needA.gt.needB.or.(needA.eq.needB.and.is_host(g))) then
             nddum=need_pass(vfA,q(ci ,cj ,ck ,1:this%nQ),starvA)
             if (.not.supplies(starvA,vfA,vfB)) return
          else
@@ -4401,6 +4407,18 @@ contains
             end if
          end do
       end function best_face
+      !> A cell an earlier pass stranded and this one clustered is no longer stranded. Nothing else
+      !> clears the flag -- this%stranded is zeroed once per apply_relax, covering ALL THREE passes,
+      !> and a stranded cell is never marked in cskip, so it stays a free claimant for the next
+      !> pass. Without this the viz field shows cells that are clustered AND stranded at once, and
+      !> strand_acc counts them in every pass that failed on them.
+      subroutine unstrand(ps,ci,cj,ck)
+         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(inout) :: ps
+         integer, intent(in) :: ci,cj,ck
+         if (ps(ci,cj,ck,1).le.0.0_WP) return
+         ps(ci,cj,ck,1)=0.0_WP
+         this%strand_acc=this%strand_acc-1.0_WP
+      end subroutine unstrand
       !> A cluster's host is the cell whose match points to the numerically larger neighbour
       !> (even face 2,4,6=+x,+y,+z) -- equivalent to "smaller (i,j,k)" since a match differs by
       !> exactly 1 along exactly one axis, with no global index comparison needed.
@@ -4408,14 +4426,22 @@ contains
          integer, intent(in) :: g
          l=(mod(g,2).eq.0)
       end function is_host
-      !> 6-round symmetric mutual matching (deferred acceptance) -> frozen matchdir.
+      !> 6-round symmetric mutual-best matching -> frozen matchdir.
       !>
       !> Face scores are computed ONCE up front (they depend only on the pair's frozen pre-relax
-      !> state, not on who is still free) and then consumed as a preference list. A cell whose top
-      !> choice does not reciprocate strikes that face off before the next round, so it falls
-      !> through to its second choice: without that, best_face re-proposes to the same face every
-      !> round and any preference cycle (A->B->C->A) strands all its members no matter how many
-      !> rounds run.
+      !> state, not on who is still free) and then consumed as a preference list. A pair matches
+      !> when both members name each other; the only thing that removes a face between rounds is
+      !> the partner actually being taken, which best_face already tests.
+      !>
+      !> A cell must NOT strike a face merely because the partner failed to reciprocate this round.
+      !> The score is SYMMETRIC, so preference cycles cannot exist: w(AB)>w(AC), w(BC)>w(AB) and
+      !> w(AC)>w(BC) is a contradiction, and the globally largest free edge is always mutually best
+      !> for both its endpoints -- so every round matches at least one pair and the loop converges
+      !> on its own. Striking instead discards still-viable partners, because a partner that merely
+      !> proposed elsewhere may be rejected there and be free again next round. Observed: a claimant
+      !> at need=0.883 struck its +x face in round 1 when that neighbour proposed to a stronger
+      !> claimant next door, then stranded -- while the neighbour, rejected in the same round, sat
+      !> free and unmatched with a +0.451 score on the very face that had just been thrown away.
       subroutine negotiate()
          type(amrex_multifab) :: taken,pick,facesc
          type(amrex_mfiter) :: mfi2
@@ -4471,13 +4497,10 @@ contains
                   if (pTaken(ii,jj,kk,1).gt.0.5_WP) cycle
                   g=nint(pPick(ii,jj,kk,1)); if (g.eq.0) cycle
                   ia2=ii+foff(1,g); ja2=jj+foff(2,g); ka2=kk+foff(3,g)
+                  ! no else-branch: a face is given up ONLY when best_face sees the partner taken
                   if (nint(pPick(ia2,ja2,ka2,1)).eq.fopp(g)) then
                      pMd(ii,jj,kk,1)=real(g,WP); pTaken(ii,jj,kk,1)=1.0_WP
                      if (in_dbg_box(ii,jj,kk)) print*,'[relax_clustered ',passlbl,'] round',rr,'matched',ii,jj,kk,'dir=',g,'score=',pSc(ii,jj,kk,g) ! debug
-                  else
-                     ! rejected this round: strike the face off so the next round tries the next
-                     ! best one instead of re-proposing here forever
-                     pSc(ii,jj,kk,g)=-1.0_WP
                   end if
                end do; end do; end do
             end do

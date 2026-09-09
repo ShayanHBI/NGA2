@@ -81,12 +81,12 @@ Sutherland temperature : 0.073
 Max dt     : 1e-3
 Initial dt : 1e-3
 Max CFL    : 0.75
-Max time   : 15
+Max time   : 0.33
 
 # Output
-Output period     : 0.1
-Checkpoint period : 1
-Restart from      : 
+Output period     : 0.001
+Checkpoint period : 0.001
+Restart from      : 3.29000E-01
 
 # Relaxation clustering
 Thermal clustering    : .true.
@@ -95,12 +95,12 @@ Dissolve stranded gas : .true.
 RHOG clustering       : .false.
 
 # Diagnostics
-Diag stride : 1000000
+Diag stride : 1
 
 # Debug trace box
-Debug ilo : 871
-Debug ihi : 871
-Debug jlo : 1033
-Debug jhi : 1033
+Debug ilo : 943
+Debug ihi : 943
+Debug jlo : 1045
+Debug jhi : 1046
 Debug klo : 0
 Debug khi : 0
