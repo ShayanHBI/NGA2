@@ -236,6 +236,7 @@ PL_FRAMES = pick_uniform_frames()
 PL_ROW_GAP_IN = PANEL_GAP_IN   # vertical gap between grid rows == horizontal gap between columns
 
 PL_SCALE = 1.0e6  # Pa -> MPa
+VF_EPS = 1.0e-6
 PL_CBAR_LABEL = r"$p_l\;\left(\mathrm{MPa}\right)$"
 
 N_ROWS, N_COLS = 3, 3
@@ -276,6 +277,9 @@ def load_pl(frame_number):
     slc_i = ds_i.slice("z", 0.0)
     frb_i = slc_i.to_frb((re_m[0] - le_m[0], "code_length"), res, height=(re_m[1] - le_m[1], "code_length"))
     pl = np.array(frb_i["boxlib", "PL"]) / PL_SCALE
+    # PL is a placeholder zero where VF~0; blank those cells
+    vf = np.array(frb_i["boxlib", "VF"])
+    pl = np.where(vf > VF_EPS, pl, np.nan)
     return t, pl
 
 
@@ -333,8 +337,8 @@ cax_PL = add_axes_in_inches(
 # per-panel autoscaling would blow up round-off-level noise (e.g. the near-
 # uniform t=0 frame) into a full-colormap checkerboard tracing AMR patch edges.
 pl_frames = [load_pl(frame_number) for frame_number in PL_FRAMES]
-PL_VMIN = min(pl.min() for _, pl in pl_frames)
-PL_VMAX = max(pl.max() for _, pl in pl_frames)
+PL_VMIN = min(np.nanmin(pl) for _, pl in pl_frames)
+PL_VMAX = max(np.nanmax(pl) for _, pl in pl_frames)
 # PL_VMIN = 0
 # PL_VMAX = 100
 PL_TICKS = np.linspace(PL_VMIN, PL_VMAX, 5)
@@ -391,8 +395,8 @@ VF_CBAR_LABEL = r"$\alpha$"
 VF_VMIN, VF_VMAX = 0.0, 1.0
 VF_TICKS = np.linspace(VF_VMIN, VF_VMAX, 5)
 
-VF_VIEW_XLIM = (-3, 3)
-VF_VIEW_YLIM = (-3, 3)
+VF_VIEW_XLIM = (-4, 4)
+VF_VIEW_YLIM = (-4, 4)
 VF_X_TICKS = [-2, 0, 2]
 VF_Y_TICKS = VF_X_TICKS
 

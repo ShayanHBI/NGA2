@@ -19,21 +19,23 @@ see the "hybrid" option (measure once, freeze the result) if you need
 that guarantee back.
 """
 
+import argparse
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import yt
 
-CASE = "cavitation_NASG_relax_pTg_exp"
+parser = argparse.ArgumentParser()
+parser.add_argument("input", help="case identifier, e.g. wall_pTg")
+args = parser.parse_args()
+
+INPUT = args.input
+CASE = f"cavitation_{INPUT}"
 PLTFILE = f"amrviz/{CASE}/plt.nga2.cell.000001"
 
 CBAR_LABEL = r"$\left(\mathrm{m\,s^{-1}}\right)$"
 CMAP = "jet"
-
-VMIN_UV, VMAX_UV = -50.0, 50.0
-VMIN_UMAG, VMAX_UMAG = 35.0, 50.0
-UV_TICKS = [-50, -25, 0, 25, 50]
-UMAG_TICKS = [35, 40, 45, 50]
 
 # ---- What you still choose explicitly ("the rest of things") ----------
 FIG_WIDTH_IN     = 6
@@ -102,11 +104,11 @@ def style_axes(ax, x_ticks, y_ticks, show_ylabel):
 
     if show_ylabel:
         ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
-        ax.set_ylabel(r"$y\;\left(\mathrm{cm}\right)$", labelpad=2.5)
+        ax.set_ylabel(r"$y\;\left(\mathrm{mm}\right)$", labelpad=2.5)
     else:
         ax.tick_params(labelleft=False)
 
-    ax.set_xlabel(r"$x\;\left(\mathrm{cm}\right)$", labelpad=2.5)
+    ax.set_xlabel(r"$x\;\left(\mathrm{mm}\right)$", labelpad=2.5)
 
 
 def style_cbar(cbar, ticks):
@@ -131,17 +133,26 @@ frb = slc.to_frb((re_m[0] - le_m[0], "code_length"), res, height=(re_m[1] - le_m
 
 data = {field: np.array(frb["boxlib", field]) for field in ("U", "V", "Umag")}
 
-# Everything plotted from here on is in cm -- gives clean integer tick values.
-M_TO_CM = 100.0
-le = le_m * M_TO_CM
-re = re_m * M_TO_CM
+# Colorbar ranges/ticks follow the actual data range of this run.
+VMIN_UV = min(data["U"].min(), data["V"].min())
+VMAX_UV = max(data["U"].max(), data["V"].max())
+UV_TICKS = np.linspace(VMIN_UV, VMAX_UV, 5)
+
+VMIN_UMAG = data["Umag"].min()
+VMAX_UMAG = data["Umag"].max()
+UMAG_TICKS = np.linspace(VMIN_UMAG, VMAX_UMAG, 5)
+
+# Everything plotted from here on is in mm -- gives clean integer tick values.
+M_TO_MM = 1000.0
+le = le_m * M_TO_MM
+re = re_m * M_TO_MM
 extent = [le[0], re[0], le[1], re[1]]
 
 x_span = re[0] - le[0]
 y_span = re[1] - le[1]
 data_height_over_width = y_span / x_span
 
-x_ticks = [-4, -2, 0, 2, 4]
+x_ticks = [-10, -5, 0, 5, 10]
 y_ticks = x_ticks
 
 
@@ -276,6 +287,6 @@ ax_Umag.set_title(r"$|\vec{U}|$", fontsize=TITLE_FONTSIZE, pad=5.0)
 cbar_Umag = fig.colorbar(im_Umag, cax=cax_Umag, orientation="vertical")
 style_cbar(cbar_Umag, UMAG_TICKS)
 
-out = "UV_Umag0_auto_layout.pdf"
+out = f"UV_Umag0_auto_layout_{INPUT}.pdf"
 fig.savefig(out)
 print(f"Saved: {out}")

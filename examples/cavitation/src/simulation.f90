@@ -47,6 +47,11 @@ module simulation
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
    real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
+   !> Near-wall liquid fold: after each relaxation, gas within wall_band finest cells of a wall is folded into the liquid
+   logical  :: wall_fold=.false.
+   integer  :: wall_band=0
+   real(WP), dimension(2) :: wfold_acc=0.0_WP   !< this rank's cumulative folded cells / gas mass
+   real(WP) :: wfold_n=0.0_WP,wfold_m=0.0_WP    !< all-rank totals for the rescue monitor
 
    !> EOS parameters (NASG liquid and ideal gas)
    real(WP) :: GammaL,PinfL,qL,qpL,CvL,CpL,bL
@@ -235,6 +240,74 @@ contains
          call amr%mfiter_destroy(mfi)
       end do
    end subroutine get_viscosities
+
+   !> Fold all gas into the liquid for cells within wall_band finest cells of a non-periodic boundary.
+   !> Conserves mass, total internal energy and momentum.
+   subroutine fold_wall_vapor(t)
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      implicit none
+      real(WP), intent(in) :: t
+      integer :: lvl,i,j,k,d
+      integer, dimension(3) :: dlo,dhi,ind
+      logical, dimension(3) :: per
+      logical :: near
+      real(WP) :: dx,dy,dz,dV
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pPLIC
+      if (.not.wall_fold.or.wall_band.le.0) return
+      ! Relaxation only runs once the finest level exists
+      if (amr%clvl().lt.amr%maxlvl) return
+      lvl=amr%maxlvl
+      dx=amr%dx(lvl)
+      dy=amr%dy(lvl)
+      dz=amr%dz(lvl)
+      dV=amr%cell_vol(lvl)
+      dlo=amr%geom(lvl)%domain%lo
+      dhi=amr%geom(lvl)%domain%hi
+      per=[amr%xper,amr%yper,amr%zper]
+      call amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>fs%VF%mf(lvl)%dataptr(mfi)
+         pQ=>fs%Q%mf(lvl)%dataptr(mfi)
+         pCL=>fs%CL%dataptr(mfi)
+         pCG=>fs%CG%dataptr(mfi)
+         pPLIC=>fs%PLIC%dataptr(mfi)
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+            ! Only cells holding gas, with liquid to fold it into
+            if (pVF(i,j,k,1).ge.1.0_WP.or.pQ(i,j,k,1).le.0.0_WP) cycle
+            ! Within wall_band cells of a non-periodic boundary?
+            ind=[i,j,k]
+            near=.false.
+            do d=1,3
+               if (per(d)) cycle
+               if (ind(d)-dlo(d).lt.wall_band.or.dhi(d)-ind(d).lt.wall_band) near=.true.
+            end do
+            if (.not.near) cycle
+            ! Census
+            wfold_acc(1)=wfold_acc(1)+1.0_WP
+            wfold_acc(2)=wfold_acc(2)+pQ(i,j,k,2)*dV
+            ! Fold gas mass and internal energy into the liquid
+            pQ(i,j,k,1)=pQ(i,j,k,1)+pQ(i,j,k,2)
+            pQ(i,j,k,2)=0.0_WP
+            pQ(i,j,k,3)=pQ(i,j,k,3)+pQ(i,j,k,4)
+            pQ(i,j,k,4)=0.0_WP
+            if (fs%gas%ns.gt.1) pQ(i,j,k,fs%Yg_lo:fs%Yg_hi)=0.0_WP
+            ! Pure-liquid snap, same convention as the solver's postprocess_plic
+            pVF(i,j,k,1)=1.0_WP
+            pCL(i,j,k,1:3)=[amr%xlo+(real(i,WP)+0.5_WP)*dx,amr%ylo+(real(j,WP)+0.5_WP)*dy,amr%zlo+(real(k,WP)+0.5_WP)*dz]
+            pCG(i,j,k,1:3)=pCL(i,j,k,1:3)
+            pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,+1.0e10_WP]
+         end do; end do; end do
+      end do
+      call amr%mfiter_destroy(mfi)
+      ! Sync and apply BC, as apply_relax does
+      call fs%VF%average_down()
+      call fs%fill(lvl=amr%maxlvl,time=t)
+      call fs%Q%average_down()
+      call fs%Q%fill(time=t)
+   end subroutine fold_wall_vapor
 
    !> User init callback - set Q and VF/barycenters for a uniform liquid domain
    subroutine cavitation_init(solver,lvl,time,ba,dm)
@@ -667,6 +740,9 @@ contains
          ! Solo-vs-clustered relaxation diagnostic CSV
          call param_read('Relax diagnostic',fs%relax_diag_on,default=.false.)
          call param_read('Diag stride',fs%relax_diag_stride,default=20)
+         ! Near-wall liquid fold
+         call param_read('Wall liquid fold',wall_fold,default=.false.)
+         call param_read('Wall liquid band',wall_band,default=4)
       end block create_solver
 
       ! Initialize workspaces
@@ -882,6 +958,8 @@ contains
          call rescfile%add_column(stuck_n,'Stuck n')
          call rescfile%add_column(fs%pool_n,'Pool n')
          call rescfile%add_column(fs%strand_n,'Strand n')
+         call rescfile%add_column(wfold_n,'WallFold n')
+         call rescfile%add_column(wfold_m,'WallFold dm')
          call rescfile%write()
       end block create_monitors
 
@@ -920,6 +998,8 @@ contains
          call debug_probe('03-post-build_plic(merge_Q+clean_Q)')
          ! Relax
          call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
+         ! Near-wall liquid fold
+         call fold_wall_vapor(time%tmid)
          call debug_probe('04-post-apply_relax')
          call fs%get_primitive(Q=fs%Q)
          call debug_probe('06-post-get_primitive')
@@ -949,6 +1029,8 @@ contains
          call fs%build_plic(time=time%t)
          ! Relax
          call fs%apply_relax(dt=time%dt,time=time%t)
+         ! Near-wall liquid fold
+         call fold_wall_vapor(time%t)
          call fs%get_primitive(Q=fs%Q)
          ! Rebuild sub-cell VF
          call fs%build_subVF()
@@ -1005,6 +1087,11 @@ contains
             call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
             diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
             flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
+            ! Near-wall liquid fold census
+            tmp(1:2)=wfold_acc
+            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,2,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            wfold_n=tmp(1)
+            wfold_m=tmp(2)
          end block relax_census
          call mfile%write()
          call consfile%write()
