@@ -10,10 +10,9 @@ module simulation
    use event_class,            only: event
    use monitor_class,          only: monitor
    use amrio_class,            only: amrio
-   use stiffened_gas_class,    only: stiffened_gas
    use nasg_class,             only: nasg
    use igmix_class,            only: igmix
-   use relax_igmix_sg_class,   only: relax_igmix_sg,Prelax,PTrelax,PTgrelax
+   use relax_igmix_sg_class,   only: Prelax,PTrelax,PTgrelax
    use relax_igmix_nasg_class, only: relax_igmix_nasg
    implicit none
    private
@@ -44,18 +43,21 @@ module simulation
    integer  :: restart_step
 
    !> Simulation monitoring
-   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile
+   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile
+   !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
+   real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
+   real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
 
-   !> EOS parameters (SG/NASG liquid and ideal gas)
+   !> EOS parameters (NASG liquid and ideal gas)
    real(WP) :: GammaL,PinfL,qL,qpL,CvL,CpL,bL
    real(WP) :: GammaA,qA,qpA,CvA,CpA
    real(WP) :: GammaV,qV,qpV,CvV,CpV
 
    !> EOS and relaxation
-   class(stiffened_gas), allocatable,    target, save :: eosL         !< Liquid pure-substance EOS (SG or NASG)
-   type(igmix),                          target, save :: mixG         !< Gas mixture (vapor + air)
-   class(relax_igmix_nasg), allocatable, target, save :: relax_model  !< Relaxation model (SG or NASG liquid)
-   character(len=str_medium), save :: liquid_eos_type,relaxation_type
+   type(nasg),             target, save :: eosL         !< Liquid pure-substance EOS
+   type(igmix),            target, save :: mixG         !< Gas mixture (vapor + air)
+   type(relax_igmix_nasg), target, save :: relax_model  !< Relaxation model
+   character(len=str_medium), save :: relaxation_type
    character(len=str_medium), save :: case_name
 
    !> Boundary condition mode: 'dirichlet' (cavitation only, sustained expansion)
@@ -66,6 +68,7 @@ module simulation
    real(WP) :: T0,p0              !< Uniform initial liquid temperature/pressure
    real(WP) :: rhoL0,eL0          !< Liquid density/energy at (p0,T0), used by the Dirichlet BC
    real(WP) :: U0,r0              !< Gaussian pulse radial profile: amplitude [1/s] and radius [m]
+   ! real(WP) :: U_exit,U_core,U_slp !< Linear radial profile: Ur=U_slp*r+U_core, U_slp=(U_exit-U_core)/Lx
    real(WP) :: p_cav              !< Cavitation onset pressure threshold
    real(WP) :: Tctol              !< Condensation temperature tolerance
    real(WP) :: VFratmax           !< Max per-relax-call VF change factor (relax_igmix_sg default: 10.0)
@@ -97,6 +100,7 @@ contains
       real(WP), intent(in) :: r
       real(WP) :: Ur
       Ur=U0*r*exp(-(r/r0)**2)
+      ! Ur=U_slp*r+U_core
    end function get_radial_velocity
 
    !> debug: print Q, RHOL/RHOG, PL/PG, TL/TG for one target cell at a given pipeline stage,
@@ -140,8 +144,8 @@ contains
                PG=fs%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=y)
                TG=fs%gas%get_T_from_p_rho(p=PG,rho=RHOG,y=y)
             end if
-            print*,'PROBE[',trim(label),'] n=',time%n,' VF=',VFc,' Q=',pQ(ti,tj,tk,1:8),&
-            &      ' RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG ! debug
+            ! print*,'PROBE[',trim(label),'] n=',time%n,' VF=',VFc,' Q=',pQ(ti,tj,tk,1:8),&
+            ! &      ' RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG ! debug
          end if
       end do
       call amr%mfiter_destroy(mfi)
@@ -187,9 +191,9 @@ contains
          if (wi.ge.bx%lo(1).and.wi.le.bx%hi(1).and.wj.ge.bx%lo(2).and.wj.le.bx%hi(2).and.wk.ge.bx%lo(3).and.wk.le.bx%hi(3)) then
             hasRes=(pVF(wi-1,wj,wk,1).lt.fs%merge_VFhi).or.(pVF(wi+1,wj,wk,1).lt.fs%merge_VFhi).or.&
             &      (pVF(wi,wj-1,wk,1).lt.fs%merge_VFhi).or.(pVF(wi,wj+1,wk,1).lt.fs%merge_VFhi)
-            print*,'WORSTGAS n=',time%n,' (i,j)=',wi,wj,' RHOG=',wRHOG,' VF=',pVF(wi,wj,wk,1),&
-            &      ' nbrVF(xm,xp,ym,yp)=',pVF(wi-1,wj,wk,1),pVF(wi+1,wj,wk,1),pVF(wi,wj-1,wk,1),pVF(wi,wj+1,wk,1),&
-            &      ' merge_VFhi=',fs%merge_VFhi,' hasReservoirNeighbor=',hasRes ! debug
+            ! print*,'WORSTGAS n=',time%n,' (i,j)=',wi,wj,' RHOG=',wRHOG,' VF=',pVF(wi,wj,wk,1),&
+            ! &      ' nbrVF(xm,xp,ym,yp)=',pVF(wi-1,wj,wk,1),pVF(wi+1,wj,wk,1),pVF(wi,wj-1,wk,1),pVF(wi,wj+1,wk,1),&
+            ! &      ' merge_VFhi=',fs%merge_VFhi,' hasReservoirNeighbor=',hasRes ! debug
          end if
       end do
       call amr%mfiter_destroy(mfi)
@@ -470,37 +474,28 @@ contains
          ! Prandtl numbers
          call param_read('Liquid Prandtl number',PrL)
          call param_read('Gas Prandtl number',PrG)
-         ! Uniform liquid state and boundary velocity
+         ! Domain dimensions
+         call param_read('Lx',Lx)
+         call param_read('Ly',Ly)
+         ! Velocity profile
          call param_read('Liquid temperature',T0)
          call param_read('Liquid pressure',p0)
          call param_read('Pulse amplitude',U0)
          call param_read('Pulse radius',r0)
+         ! call param_read('Exit velocity',U_exit)
+         ! call param_read('Core velocity',U_core)
+         ! U_slp=(U_exit-U_core)/Lx
          ! Cavitation onset: nucleate when liquid pressure drops below p_cav
          call param_read('Cavitation pressure threshold',p_cav,default=huge(1.0_WP))
          ! Condensation onset: nucleate only when vapor is subcooled by more than Tctol below Tsat
          call param_read('Condensation temperature tolerance',Tctol,default=0.0_WP)
          call param_read('Max VF change factor',VFratmax,default=10.0_WP)
-         ! Domain dimensions
-         call param_read('Lx',Lx)
-         call param_read('Ly',Ly)
          ! Select boundary condition
          call param_read('Boundary condition',bc_type)
          select case (trim(bc_type))
          case ('dirichlet','wall')
          case default
             call die('Boundary condition has to be either dirichlet or wall')
-         end select
-         ! Select liquid eos
-         call param_read('Liquid EOS type',liquid_eos_type)
-         select case (trim(liquid_eos_type))
-         ! case ('SG')
-         !    allocate(stiffened_gas  :: eosL)
-         !    allocate(relax_igmix_sg :: relax_model)
-         case ('NASG')
-            allocate(nasg              :: eosL)
-            allocate(relax_igmix_nasg  :: relax_model)
-         case default
-            call die('[simulation] Unknown Liquid EOS type: '//trim(liquid_eos_type))
          end select
          ! Select relaxation model
          call param_read('Relaxation type',relaxation_type)
@@ -510,15 +505,10 @@ contains
             call die('Relaxation type has to be either p, pT, or pTg')
          end select
          ! Build case name
-         case_name='cavitation_'//trim(bc_type)//'_'//trim(liquid_eos_type)//'_'//trim(relaxation_type)
-         ! Initialize EOS objects
-         select type (eosL)
-         type is (stiffened_gas)
-            call eosL%initialize(gamma=GammaL,pinf=PinfL,cv=CvL,q=qL,qp=qpL,name='water')
-         type is (nasg)
-            call eosL%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
-            eosL%brhomax=1e10_WP
-         end select
+         case_name='cavitation_'//trim(bc_type)//'_'//trim(relaxation_type)
+         ! Initialize liquid EOS
+         call eosL%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
+         eosL%brhomax=1e10_WP
          ! Liquid density and energy at the uniform initial state (used by the Dirichlet BC)
          rhoL0=eosL%get_rho_from_p_T(p=p0,T=T0,y=[1.0_WP])
          eL0  =eosL%get_e_from_p_T  (p=p0,T=T0,y=[1.0_WP])
@@ -660,6 +650,8 @@ contains
          relax_model%VFratmax=VFratmax
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
+         ! relax_model%diss_P=200.0_WP
+         ! relax_model%diss_RHO=200.0_WP
          ! fs%rho_floor=1.0e-3_WP
          fs%Pmin_liq=-0.9_WP*eosL%pinf
          fs%Tmin_liq=300.0_WP
@@ -667,6 +659,14 @@ contains
          fs%Tmin_gas=0.1_WP
          relax_model%Pmin_liq=fs%Pmin_liq; relax_model%Tmin_liq=fs%Tmin_liq
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
+         ! Pre-relaxation clustering
+         fs%cluster_on=.true.
+         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A1
+         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A2
+         call param_read('Dissolve stranded gas',fs%dissolve_on,default=.true.)
+         ! Solo-vs-clustered relaxation diagnostic CSV
+         call param_read('Relax diagnostic',fs%relax_diag_on,default=.false.)
+         call param_read('Diag stride',fs%relax_diag_stride,default=20)
       end block create_solver
 
       ! Initialize workspaces
@@ -713,7 +713,7 @@ contains
          ! Compute viscosities
          call get_viscosities()
          ! Add SGS models
-         call fs%add_viscartif(dt=time%dt,Cvisc=1e-2_WP)
+         call fs%add_viscartif(dt=time%dt,Cvisc=1.0e-2_WP)
          call fs%add_vreman(dt=time%dt)
          ! Compute Umag and Mach number
          call Umag%get_magnitude(srcX=fs%UVW,srcY=fs%UVW,srcZ=fs%UVW,compX=1,compY=2,compZ=3)
@@ -753,6 +753,8 @@ contains
          call viz%add_scalar(fs%TG,1,'TG')
          call viz%add_scalar(fs%IL,1,'IL')
          call viz%add_scalar(fs%IG,1,'IG')
+         call viz%add_scalar(fs%cluster_idx,1,'cluster_idx')
+         call viz%add_scalar(fs%stranded,1,'stranded')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -779,10 +781,15 @@ contains
          call mfile%add_column(fs%RHOLmax,'rhoLmax')
          call mfile%add_column(fs%PLmin,'PLmin')
          call mfile%add_column(fs%PLmax,'PLmax')
+         call mfile%add_column(fs%TLmin,'TLmin')
+         call mfile%add_column(fs%TLmax,'TLmax')
          call mfile%add_column(fs%RHOGmin,'rhoGmin')
          call mfile%add_column(fs%RHOGmax,'rhoGmax')
          call mfile%add_column(fs%PGmin,'PGmin')
          call mfile%add_column(fs%PGmax,'PGmax')
+         call mfile%add_column(fs%TGmin,'TGmin')
+         call mfile%add_column(fs%TGmax,'TGmax')
+         call mfile%add_column(fs%dPmax,'dPmax')
          call mfile%add_column(fs%VFmin,'VFmin')
          call mfile%add_column(fs%VFmax,'VFmax')
          call mfile%add_column(fs%VFint,'VFint')
@@ -856,6 +863,26 @@ contains
          call tfile%add_column(fs%nmixed_max,'mixed_max')
          call tfile%add_column(fs%nmixed_min,'mixed_min')
          call tfile%write()
+         ! Create rescue-census monitor (cumulative counters/amounts per mechanism)
+         rescfile=monitor(amRoot=amr%amRoot,name='rescue')
+         call rescfile%add_column(time%n,'Timestep')
+         call rescfile%add_column(time%t,'Time')
+         call rescfile%add_column(fs%resc_nl,'LiqResc n')
+         call rescfile%add_column(fs%resc_ml,'LiqResc dm')
+         call rescfile%add_column(fs%resc_el,'LiqResc dE')
+         call rescfile%add_column(fs%resc_ng,'GasResc n')
+         call rescfile%add_column(fs%resc_mg,'GasResc dm')
+         call rescfile%add_column(fs%resc_eg,'GasResc dE')
+         call rescfile%add_column(diss_n,'Diss n')
+         call rescfile%add_column(diss_m,'Diss dm')
+         call rescfile%add_column(quad_n,'Quad n')
+         call rescfile%add_column(swap_n,'Swap n')
+         call rescfile%add_column(flr_n,'Floor n')
+         call rescfile%add_column(flr_e,'Floor dE')
+         call rescfile%add_column(stuck_n,'Stuck n')
+         call rescfile%add_column(fs%pool_n,'Pool n')
+         call rescfile%add_column(fs%strand_n,'Strand n')
+         call rescfile%write()
       end block create_monitors
 
    end subroutine simulation_init
@@ -876,6 +903,7 @@ contains
             call time%adjust_dt()
          end if
          call time%increment()
+         fs%relax_diag_step=time%n   ! diag: drives relax_diag_stride
 
          ! Remember old state
          call fs%store_old()
@@ -890,11 +918,9 @@ contains
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
          call debug_probe('03-post-build_plic(merge_Q+clean_Q)')
-         ! Relax and clean up
+         ! Relax
          call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
          call debug_probe('04-post-apply_relax')
-         call fs%clean_Q()
-         call debug_probe('05-post-clean_Q-2nd-call')
          call fs%get_primitive(Q=fs%Q)
          call debug_probe('06-post-get_primitive')
          ! Rebuild sub-cell VF
@@ -905,6 +931,8 @@ contains
          ! Add pressure term
          call fs%add_phasic_pressure(scale=0.5_WP*time%dt)
          call debug_probe('08-post-add_phasic_pressure')
+         ! Add surface tension term
+         call fs%add_surface_tension(scale=0.5_WP*time%dt)
          ! Average down and fill ghosts
          call fs%Q%average_down(); call fs%Q%fill(time=time%tmid)
          call debug_probe('09-post-final-avgdown-fill')
@@ -919,9 +947,8 @@ contains
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
-         ! Relax and clean up
+         ! Relax
          call fs%apply_relax(dt=time%dt,time=time%t)
-         call fs%clean_Q()
          call fs%get_primitive(Q=fs%Q)
          ! Rebuild sub-cell VF
          call fs%build_subVF()
@@ -929,6 +956,8 @@ contains
          call fs%get_face_velocity(); call fs%average_down_velocity()
          ! Add pressure term
          call fs%add_phasic_pressure(scale=time%dt)
+         ! Add surface tension term
+         call fs%add_surface_tension(scale=time%dt)
          ! Average down and fill ghosts
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          call fs%average_down_velocity(); call fs%fill_velocity(time=time%t)
@@ -947,7 +976,7 @@ contains
          call get_viscosities()
 
          ! Add SGS models
-         call fs%add_viscartif(dt=time%dt,Cvisc=1e-2_WP)
+         call fs%add_viscartif(dt=time%dt,Cvisc=1.0e-2_WP)
          call fs%add_vreman(dt=time%dt)
 
          ! Compute Umag and Mach number
@@ -955,8 +984,7 @@ contains
          call Mach%copy(src=Umag); call Mach%divide(src=fs%C)
 
          ! Visualization output
-         ! if (viz_evt%occurs()) call viz%write(time=time%t)
-         call viz%write(time=time%t)
+         if (viz_evt%occurs()) call viz%write(time=time%t)
 
          ! Checkpoint save
          if (save_evt%occurs()) then
@@ -968,10 +996,21 @@ contains
 
          ! Perform and output monitoring
          call fs%get_info()
+         relax_census: block
+            use mpi_f08,  only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
+            use parallel, only: MPI_REAL_WP
+            real(WP), dimension(7) :: tmp
+            integer :: ierr
+            tmp=relax_model%acc
+            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
+            flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
+         end block relax_census
          call mfile%write()
          call consfile%write()
          call cflfile%write()
          call tfile%write()
+         call rescfile%write()
 
       end do
 
@@ -996,6 +1035,9 @@ contains
       call dQdt%finalize()
       call Umag%finalize()
       call Mach%finalize()
+      ! Finalize materials
+      call eosL%finalize()
+      call mixG%finalize()
       ! Finalize visualization
       call viz%finalize()
       call viz_evt%finalize()
@@ -1008,6 +1050,7 @@ contains
       call consfile%finalize()
       call gridfile%finalize()
       call tfile%finalize()
+      call rescfile%finalize()
    end subroutine simulation_final
 
 end module simulation

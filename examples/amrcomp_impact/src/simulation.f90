@@ -633,7 +633,6 @@ contains
          fs%cluster_on=.true.         ! diag run: clustering ON (set .false. to relax every cell alone)
          call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A1
          call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A2
-         call param_read('RHOG clustering',fs%cluster_rhog_on,default=.true.)      ! Pass B
          call param_read('Dissolve stranded gas',fs%dissolve_on,default=.true.)
          fs%relax_diag_on=.true.      ! diag run: write solo-vs-clustered CSV
          call param_read('Diag stride',fs%relax_diag_stride,default=20)

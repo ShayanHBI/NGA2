@@ -92,7 +92,6 @@ Restart from      : 3.29000E-01
 Thermal clustering    : .true.
 Mechanical clustering : .true.
 Dissolve stranded gas : .true.
-RHOG clustering       : .false.
 
 # Diagnostics
 Diag stride : 1

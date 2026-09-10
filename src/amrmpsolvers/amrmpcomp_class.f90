@@ -25,7 +25,6 @@ module amrmpcomp_class
    ! it alone, and ranks candidate partners by that same criterion evaluated on the pooled pair.
    integer, parameter, public :: clust_thermal=1 !< Pass A1: heat-capacity starvation, ranks by pooled dT excursion
    integer, parameter, public :: clust_mech   =2 !< Pass A2: compliance starvation,    ranks by pooled dRHO excursion
-   integer, parameter, public :: clust_rhog   =3 !< Pass B:  RHOG spike vs neighbours, ranks by VF (unchanged)
 
    !> AMR compressible multiphase solver type
    type, extends(amrmpflow) :: amrmpcomp
@@ -55,8 +54,8 @@ module amrmpcomp_class
 
       ! Pre-relaxation clustering
       logical  :: cluster_on=.true.    !< enable relax_clustered (called from apply_relax, ahead of its per-cell relax loop)
-      real(WP) :: cluster_VFlo=0.05_WP  !< thin-liquid bound: still used by Pass B (rhoG_ref) and dissolve_stranded_gas
-      real(WP) :: cluster_VFhi=0.95_WP  !< thin-gas    bound: still used by Pass B (rhoG_ref) and dissolve_stranded_gas
+      real(WP) :: cluster_VFlo=0.05_WP  !< thin-liquid bound: pair-validity floor in score, and dissolve_stranded_gas
+      real(WP) :: cluster_VFhi=0.95_WP  !< thin-gas    bound: pair-validity floor in score, and dissolve_stranded_gas
       ! Pass A1 (thermal) and Pass A2 (mechanical) triggers. A phase holding a negligible share of
       ! the cell's heat capacity is pulled the full temperature gap by one instantaneous thermal
       ! equilibration; a phase holding a negligible share of the cell's compliance is pulled the
@@ -67,7 +66,6 @@ module amrmpcomp_class
       logical  :: cluster_mech_on=.true.   !< enable Pass A2 (mechanical-compliance clustering)
       real(WP) :: cluster_dTtol=0.01_WP    !< tolerated predicted relative temperature excursion per relax call
       real(WP) :: cluster_dRHOtol=0.01_WP  !< tolerated predicted relative phasic density excursion per relax call
-      real(WP) :: cluster_rhoG_K=1.2_WP !< RHOG density-spike claimant multiplier vs. reservoir-eligible neighbours' median RHOG, OR'd into gclaim on top of the VF-based cluster_VFhi trigger (RHOG runaway compounds well before VF crosses cluster_VFhi)
 !      integer  :: redist_method=geo_redist_multi !< cluster_relax split-back method: cap_redist, geo_redist_multi, or geo_redist_shared
 
       ! Solo-vs-clustered relaxation diagnostic: for every Need>0 cell, logs its pre-relax state,
@@ -82,8 +80,7 @@ module amrmpcomp_class
       ! Post-clustering stranded-gas dissolution: a cell surrounded by near-pure-liquid neighbours
       ! on every face has no reservoir for relax_clustered to pool with -- fold its trace gas back
       ! into the liquid instead of leaving a runaway RHOG in the field.
-      logical  :: dissolve_on=.true.        !< enable dissolve_stranded_gas (called from apply_relax, independently of Pass B)
-      logical  :: cluster_rhog_on=.true.    !< enable Pass B (RHOG-based clustering); off reverts to VF-only clustering
+      logical  :: dissolve_on=.true.        !< enable dissolve_stranded_gas (called from apply_relax, after both clustering passes)
       real(WP) :: dissolve_rhoG_K=2.0_WP    !< RHOG must exceed this multiple of the local 2-ring reference RHOG to dissolve
 
       ! Phase rescue: user-specified minimal (P,T) per phase, enforced in clean_Q wherever the
@@ -3922,8 +3919,8 @@ contains
    !> Symmetric pairwise clustering: matches each thin/spiking cell with one face neighbour via
    !> mutual "deferred acceptance" negotiation, relaxes the pair once, splits back geometrically.
    !> mode=clust_thermal: Pass A1, heat-capacity starvation. mode=clust_mech: Pass A2, compliance
-   !> starvation. mode=clust_rhog: Pass B, RHOG-spike-based. Every pass skips cells an earlier pass
-   !> already clustered (cskip comp 1), as claimant AND as partner.
+   !> starvation. Either pass skips cells the other already clustered (cskip comp 1), as claimant
+   !> AND as partner.
    subroutine relax_clustered(this,dt,time,cskip,mode)
       use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
       use amrvof_geometry,  only: cut_hex_vol,get_plane_dist
@@ -3935,8 +3932,7 @@ contains
       integer, intent(in), optional :: mode
       integer :: pass
       integer, parameter :: starve_none=0,starve_liq=1,starve_gas=2 !< which phase a Need says is being dragged
-      character(len=2) :: passlbl   ! debug: which criterion built this cluster (A1/A2/B)
-      logical :: use_rhog
+      character(len=2) :: passlbl   ! debug: which criterion built this cluster (A1/A2)
       integer :: lvl,i,j,k,ig,jg,kg,ih,jh,kh,d,ierr,local_id
       integer, dimension(3,6) :: foff
       integer, dimension(6) :: fopp
@@ -3956,10 +3952,8 @@ contains
       integer :: ierr_solo                                         ! diag
       logical :: dolog                                             ! diag: logging active this step
       pass=clust_thermal; if (present(mode)) pass=mode
-      use_rhog=(pass.eq.clust_rhog)
       select case (pass)
       case (clust_mech); passlbl='A2'
-      case (clust_rhog); passlbl='B '
       case default;      passlbl='A1'
       end select
       dolog=this%relax_diag_on.and.mod(this%relax_diag_step,max(this%relax_diag_stride,1)).eq.0
@@ -3980,7 +3974,7 @@ contains
       call clustbuf%setval(0.0_WP)
       ! ---- Phase 1: compute and ghost-fill every cell's own Need (host association not used here
       ! since negotiate() below scores a NEIGHBOUR's Need too -- must always read the precomputed,
-      ! ghost-filled field, never recompute it live on a neighbour (see rhoG_ref's 2-ring reach) ----
+      ! ghost-filled field, never recompute it live on a neighbour) ----
       call this%amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
          pVF=>this%VF%mf(lvl)%dataptr(mfi); pQ=>this%Q%mf(lvl)%dataptr(mfi); pS=>cskip%dataptr(mfi)
@@ -4118,54 +4112,6 @@ contains
          integer, intent(in) :: ci,cj,ck
          l=(ci.ge.dbg_ilo.and.ci.le.dbg_ihi.and.cj.ge.dbg_jlo.and.cj.le.dbg_jhi.and.ck.ge.dbg_klo.and.ck.le.dbg_khi)
       end function in_dbg_box
-      !> Local gas density, mirrors get_primitive's RHOG=Q(2)/(1-VF).
-      real(WP) function rhoG_at(ci,cj,ck,vf,q) result(rg)
-         integer, intent(in) :: ci,cj,ck
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
-         if (vf(ci,cj,ck,1).le.VFhi.and.q(ci,cj,ck,2).gt.0.0_WP) then
-            rg=q(ci,cj,ck,2)/(1.0_WP-vf(ci,cj,ck,1))
-         else
-            rg=0.0_WP
-         end if
-      end function rhoG_at
-      !> Median RHOG over a 2-ring shell of VF-eligible neighbours; excludes a bit-identical
-      !> periodic self-image (thin-domain wrap). -1 if no valid neighbour.
-      real(WP) function rhoG_ref(ci,cj,ck,vf,q) result(ref)
-         integer, intent(in) :: ci,cj,ck
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
-         integer :: g,m,ia2,ja2,ka2,nvalid,p,pp
-         real(WP), dimension(12) :: vals
-         real(WP) :: tmp
-         nvalid=0
-         do g=1,6; do m=1,2
-            ia2=ci+foff(1,g)*m; ja2=cj+foff(2,g)*m; ka2=ck+foff(3,g)*m
-            if (vf(ia2,ja2,ka2,1).eq.vf(ci,cj,ck,1).and.q(ia2,ja2,ka2,2).eq.q(ci,cj,ck,2)) cycle
-            if (vf(ia2,ja2,ka2,1).gt.this%cluster_VFhi) cycle
-            if (vf(ia2,ja2,ka2,1).gt.VFhi.or.q(ia2,ja2,ka2,2).le.0.0_WP) cycle
-            nvalid=nvalid+1; vals(nvalid)=rhoG_at(ia2,ja2,ka2,vf,q)
-         end do; end do
-         if (nvalid.eq.0) then; ref=-1.0_WP; return; end if
-         do p=2,nvalid
-            tmp=vals(p)
-            do pp=p-1,1,-1
-               if (vals(pp).le.tmp) exit
-               vals(pp+1)=vals(pp)
-            end do
-            vals(pp+1)=tmp
-         end do
-         if (mod(nvalid,2).eq.1) then; ref=vals(nvalid/2+1)
-         else; ref=0.5_WP*(vals(nvalid/2)+vals(nvalid/2+1)); end if
-      end function rhoG_ref
-      !> Fractional RHOG excess over cluster_rhoG_K times the local reference.
-      real(WP) function rhoG_excess_frac(ci,cj,ck,vf,q) result(ex)
-         integer, intent(in) :: ci,cj,ck
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q
-         real(WP) :: ref,ceil
-         ex=0.0_WP; ref=rhoG_ref(ci,cj,ck,vf,q)
-         if (ref.le.0.0_WP) return
-         ceil=this%cluster_rhoG_K*ref
-         ex=max(rhoG_at(ci,cj,ck,vf,q)-ceil,0.0_WP)/ceil
-      end function rhoG_excess_frac
 !      !> Pass A Need: 0 for a pure cell (VF outside [VFlo,VFhi]) or a well-inside-band cell.
 !      real(WP) function need_geo(vf) result(nd)
 !         real(WP), intent(in) :: vf
@@ -4302,26 +4248,14 @@ contains
          case (starve_liq); l=(vfP.gt.vfC)   ! partner must be the more liquid-rich of the two
          end select
       end function supplies
-      !> Pass B Need: 0 if already clustered by Pass A this stage.
-      real(WP) function need_rhog(ci,cj,ck,vf,q,cs) result(nd)
-         integer, intent(in) :: ci,cj,ck
-         real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
-         nd=0.0_WP
-         if (cs(ci,cj,ck,1).ge.0.5_WP) return
-         nd=rhoG_excess_frac(ci,cj,ck,vf,q)
-      end function need_rhog
-      !> Need for this pass, clipped at 0. A cell an earlier pass already clustered is done for
+      !> Need for this pass, clipped at 0. A cell the other pass already clustered is done for
       !> this stage: it has been relaxed, and re-pooling it would relax it twice.
       real(WP) function calc_need(ci,cj,ck,vf,q,cs) result(nd)
          integer, intent(in) :: ci,cj,ck
          real(WP), dimension(:,:,:,:), contiguous, pointer, intent(in) :: vf,q,cs
          nd=0.0_WP
          if (cs(ci,cj,ck,1).ge.0.5_WP) return
-         if (use_rhog) then
-            nd=need_rhog(ci,cj,ck,vf,q,cs)
-         else
-            nd=max(need_pass(vf(ci,cj,ck,1),q(ci,cj,ck,1:this%nQ)),0.0_WP)
-         end if
+         nd=max(need_pass(vf(ci,cj,ck,1),q(ci,cj,ck,1:this%nQ)),0.0_WP)
       end function calc_need
       !> Bit-identical periodic self-image at face g (thin-domain wrap) -- never a valid partner.
       logical function is_self_wrap(ci,cj,ck,g,vf,q) result(l)
@@ -4360,10 +4294,6 @@ contains
          vfA=vf(ci,cj,ck,1); vfB=vf(ia2,ja2,ka2,1)
          if (vfA.lt.this%cluster_VFlo.and.vfB.lt.this%cluster_VFlo) return
          if (vfA.gt.this%cluster_VFhi.and.vfB.gt.this%cluster_VFhi) return
-         if (use_rhog) then
-            sc=max(needA,needB)*1000.0_WP+(1.0_WP-min(vfA,vfB))
-            return
-         end if
          ! reject a massless partner outright -- pooling with nothing cannot supply anything
          call phase_capacities(vfA,q(ci ,cj ,ck ,1:this%nQ),capA,cmpA,TLd,TGd,PLd,PGd,Kld,Kgd,okd)
          call phase_capacities(vfB,q(ia2,ja2,ka2,1:this%nQ),capB,cmpB,TLd,TGd,PLd,PGd,Kld,Kgd,okd)
@@ -4408,7 +4338,7 @@ contains
          end do
       end function best_face
       !> A cell an earlier pass stranded and this one clustered is no longer stranded. Nothing else
-      !> clears the flag -- this%stranded is zeroed once per apply_relax, covering ALL THREE passes,
+      !> clears the flag -- this%stranded is zeroed once per apply_relax, covering BOTH passes,
       !> and a stranded cell is never marked in cskip, so it stays a free claimant for the next
       !> pass. Without this the viz field shows cells that are clustered AND stranded at once, and
       !> strand_acc counts them in every pass that failed on them.
@@ -4459,13 +4389,12 @@ contains
             pNeedn=>need%dataptr(mfi2); pSc=>facesc%dataptr(mfi2); pSk=>cskip%dataptr(mfi2)
             bx2=mfi2%tilebox()
             do kk=bx2%lo(3),bx2%hi(3); do jj=bx2%lo(2),bx2%hi(2); do ii=bx2%lo(1),bx2%hi(1)
-               ! A cell an earlier pass already clustered is done for this stage: it has been
-               ! relaxed, and re-pooling it would relax it twice. Pass B is exempt by design --
-               ! it lets any cell serve as a reservoir, clustered or not (see apply_relax).
-               if (.not.use_rhog.and.pSk(ii,jj,kk,1).ge.0.5_WP) cycle
+               ! A cell the other pass already clustered is done for this stage: it has been
+               ! relaxed, and re-pooling it would relax it twice.
+               if (pSk(ii,jj,kk,1).ge.0.5_WP) cycle
                do f=1,6
                   ia2=ii+foff(1,f); ja2=jj+foff(2,f); ka2=kk+foff(3,f)
-                  if (.not.use_rhog.and.pSk(ia2,ja2,ka2,1).ge.0.5_WP) cycle
+                  if (pSk(ia2,ja2,ka2,1).ge.0.5_WP) cycle
                   ! nothing to negotiate unless one side of this face wants a partner
                   if (max(pNeedn(ii,jj,kk,1),pNeedn(ia2,ja2,ka2,1)).le.0.0_WP) cycle
                   if (is_self_wrap(ii,jj,kk,f,pVFn,pQn)) cycle
@@ -4616,7 +4545,7 @@ contains
          end if
       end subroutine get_thermo
       !> Diagnostic-only CSV row: self pre-state, partner pre-state, solo-relax counterfactual, and
-      !> the actual outcome. Pass label comes from use_rhog (A=VF-based, B=RHOG-based).
+      !> the actual outcome. Pass label is A1 (thermal) or A2 (mechanical).
       subroutine diag_log(event,ci,cj,ck,cip,cjp,ckp,has_partner,nd_self,nd_partner,VF0,Q0,VF0p,Q0p,VFs,Qs,VFa,Qa)
          character(len=*), intent(in) :: event
          integer, intent(in) :: ci,cj,ck,cip,cjp,ckp
@@ -4656,7 +4585,7 @@ contains
       end subroutine diag_log
    end subroutine relax_clustered
 
-   !> Apply relaxation to mixture cells. Three relax_clustered passes, each carrying exactly ONE
+   !> Apply relaxation to mixture cells. Two relax_clustered passes, each carrying exactly ONE
    !> starvation criterion -- they are never merged into a single Need, because a cell starved of
    !> heat capacity and a cell starved of compliance want different partners, and a merged Need
    !> lets whichever number is momentarily larger pick for both:
@@ -4667,13 +4596,8 @@ contains
    !>     the other's pressure, collapsing its volume and spiking its density. Ranks partners by
    !>     the pooled pair's predicted density excursion. Runs on cells A1 left alone, and BEFORE
    !>     the individual relax: a cell relaxed solo has already taken its overshoot.
-   !>   Pass B (RHOG-based, Session 20) -- runs strictly AFTER A1/A2's individual relax and a
-   !>     PLIC/barycenter/ghost sync, so every cell already holds its REAL post-relaxation state
-   !>     (not a stale pre-relax or throwaway-probed one) by the time RHOG ratios are evaluated.
-   !>     Only cells an earlier pass did NOT cluster (cskip comp 1 still 0) are eligible, as
-   !>     claimant AND as partner -- re-pooling one would relax it twice. Pass B's own relax_clustered
-   !>     call relaxes whatever it pools directly -- no further individual relax step after it,
-   !>     just another PLIC/barycenter pass for whatever it touched.
+   !> Whatever neither pass could pair is relaxed individually, and trace gas left stranded inside
+   !> near-pure liquid is folded back into the liquid by dissolve_stranded_gas.
    subroutine apply_relax(this,dt,time)
       use mpi_f08, only: MPI_Wtime
       use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
@@ -4696,16 +4620,16 @@ contains
       dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl)
       cell_vol=this%amr%cell_vol(lvl)
       ! cskip: comp 1 = 1.0 for a cell already relaxed by relax_clustered this stage (either pass --
-      !        skip Pass A's individual relax for it; Pass B's own gclaim rhog_mode check also
-      !        reads this comp, via cs, to mean "not yet clustered"),
-      !        comp 2 = VF snapshot from BEFORE Pass A's relax_clustered ran (so oldmix below
-      !        reflects true STAGE-entry state throughout both passes, not just Pass A's),
+      !        skip the individual relax for it, and refuse it as a partner in the other pass),
+      !        comp 2 = VF snapshot from BEFORE the first relax_clustered ran (so oldmix below
+      !        reflects true STAGE-entry state throughout both passes, not just A1's),
       !        comp 3 = 1.0 if relax_clustered (either pass) already wrote
       !        this%plic for this cell this stage -- guards the "randomize normal if previously
       !        pure" step below from clobbering a freshly-built shared PLIC plane.
-      ! nover=2 (not 0): Pass B's gclaim/rhoG_ref read cskip/VF/Q at up to 2-ring neighbour offsets
-      ! (see rhoG_ref), including across tile/rank boundaries, so cskip needs real ghost data too.
-      call this%amr%mfab_build(lvl,cskip,ncomp=3,nover=2,atface=[.false.,.false.,.false.])
+      ! nover=1 (not 0): negotiate() reads a face neighbour's cskip comp 1 to refuse a partner the
+      ! other pass already clustered, including across tile/rank boundaries, so cskip needs real
+      ! ghost data too.
+      call this%amr%mfab_build(lvl,cskip,ncomp=3,nover=1,atface=[.false.,.false.,.false.])
       call cskip%setval(0.0_WP)
       ! cluster_idx/stranded are owned here (not by the driver): reset once per apply_relax call
       ! (covering BOTH passes) so they always reflect exactly this call's clustering, not leftovers
@@ -4727,20 +4651,12 @@ contains
       end if
       call relax_unclustered()
       call postprocess_plic()
-      ! Sync VF/Q (individual relax above changed them) and cskip's ghosts, so Pass B's neighbour
-      ! lookups (rhoG_ref's 2-ring stencil, best_avail_claimant's cskip check) see real, current
-      ! data -- not stale pre-Pass-A ghosts.
+      ! Sync VF/Q (individual relax above changed them) so dissolve_stranded_gas's 2-ring neighbour
+      ! scan sees real, current data -- not stale pre-Pass-A ghosts.
       call this%VF%average_down(); call this%fill(lvl=this%amr%maxlvl,time=time)
       call this%Q%average_down(); call this%Q%fill(time=time)
-      call cskip%fill_boundary(this%amr%geom(lvl))
-      ! ---- Pass B: RHOG-based clustering on cells Pass A left untouched ----
-      if (this%cluster_rhog_on) then
-         call this%relax_clustered(dt=dt,time=time,cskip=cskip,mode=clust_rhog)
-         call postprocess_plic()
-      end if
-      ! ---- Dissolve trace gas left stranded inside near-pure liquid. Gated ONLY on dissolve_on:
-      ! it is a last-resort cleanup for cells no pass could pair, which is not Pass B's business,
-      ! and it must stay available when Pass B is off.
+      ! ---- Dissolve trace gas left stranded inside near-pure liquid: a last-resort cleanup for
+      ! cells neither pass could pair.
       if (this%dissolve_on) then
          call dissolve_stranded_gas()
          call postprocess_plic()
@@ -4769,9 +4685,8 @@ contains
          end do
          call this%amr%mfiter_destroy(mfi)
       end subroutine snapshot_VF_into_cskip
-      !> Relax every cell relax_clustered (Pass A) did not already pool -- unchanged from the old
-      !> single-pass behaviour, just its own standalone loop now (Pass B needs the PLIC/barycenter
-      !> pass to run for everyone before it starts, so this can no longer be fused with that).
+      !> Relax every cell neither clustering pass pooled -- unchanged from the old single-pass
+      !> behaviour, just its own standalone loop now.
       subroutine relax_unclustered()
          use relax_igmix_sg_class, only: dbg_cell,dbg_i,dbg_j,dbg_k,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
          type(amrex_mfiter) :: mfi
@@ -4856,9 +4771,9 @@ contains
          call this%amr%mfiter_destroy(mfi)
       end subroutine dissolve_stranded_gas
       !> Post-process PLIC and barycenters for every cell against its CURRENT VF/Q -- called once
-      !> after Pass A's individual relax and once after Pass B, so both passes' results end up
-      !> with a consistent PLIC/barycenter, not just whichever pass happened to touch a cell last.
-      !> Idempotent for a cell neither pass just changed.
+      !> after the individual relax and once after dissolve_stranded_gas, so every cell ends up
+      !> with a consistent PLIC/barycenter, not just whichever step happened to touch it last.
+      !> Idempotent for a cell nothing just changed.
       subroutine postprocess_plic()
          use amrvof_geometry, only: get_plane_dist,cut_hex_vol
          use mathtools, only: normalize

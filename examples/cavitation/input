@@ -19,12 +19,23 @@ Liquid temperature                 : 350
 Liquid pressure                    : 1e5
 Pulse amplitude                    : 1e7
 Pulse radius                       : 0.001
+Exit velocity                      : 0
+Core velocity                      : 50
 Boundary condition                 : wall   ! dirichlet=cavitation only, wall=cavitation+condensation
 Cavitation pressure threshold      : -1e8
 Condensation temperature tolerance : 5
 Max VF change factor               : 10
 Initial vapor mass fraction        : 0
 Surface tension                    : 0
+
+# Relaxation clustering
+Thermal clustering    : .true.
+Mechanical clustering : .true.
+Dissolve stranded gas : .true.
+
+# Diagnostics
+Relax diagnostic : .false.
+Diag stride      : 1000000
 
 # Fluid properties
 Liquid viscosity      : 9e-4
@@ -33,7 +44,6 @@ Gas viscosity         : 1.27e-5
 Gas Prandtl number    : 0
 
 # EOS parameters
-Liquid EOS type                                  : NASG
 Relaxation type                                  : pTg
 Liquid specific heat capacity at constant volume : 3.8212e+03
 Liquid specific heat capacity ratio              : 1.1173e+00
@@ -51,12 +61,12 @@ Air reference energy shift                       : 0
 Air reference entropy shift                      : 0
 
 # Time integration
-Max dt     : 5e-9
+Max dt     : 1.5e-8
 Initial dt : 5e-9
 Max CFL    : 0.5
-Max time   : 4e-7
+Max time   : 2.3e-5
 
 # Output
-Output period     : 1e-6
-Checkpoint period : 1e-5
-Restart from      : !3.40209E-05
+Output period     : 5e-7
+Checkpoint period : 5e-6
+Restart from      : !2.00022E-05
