@@ -1,6 +1,6 @@
 # What to run (shared by the NASG and SG blocks)
 Run single-cell test   : true
-Write saturation curve : false
+Write saturation curve : true
 Write edge cases       : false
 
 # Single-cell pTg relaxation test state (shared by the NASG and SG blocks)

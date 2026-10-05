@@ -15,8 +15,9 @@ from iapws import IAPWS97
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 CURVES = {
-    "NASG": "eos_relax_NASG.csv",
-    "SG":   "eos_relax_SG.csv",
+    "old framework":  "eos_relax_NASG.csv",
+    "new framework": "eos_relax_NASG_max_ent.csv",
+    # "iterative SG":   "eos_relax_SG.csv",
 }
 
 PLOTS = [                                        # (csv_col, iapws_col, ylabel, log)
@@ -69,9 +70,9 @@ ref   = iapws_sat(T_all.min(), T_all.max())
 
 # ── Plot ──────────────────────────────────────────────────────────────────────
 
-markers = ["o", "s"]
-colors  = ['b', 'r']
-filled  = {"NASG": True, "SG": False}
+markers = ["o", "^", "s"]
+colors  = ['b', 'r', 'g']
+filled  = {"old framework": True, "new framework": False, "iterative SG": False}
 
 fig, axes = plt.subplots(2, 2, figsize=(10, 7))
 

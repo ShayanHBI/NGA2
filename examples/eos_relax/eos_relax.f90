@@ -9,13 +9,14 @@
 !> make clean # remove binary, .mod, .o files
 
 program eos_relax
-   use precision,                only: WP
-   use stiffened_gas_class,      only: stiffened_gas
-   use nasg_class,               only: nasg
-   use igmix_class,              only: igmix
-   use thermorelax_class,        only: thermorelax
-   use relax_igmix_sg_class,     only: relax_igmix_sg,PTgrelax
-   use relax_igmix_nasg_class,   only: relax_igmix_nasg
+   use precision,                  only: WP
+   use stiffened_gas_class,        only: stiffened_gas
+   use nasg_class,                 only: nasg
+   use igmix_class,                only: igmix
+   use thermorelax_class,          only: thermorelax
+   use relax_igmix_sg_class,       only: relax_igmix_sg,PTgrelax
+   use relax_igmix_nasg_class,     only: relax_igmix_nasg
+   use relax_igmix_max_ent_class, only: relax_igmix_max_ent
    implicit none
 
    real(WP), parameter :: Mv=0.0180153_WP, Ma=0.02897_WP   ! molar masses [kg/mol]
@@ -83,7 +84,7 @@ program eos_relax
    edge_label(7)='CASE 2.3  air only, no vapor, no liquid (VF=0)   (p=1e6, T=350, VF_in=0, Yv_in=0)'
    edge_p(7)=1.0e6_WP; edge_T(7)=350.0_WP; edge_VF(7)=0.0_WP; edge_Yv(7)=0.0_WP
 
-   ! ── NASG configuration ────────────────────────────────────────────────────
+   ! ── iterative NASG ───────────────────────────────────────────────────────
    nasg_block: block
       type(nasg),            target :: liq
       type(igmix),           target :: gas
@@ -93,22 +94,22 @@ program eos_relax
       real(WP) :: CvA,GammaA,      qA,qpA
       real(WP) :: p_cav,Tctol
 
-      call read_real('input_impact','Liquid specific heat capacity at constant volume',CvL)
-      call read_real('input_impact','Liquid specific heat capacity ratio',             GammaL)
-      call read_real('input_impact','Liquid reference energy shift',                   qL)
-      call read_real('input_impact','Liquid reference entropy shift',                  qpL)
-      call read_real('input_impact','Liquid stiffening pressure',                      PinfL)
-      call read_real('input_impact','Liquid co-volume',                                bL)
-      call read_real('input_impact','Vapor specific heat capacity at constant volume', CvV)
-      call read_real('input_impact','Vapor specific heat capacity ratio',              GammaV)
-      call read_real('input_impact','Vapor reference energy shift',                    qV)
-      call read_real('input_impact','Vapor reference entropy shift',                   qpV)
-      call read_real('input_impact','Air specific heat capacity at constant volume',   CvA)
-      call read_real('input_impact','Air specific heat capacity ratio',                GammaA)
-      call read_real('input_impact','Air reference energy shift',                      qA)
-      call read_real('input_impact','Air reference entropy shift',                     qpA)
-      call read_real('input_impact','Cavitation pressure threshold',                   p_cav)
-      call read_real('input_impact','Condensation temperature tolerance',              Tctol)
+      call read_real('input_NASG','Liquid specific heat capacity at constant volume',CvL)
+      call read_real('input_NASG','Liquid specific heat capacity ratio',             GammaL)
+      call read_real('input_NASG','Liquid reference energy shift',                   qL)
+      call read_real('input_NASG','Liquid reference entropy shift',                  qpL)
+      call read_real('input_NASG','Liquid stiffening pressure',                      PinfL)
+      call read_real('input_NASG','Liquid co-volume',                                bL)
+      call read_real('input_NASG','Vapor specific heat capacity at constant volume', CvV)
+      call read_real('input_NASG','Vapor specific heat capacity ratio',              GammaV)
+      call read_real('input_NASG','Vapor reference energy shift',                    qV)
+      call read_real('input_NASG','Vapor reference entropy shift',                   qpV)
+      call read_real('input_NASG','Air specific heat capacity at constant volume',   CvA)
+      call read_real('input_NASG','Air specific heat capacity ratio',                GammaA)
+      call read_real('input_NASG','Air reference energy shift',                      qA)
+      call read_real('input_NASG','Air reference entropy shift',                     qpA)
+      call read_real('input_NASG','Cavitation pressure threshold',                   p_cav)
+      call read_real('input_NASG','Condensation temperature tolerance',              Tctol)
       call liq%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
       call gas%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,qA],qp=[qpV,qpA], &
       &                    species_names=['vapor','air  '],name='gas')
@@ -126,10 +127,10 @@ program eos_relax
          end if
          VF0=VF; VF=VF0; Q=Q0; call rm%apply(dt=1.0_WP,VF=VF,Q=Q,Pjump=Pjump_test)
          call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv)
-         print '(/,A)','── NASG  initial ───────────────────────────────────────────'
+         print '(/,A)','── iterative NASG  initial ─────────────────────────────────'
          print '(3(A,ES12.4,3X))','VF=',VF0,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
          call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv)
-         print '(A)',  '── NASG  post-relax ────────────────────────────────────────'
+         print '(A)',  '── iterative NASG  post-relax ──────────────────────────────'
          print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
          print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
          if (VF.gt.0.0_WP.and.VF.lt.1.0_WP) print '(A,ES12.4,A,ES12.4)','   (PL-PG)=',PL-PG,'   target Pjump=',Pjump_test
@@ -142,7 +143,61 @@ program eos_relax
       if (run_edge) call compute_edge_cases(liq,gas,rm,nasg_res)
    end block nasg_block
 
-   ! ── SG configuration ──────────────────────────────────────────────────────
+   ! ── max ent NASG ─────────────────────────────────────────────────────────
+   ! Same NASG equation of state as above, relaxed by the capacity-split linear
+   ! framework: ONE sequential pass p -> pT -> chemical, no iteration, no clamp.
+   max_ent_nasg_block: block
+      type(nasg),              target :: liq
+      type(igmix),             target :: gas
+      type(relax_igmix_max_ent),target :: rm
+      real(WP) :: CvL,GammaL,PinfL,bL,qL,qpL
+      real(WP) :: CvV,GammaV,      qV,qpV
+      real(WP) :: CvA,GammaA,      qA,qpA
+
+      call read_real('input_NASG','Liquid specific heat capacity at constant volume',CvL)
+      call read_real('input_NASG','Liquid specific heat capacity ratio',             GammaL)
+      call read_real('input_NASG','Liquid reference energy shift',                   qL)
+      call read_real('input_NASG','Liquid reference entropy shift',                  qpL)
+      call read_real('input_NASG','Liquid stiffening pressure',                      PinfL)
+      call read_real('input_NASG','Liquid co-volume',                                bL)
+      call read_real('input_NASG','Vapor specific heat capacity at constant volume', CvV)
+      call read_real('input_NASG','Vapor specific heat capacity ratio',              GammaV)
+      call read_real('input_NASG','Vapor reference energy shift',                    qV)
+      call read_real('input_NASG','Vapor reference entropy shift',                   qpV)
+      call read_real('input_NASG','Air specific heat capacity at constant volume',   CvA)
+      call read_real('input_NASG','Air specific heat capacity ratio',                GammaA)
+      call read_real('input_NASG','Air reference energy shift',                      qA)
+      call read_real('input_NASG','Air reference entropy shift',                     qpA)
+      call liq%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
+      call gas%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,qA],qp=[qpV,qpA], &
+      &                    species_names=['vapor','air  '],name='gas')
+      call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)
+      rm%model=PTgrelax
+
+      ! Single-cell test
+      if (run_test) then
+         if (raw_test) then
+            VF=VF_raw; Q0=Q_raw
+         else
+            call make_Q(liq,gas,p=p_test,T=T_test,VF_in=VF_in_test,Yv_in=Yv_in_test,VF=VF,Q=Q0)
+         end if
+         VF0=VF; VF=VF0; Q=Q0; call rm%apply(dt=1.0_WP,VF=VF,Q=Q,Pjump=Pjump_test)
+         call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv)
+         print '(/,A)','── max ent NASG  initial ──────────────────────────────────'
+         print '(3(A,ES12.4,3X))','VF=',VF0,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
+         call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv)
+         print '(A)',  '── max ent NASG  post-relax ───────────────────────────────'
+         print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
+         print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
+         if (VF.gt.0.0_WP.and.VF.lt.1.0_WP) print '(A,ES12.4,A,ES12.4)','   (PL-PG)=',PL-PG,'   target Pjump=',Pjump_test
+      end if
+
+      if (run_sweep) then
+         call write_PTg_curve('eos_relax_NASG_max_ent.csv',liq,gas,rm,p0=p_sweep,VF0=VF0_sweep,Yv0=Yv0_sweep,Tmin=Tmin_sweep,Tmax=Tmax_sweep,nT=nT_sweep,Pjump=Pjump_sweep)
+      end if
+   end block max_ent_nasg_block
+
+   ! ── iterative SG ─────────────────────────────────────────────────────────
    sg_block: block
       type(stiffened_gas), target :: liq
       type(igmix),         target :: gas
@@ -184,10 +239,10 @@ program eos_relax
          end if
          VF0=VF; VF=VF0; Q=Q0; call rm%apply(dt=1.0_WP,VF=VF,Q=Q,Pjump=Pjump_test)
          call get_thermo(liq,gas,VF0,Q0,PL,PG,rhoL,rhoG,TL,TG,Yv)
-         print '(/,A)','── SG  initial ─────────────────────────────────────────────'
+         print '(/,A)','── iterative SG  initial ───────────────────────────────────'
          print '(3(A,ES12.4,3X))','VF=',VF0,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
          call get_thermo(liq,gas,VF,Q,PL,PG,rhoL,rhoG,TL,TG,Yv)
-         print '(A)',  '── SG  post-relax ──────────────────────────────────────────'
+         print '(A)',  '── iterative SG  post-relax ────────────────────────────────'
          print '(3(A,ES12.4,3X))','VF=',VF,'pL=',PL,'pG=',PG,'TL=',TL,'TG=',TG,'Yv=',Yv
          print '(2(A,ES8.1,3X))','Δρ/ρ=',(sum(Q(1:2))-sum(Q0(1:2)))/sum(Q0(1:2)),'ΔΕ/E=',(sum(Q(3:4))-sum(Q0(3:4)))/sum(Q0(3:4))
          if (VF.gt.0.0_WP.and.VF.lt.1.0_WP) print '(A,ES12.4,A,ES12.4)','   (PL-PG)=',PL-PG,'   target Pjump=',Pjump_test
@@ -462,18 +517,18 @@ contains
          write(u,'(A)') trim(label(ic))
          write(u,'(A)') repeat('#',64)
          write(u,'(A)') ''
-         write(u,'(A)') '── NASG  initial ───────────────────────────────────────────'
+         write(u,'(A)') '── iterative NASG  initial ─────────────────────────────────'
          write(u,'(3(A,ES12.4,3X))') 'VF=',resA(ic)%VF0,'pL=',resA(ic)%PL0,'pG=',resA(ic)%PG0,&
          &                           'TL=',resA(ic)%TL0,'TG=',resA(ic)%TG0,'Yv=',resA(ic)%Yv0
-         write(u,'(A)') '── NASG  post-relax ────────────────────────────────────────'
+         write(u,'(A)') '── iterative NASG  post-relax ──────────────────────────────'
          write(u,'(3(A,ES12.4,3X))') 'VF=',resA(ic)%VF,'pL=',resA(ic)%PL,'pG=',resA(ic)%PG,&
          &                           'TL=',resA(ic)%TL,'TG=',resA(ic)%TG,'Yv=',resA(ic)%Yv
          write(u,'(2(A,ES8.1,3X))') 'Δρ/ρ=',resA(ic)%drho_rel,'ΔΕ/E=',resA(ic)%de_rel
          write(u,'(A)') ''
-         write(u,'(A)') '── SG  initial ─────────────────────────────────────────────'
+         write(u,'(A)') '── iterative SG  initial ───────────────────────────────────'
          write(u,'(3(A,ES12.4,3X))') 'VF=',resB(ic)%VF0,'pL=',resB(ic)%PL0,'pG=',resB(ic)%PG0,&
          &                           'TL=',resB(ic)%TL0,'TG=',resB(ic)%TG0,'Yv=',resB(ic)%Yv0
-         write(u,'(A)') '── SG  post-relax ──────────────────────────────────────────'
+         write(u,'(A)') '── iterative SG  post-relax ────────────────────────────────'
          write(u,'(3(A,ES12.4,3X))') 'VF=',resB(ic)%VF,'pL=',resB(ic)%PL,'pG=',resB(ic)%PG,&
          &                           'TL=',resB(ic)%TL,'TG=',resB(ic)%TG,'Yv=',resB(ic)%Yv
          write(u,'(2(A,ES8.1,3X))') 'Δρ/ρ=',resB(ic)%drho_rel,'ΔΕ/E=',resB(ic)%de_rel
