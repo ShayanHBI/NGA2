@@ -15,6 +15,7 @@ module relax_igmix_sg_class
    public :: relax_igmix_sg
    public :: Prelax,PTrelax,PTgrelax,PThybrid
    public :: Mv,Ma
+   public :: apply   !< Exported so extensions can call it on their own polymorphic this (this%relax_igmix_sg%apply loses dispatch)
    ! debug: (dbg_i,dbg_j,dbg_k) identifies the cell CURRENTLY being traced; caller sets it to
    ! the active cell's own indices and dbg_cell=.true. right before apply(), so every print
    ! inside this module (which has no i,j,k of its own) labels itself correctly even when the

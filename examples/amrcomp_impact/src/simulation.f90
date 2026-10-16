@@ -12,7 +12,7 @@ module simulation
    use amrio_class,            only: amrio
    use nasg_class,             only: nasg
    use igmix_class,            only: igmix
-   use relax_igmix_nasg_class, only: relax_igmix_nasg
+   use relax_igmix_nasg_finite_class, only: relax_igmix_nasg_finite
    implicit none
    private
    
@@ -46,13 +46,14 @@ module simulation
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
    real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
+   real(WP) :: sliverL_n=0.0_WP,sliverLf_n=0.0_WP,chemskip_n=0.0_WP ! debug
    
    !> Materials
    type(nasg),  target :: water
    type(igmix), target :: gas
 
    !> Relaxation model
-   type(relax_igmix_nasg), target :: relax_model
+   type(relax_igmix_nasg_finite), target :: relax_model
    character(len=str_medium) :: relaxation_type,case_name
    integer :: nsteps_diag                            !< diag run: bounded number of steps (-1 = unlimited)
    real(WP) :: p_cav_cof
@@ -184,6 +185,64 @@ contains
       end do
       call amr%mfiter_destroy(mfi)
    end subroutine debug_probe
+
+   !> debug: one CSV line ("PROBE,...") per cell of the box [pilo,pihi]x[pjlo,pjhi] (k=0), with both
+   !> phases' thermo straight from Q, cell velocity and face-velocity divergence. Only writes for t>=probe_t0.
+   subroutine probe_boxes(label)
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      implicit none
+      character(len=*), intent(in) :: label
+      integer, parameter :: pilo=425,pihi=434,pjlo=958,pjhi=964,pic=430,pjc=961
+      real(WP), parameter :: probe_t0=1.0e10_WP
+      integer :: lvl,it,di,dj,i,j
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pStr,pCid,pU,pV,pW
+      real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv,divU
+      integer, save :: iunit
+      logical, save :: opened=.false.
+      character(len=32) :: fname
+      if (time%t.lt.probe_t0) return
+      ! one file per rank: stdout from several ranks interleaves records
+      if (.not.opened) then
+         opened=.true.
+         write(fname,'("probe_r",i0,".csv")') amr%rank
+         open(newunit=iunit,file=trim(fname),status='replace',action='write')
+      end if
+      lvl=amr%maxlvl
+      call amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         pVF=>fs%VF%mf(lvl)%dataptr(mfi); pQ=>fs%Q%mf(lvl)%dataptr(mfi); pCurv=>fs%curv%dataptr(mfi)
+         pStr=>fs%stranded%mf(lvl)%dataptr(mfi); pCid=>fs%cluster_idx%mf(lvl)%dataptr(mfi)
+         pU=>fs%U%mf(lvl)%dataptr(mfi); pV=>fs%V%mf(lvl)%dataptr(mfi); pW=>fs%W%mf(lvl)%dataptr(mfi)
+         bx=mfi%tilebox()
+         if (bx%lo(3).gt.0.or.bx%hi(3).lt.0) cycle
+         it=1
+         do j=max(pjlo,bx%lo(2)),min(pjhi,bx%hi(2)); do i=max(pilo,bx%lo(1)),min(pihi,bx%hi(1))
+            di=i-pic; dj=j-pjc
+            VFc=pVF(i,j,0,1)
+            RHOL=-1.0_WP; RHOG=-1.0_WP; eL=0.0_WP; eG=0.0_WP; PL=0.0_WP; PG=0.0_WP; TL=0.0_WP; TG=0.0_WP; Yv=0.0_WP
+            if (VFc.gt.0.0_WP.and.pQ(i,j,0,1).gt.0.0_WP) then
+               RHOL=pQ(i,j,0,1)/VFc; eL=pQ(i,j,0,3)/pQ(i,j,0,1)
+               PL=fs%liq%get_p_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
+               TL=fs%liq%get_T_from_rho_e(rho=RHOL,e=eL,y=[1.0_WP])
+            end if
+            if (VFc.lt.1.0_WP.and.pQ(i,j,0,2).gt.0.0_WP) then
+               RHOG=pQ(i,j,0,2)/(1.0_WP-VFc); eG=pQ(i,j,0,4)/pQ(i,j,0,2)
+               Yv=max(0.0_WP,min(pQ(i,j,0,8)/pQ(i,j,0,2),1.0_WP))
+               PG=fs%gas%get_p_from_rho_e(rho=RHOG,e=eG,y=[Yv,1.0_WP-Yv])
+               TG=fs%gas%get_T_from_rho_e(rho=RHOG,e=eG,y=[Yv,1.0_WP-Yv])
+            end if
+            divU=(pU(i+1,j,0,1)-pU(i,j,0,1))/amr%dx(lvl)+(pV(i,j+1,0,1)-pV(i,j,0,1))/amr%dy(lvl)+(pW(i,j,1,1)-pW(i,j,0,1))/amr%dz(lvl)
+            write(iunit,'("PROBE,",a,",",i0,",",es16.8,5(",",i0),23(",",es16.8))') trim(label),time%n,time%t,it,di,dj,i,j, &
+            &  VFc,pQ(i,j,0,1),pQ(i,j,0,2),pQ(i,j,0,3),pQ(i,j,0,4),pQ(i,j,0,8),RHOL,eL,PL,TL,RHOG,eG,PG,TG,Yv, &
+            &  pStr(i,j,0,1),pCid(i,j,0,1),pCurv(i,j,0,1),pQ(i,j,0,5)/(pQ(i,j,0,1)+pQ(i,j,0,2)),pQ(i,j,0,6)/(pQ(i,j,0,1)+pQ(i,j,0,2)), &
+            &  pU(i,j,0,1),pU(i+1,j,0,1),divU
+         end do; end do
+      end do
+      call amr%mfiter_destroy(mfi)
+      flush(iunit)
+   end subroutine probe_boxes
 
    !> Compute viscosity: Sutherland for gas, VF-weighted blend with liquid
    subroutine get_viscosities()
@@ -599,8 +658,10 @@ contains
          use amrex_amr_module,     only: amrex_bc_ext_dir,amrex_bc_foextrap,amrex_bc_reflect_odd
          use amrmpcomp_class,      only: BC_GAS,BC_REFLECT
          use amrdata_class,        only: interp_face_lin
-         use messager,             only: die
+         use messager,             only: log,die
+         use string,               only: str_long
          use relax_igmix_sg_class, only: Prelax,PTrelax,PTgrelax,PThybrid,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi
+         character(len=str_long) :: message
          ! Assign materials and create flow solver
          fs%liq=>water; fs%gas=>gas; call fs%initialize(amr=amr,name=trim(case_name))
          ! Set surface tension coefficient
@@ -616,7 +677,21 @@ contains
          case ('pThybrid'); relax_model%model=PThybrid
          case default; call die('[simulation_init] Relaxation type must be p, pT, pThybrid, or pTg')
          end select
+         ! Finite relaxation rates (Pelanti 2022: lambda=mu, theta=vartheta, nu); omitted = instantaneous
+         call param_read('Mechanical relaxation rate',relax_model%lambda,default=huge(1.0_WP))
+         call param_read('Thermal relaxation rate',relax_model%theta,default=huge(1.0_WP))
+         call param_read('Chemical relaxation rate',relax_model%nu,default=huge(1.0_WP))
+         call param_read('Chemical rate scaling',relax_model%nu_scale,default=0)
+         write(message,'("[Relaxation rates] lambda=",es12.5," theta=",es12.5," nu=",es12.5)') relax_model%lambda,relax_model%theta,relax_model%nu
+         call log(message)
          relax_model%RHOGmin=0.0_WP
+         call param_read('Relax skip gas density',relax_model%rhoG_skip,default=0.0_WP)
+         call param_read('Relax sliver gas fraction',relax_model%sliver_aG,default=0.0_WP)
+         call param_read('Relax liquid thermal tolerance',relax_model%dTtol_L,default=0.0_WP)
+         call param_read('Relax vapor fraction tolerance',relax_model%dYtol,default=0.0_WP)
+         ! Pass A0: a sliver whose gas, and a neighbour whose gas, sit below this fraction of the sliver's PL are mixed isentropically (0: off)
+         call param_read('Relax vacuum pressure ratio',fs%vacmix_pratio,default=0.0_WP)
+         fs%vacmix_aG=relax_model%sliver_aG
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
          ! relax_model%diss_P=200.0_WP
@@ -630,9 +705,10 @@ contains
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
          ! Set relaxation model for the flow solver
          fs%relax=>relax_model
-         fs%cluster_on=.true.         ! diag run: clustering ON (set .false. to relax every cell alone)
-         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A1
-         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A2
+         fs%cluster_on=.false.         ! diag run: clustering ON (set .false. to relax every cell alone)
+         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A1
+         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A2
+         call param_read('Chemical clustering',fs%cluster_chem_on,default=.false.)  ! Pass A3
          call param_read('Dissolve stranded gas',fs%dissolve_on,default=.true.)
          fs%relax_diag_on=.true.      ! diag run: write solo-vs-clustered CSV
          call param_read('Diag stride',fs%relax_diag_stride,default=20)
@@ -884,6 +960,12 @@ contains
          call rescfile%add_column(stuck_n,'Stuck n')
          call rescfile%add_column(fs%pool_n,'Pool n')
          call rescfile%add_column(fs%strand_n,'Strand n')
+         call rescfile%add_column(fs%vacsl_n,'A0 slivers')
+         call rescfile%add_column(fs%vaccand_n,'A0 cand')
+         call rescfile%add_column(fs%vacpair_n,'A0 pairs')
+         call rescfile%add_column(sliverL_n,'L sliver n') ! debug
+         call rescfile%add_column(sliverLf_n,'L sliver fail') ! debug
+         call rescfile%add_column(chemskip_n,'Chem skip n') ! debug
          call rescfile%write()
       end block create_monitors
 
@@ -910,6 +992,7 @@ contains
          ! Remember old state
          call fs%store_old()
          ! call debug_probe('00-start-of-step-Qold') ! debug
+         call probe_boxes('A0_start') ! debug
 
          ! ======================= RK2 Stage 1: Q*=Q[n]+dt/2*dQdt(t,Q[n]) =======================
          ! Increment Q without pressure gradient
@@ -918,12 +1001,15 @@ contains
          ! call debug_probe('01-post-lincomb-raw-advection') ! debug
          call fs%Q%average_down(); call fs%Q%fill(time=time%tmid)
          ! call debug_probe('02-post-avgdown-fill') ! debug
+         call probe_boxes('S1a_transport') ! debug
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
          ! call debug_probe('03-post-build_plic(merge_Q+clean_Q)') ! debug
+         call probe_boxes('S1b_plic') ! debug
          ! Get most up-to-date pressure
          call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
          ! call debug_probe('04-post-apply_relax') ! debug
+         call probe_boxes('S1c_relax') ! debug
          call fs%get_primitive(Q=fs%Q)
          ! call debug_probe('05-post-get_primitive') ! debug
          ! Rebuild sub-cell VF
@@ -944,6 +1030,7 @@ contains
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
          ! call debug_probe('10-END-of-stage1') ! debug
+         call probe_boxes('S1d_end') ! debug
          ! ======================= RK2 Stage 2: Q[n+1]=Q[n]+dt*dQdt(t,Q*) =======================
          ! Increment Q without pressure gradient
          call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t)
@@ -951,12 +1038,15 @@ contains
          ! call debug_probe('11-post-lincomb-raw-advection-stage2') ! debug
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          ! call debug_probe('12-post-avgdown-fill-stage2') ! debug
+         call probe_boxes('S2a_transport') ! debug
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
          ! call debug_probe('13-post-build_plic-stage2') ! debug
+         call probe_boxes('S2b_plic') ! debug
          ! Get most up-to-date pressure
          call fs%apply_relax(dt=time%dt,time=time%t)
          ! call debug_probe('14-post-apply_relax-stage2') ! debug
+         call probe_boxes('S2c_relax') ! debug
          call fs%get_primitive(Q=fs%Q)
          ! call debug_probe('15-post-get_primitive-stage2') ! debug
          ! Rebuild sub-cell VF
@@ -977,6 +1067,7 @@ contains
          ! Get primitive variables
          call fs%get_primitive(Q=fs%Q)
          ! call debug_probe('20-END-of-step') ! debug
+         call probe_boxes('S2d_end') ! debug
          ! ======================================================================================
 
          ! Regrid if event triggers
@@ -1020,6 +1111,12 @@ contains
             call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
             diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
             flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
+            sliverL_n=relax_model%nsliver_L ! debug
+            call MPI_ALLREDUCE(MPI_IN_PLACE,sliverL_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr) ! debug
+            sliverLf_n=relax_model%nsliver_Lf ! debug
+            call MPI_ALLREDUCE(MPI_IN_PLACE,sliverLf_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr) ! debug
+            chemskip_n=relax_model%nchem_skip ! debug
+            call MPI_ALLREDUCE(MPI_IN_PLACE,chemskip_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr) ! debug
          end block relax_census
          call mfile%write()
          call consfile%write()

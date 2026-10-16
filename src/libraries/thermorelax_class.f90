@@ -17,8 +17,12 @@ module thermorelax_class
    integer, parameter :: RELAX_NUC_FAILED  =7 !< Nucleation failed. Thermo-mechanical relaxation is attempted but chemical is skipped.
    integer, parameter :: RELAX_VACUUM_VAPOR=8 !< Near-vacuum vapor (p_v too small)
    type, abstract :: thermorelax
+      !> Reference vapor fraction for the current cell (largest Yv of its gas-bearing neighbours), set by
+      !> the caller before apply; 0 means none given
+      real(WP) :: Yv_ref=0.0_WP
    contains
       procedure(relax_iface), deferred :: apply
+      procedure :: get_chem_transfer
    end type thermorelax
    abstract interface
       subroutine relax_iface(this,dt,VF,Q,Pjump,ierr)
@@ -31,4 +35,23 @@ module thermorelax_class
          integer,  optional,     intent(out)   :: ierr
       end subroutine relax_iface
    end interface
+contains
+   !> Predicted chemical transfer over dt from (VF,Q) without changing them: liquid mass gained dm, linearized
+   !> VFeq, saturation vapor mass fraction Ysat. Default: no prediction (ok=.false.); finite-rate models override.
+   !> nucleated: the cell holds a fresh nucleation seed (a model may then skip its rate scaling)
+   subroutine get_chem_transfer(this,dt,VF,Q,Pjump,dm,VFeq,Ysat,ok,nucleated)
+      implicit none
+      class(thermorelax),     intent(in)  :: this
+      real(WP),               intent(in)  :: dt
+      real(WP),               intent(in)  :: VF
+      real(WP), dimension(:), intent(in)  :: Q
+      real(WP),               intent(in)  :: Pjump
+      real(WP),               intent(out) :: dm,VFeq,Ysat
+      logical,                intent(out) :: ok
+      logical,  optional,     intent(in)  :: nucleated
+      dm=0.0_WP
+      VFeq=VF
+      Ysat=0.0_WP
+      ok=.false.
+   end subroutine get_chem_transfer
 end module thermorelax_class

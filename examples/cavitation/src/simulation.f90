@@ -734,8 +734,8 @@ contains
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
          ! Pre-relaxation clustering
          fs%cluster_on=.true.
-         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A1
-         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A2
+         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A1
+         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A2
          call param_read('Dissolve stranded gas',fs%dissolve_on,default=.true.)
          ! Solo-vs-clustered relaxation diagnostic CSV
          call param_read('Relax diagnostic',fs%relax_diag_on,default=.false.)

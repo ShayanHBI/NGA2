@@ -29,8 +29,8 @@ Initial vapor mass fraction        : 0
 Surface tension                    : 0
 
 # Relaxation clustering
-Thermal clustering    : .true.
 Mechanical clustering : .true.
+Thermal clustering    : .true.
 Dissolve stranded gas : .true.
 Wall liquid fold      : .true.
 Wall liquid band      : 10

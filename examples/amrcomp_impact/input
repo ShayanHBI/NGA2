@@ -21,6 +21,21 @@ Wall BC        : slip
 Relaxation type                           : pTg
 Cavitation pressure threshold coefficient : 0.8
 Condensation temperature tolerance        : 0.1
+# Finite relaxation rates (Pelanti 2022); omit a line for instantaneous
+# Mechanical relaxation rate              : 1.0
+# Thermal relaxation rate                 : 1.0
+Chemical relaxation rate                : 0.001
+# Chemical rate scaling: 0 nu (per cell volume), 1 nu*(1-VF), 2 nu*4*VF*(1-VF); nucleation seeds always use nu
+Chemical rate scaling : 1
+# Skip all relaxation below this gas density; isentropic gas-only compression for slivers with 1-VF below this (0: off)
+Relax skip gas density    : 0.01
+Relax liquid thermal tolerance : 0.01
+Relax sliver gas fraction : 0.01
+# Skip the chemical step where it would move Yv by more than this fraction of max(Yv, neighbours' Yv) (0: off)
+Relax vapor fraction tolerance : 0.1
+# Sliver whose gas, and a neighbour whose gas, sit below this fraction of the sliver's liquid pressure: isentropic two-cell mix (0: off)
+# Also pairs a liquid-full cell whose liquid sits below this fraction of a gas-bearing neighbour's gas pressure
+Relax vacuum pressure ratio : 0.8
 
 Initial vapor mass fraction: 0
 
@@ -81,25 +96,26 @@ Sutherland temperature : 0.073
 Max dt     : 1e-3
 Initial dt : 1e-3
 Max CFL    : 0.75
-Max time   : 0.33
+Max time   : 10
 
 # Output
-Output period     : 0.001
-Checkpoint period : 0.001
-Restart from      : 3.29000E-01
+Output period     : 0.1
+Checkpoint period : 1
+Restart from      : 1.00000E+00
 
 # Relaxation clustering
-Thermal clustering    : .true.
-Mechanical clustering : .true.
-Dissolve stranded gas : .true.
+Mechanical clustering : .false.
+Thermal clustering    : .false.
+Chemical clustering   : .false.
+Dissolve stranded gas : .false.
 
 # Diagnostics
-Diag stride : 1
+Diag stride : 100000
 
 # Debug trace box
-Debug ilo : 943
-Debug ihi : 943
-Debug jlo : 1045
-Debug jhi : 1046
-Debug klo : 0
-Debug khi : 0
+Debug ilo : !59
+Debug ihi : !59
+Debug jlo : !978
+Debug jhi : !978
+Debug klo : !0
+Debug khi : !0
