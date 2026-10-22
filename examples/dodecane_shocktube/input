@@ -1,0 +1,79 @@
+# Dodecane liquid-vapor shock tube (Pelanti 2022, Sec. 8.2.2), SI units, pure phases on either side
+
+# AMR grid
+Base nx       : 2000
+Base ny       : 1
+Base nz       : 1
+Max level     : 0
+Domain length : 1
+
+# Regridding parameters (inert at Max level 0)
+Regrid nsteps      : 10
+Tag density error  : 0.6
+Tag pressure error : 0.3
+Tag Ducros value   : 0.5
+
+# Initial state at rest: liquid left of the interface, vapor right of it
+Left pressure      : 1e8
+Left density       : 500
+Right pressure     : 1e5
+Right density      : 2
+Interface location : 0.75025
+
+# EOS: Pelanti 2022 Table 4 (NASG liquid dodecane, ideal-gas vapor dodecane); air is the zero-mass carrier
+Liquid gamma    : 1.206
+Liquid pinf     : 1.681e8
+Liquid covolume : 7.51e-4
+Liquid cv       : 2532
+Liquid q        : -996054
+Liquid qp       : 0
+Vapor gamma     : 1.021
+Vapor cv        : 2274
+Vapor q         : -384592
+Vapor qp        : -4301
+Air gamma       : 1.4
+Air cv          : 718
+
+# Relaxation (p, pT, pThybrid, pTg)
+Relaxation type : p
+# Liquid pressure [Pa] below which a pure-liquid cell cavitates; condensation tolerance [K]
+Cavitation pressure threshold      : 1e30
+Condensation temperature tolerance : 0
+# Finite relaxation rates (Pelanti 2022); omit a line for instantaneous
+# Mechanical relaxation rate : 1.0
+# Thermal relaxation rate    : 2000
+# Chemical relaxation rate   : 1e-4
+
+# Overshoot safety rules (0: off)
+Relax skip gas density         : 0
+Relax sliver gas fraction      : 0
+Relax liquid thermal tolerance : 0
+Relax vapor fraction tolerance : 0
+Relax vacuum pressure ratio    : 0
+
+# Relaxation clustering
+Mechanical clustering : .false.
+Thermal clustering    : .false.
+Chemical clustering   : .false.
+Dissolve stranded gas : .false.
+
+# Transport properties and subgrid models (physical transport off)
+Liquid viscosity                 : 0
+Gas viscosity                    : 0
+Liquid thermal conductivity      : 0
+Gas thermal conductivity         : 0
+# Artificial bulk viscosity (0: off); the second coefficient is the shear-to-bulk ratio
+Artificial bulk viscosity coefficient : 5
+Artificial viscosity coefficient : 0
+Use Vreman                       : .false.
+Surface tension                  : 0
+
+# Time integration
+Max dt     : 1e-7
+Max CFL    : 0.5
+Max time   : 4.73e-4
+
+# Output
+Output period     : 4.73e-6
+Checkpoint period : 1
+Restart from      :

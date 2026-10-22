@@ -38,8 +38,7 @@ module thermorelax_class
 contains
    !> Predicted chemical transfer over dt from (VF,Q) without changing them: liquid mass gained dm, linearized
    !> VFeq, saturation vapor mass fraction Ysat. Default: no prediction (ok=.false.); finite-rate models override.
-   !> nucleated: the cell holds a fresh nucleation seed (a model may then skip its rate scaling)
-   subroutine get_chem_transfer(this,dt,VF,Q,Pjump,dm,VFeq,Ysat,ok,nucleated)
+   subroutine get_chem_transfer(this,dt,VF,Q,Pjump,dm,VFeq,Ysat,ok)
       implicit none
       class(thermorelax),     intent(in)  :: this
       real(WP),               intent(in)  :: dt
@@ -48,7 +47,6 @@ contains
       real(WP),               intent(in)  :: Pjump
       real(WP),               intent(out) :: dm,VFeq,Ysat
       logical,                intent(out) :: ok
-      logical,  optional,     intent(in)  :: nucleated
       dm=0.0_WP
       VFeq=VF
       Ysat=0.0_WP

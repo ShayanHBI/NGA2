@@ -25,8 +25,6 @@ Condensation temperature tolerance        : 0.1
 # Mechanical relaxation rate              : 1.0
 # Thermal relaxation rate                 : 1.0
 Chemical relaxation rate                : 0.001
-# Chemical rate scaling: 0 nu (per cell volume), 1 nu*(1-VF), 2 nu*4*VF*(1-VF); nucleation seeds always use nu
-Chemical rate scaling : 1
 # Skip all relaxation below this gas density; isentropic gas-only compression for slivers with 1-VF below this (0: off)
 Relax skip gas density    : 0.01
 Relax liquid thermal tolerance : 0.01
@@ -96,12 +94,12 @@ Sutherland temperature : 0.073
 Max dt     : 1e-3
 Initial dt : 1e-3
 Max CFL    : 0.75
-Max time   : 10
+Max time   : 12
 
 # Output
 Output period     : 0.1
 Checkpoint period : 1
-Restart from      : 1.00000E+00
+Restart from      : 
 
 # Relaxation clustering
 Mechanical clustering : .false.

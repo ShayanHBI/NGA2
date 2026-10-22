@@ -210,6 +210,7 @@ module amrmpcomp_class
       procedure :: relax_clustered
       procedure :: debug_probe_cell ! debug
       procedure :: apply_relax
+      procedure :: apply_relax_splitremix
       procedure :: add_viscartif
       procedure :: add_vreman
       procedure :: get_cfl
@@ -5346,6 +5347,274 @@ contains
          call this%amr%mfiter_destroy(mfi)
       end subroutine postprocess_plic
    end subroutine apply_relax
+
+   !> Split-remix relaxation: the minor phase and an equal volume of the dominant phase relax as a
+   !> VF=0.5 sub-cell reactor, then the rest of the dominant phase is remixed into the result
+   subroutine apply_relax_splitremix(this,dt,time)
+      use mpi_f08,                only: MPI_Wtime
+      use messager,               only: die
+      use amrvof_geometry,        only: get_plane_dist,cut_hex_vol
+      use mathtools,              only: normalize
+      use random,                 only: random_uniform
+      use thermorelax_class,      only: RELAX_OK
+      use relax_igmix_sg_class,   only: Prelax
+      use relax_igmix_nasg_class, only: relax_igmix_nasg
+      implicit none
+      class(amrmpcomp), intent(inout) :: this
+      real(WP), intent(in) :: dt
+      real(WP), intent(in) :: time
+      real(WP), parameter :: VFrb=0.0_WP         !< VF relaxation band: cells with abs(VF-0.5)<VFrb relax whole
+      real(WP), parameter :: VF_nuc=0.01_WP      !< Near-pure band where nucleation is attempted first (pTg_relax's VF_nuc)
+      integer,  parameter :: remix_rigid=1       !< Additive remix of the relaxed part b and the inert part a
+      integer,  parameter :: remix_rigidM=2      !< Additive remix, then whole-cell mechanical relaxation
+      integer,  parameter :: remix_mode=remix_rigid
+      integer :: lvl,i,j,k,n,ierr,model0
+      real(WP) :: t0
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC
+      logical :: oldmix,newmix,nucleated,pstab0
+      real(WP) :: dx,dy,dz,cell_vol,vol_liq,vol_gas
+      real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas,rand_dir
+      real(WP), dimension(3,8) :: hex
+      real(WP), dimension(4) :: plane
+      class(relax_igmix_nasg), pointer :: rlx
+      integer, dimension(:), allocatable :: iL,iG
+      real(WP) :: Pjump,VFn,VFr,Vr
+      real(WP), dimension(this%nQ) :: Qn,Qa,Qr,Qr0
+      real(WP), parameter :: dbg_jump=10.0_WP     ! debug: flag a relaxation that multiplies energy density or the hottest phase T by more than this
+      real(WP), parameter :: dbg_Tabs=1.0e4_WP    ! debug: flag a cell entering relaxation with a phase T above this
+      integer,  parameter :: dbg_nmax=50          ! debug: max flagged cells printed per rank per call
+      integer :: dbg_branch,dbg_n                 ! debug: branch 1=regular, 2=nucleation kept, 3=split-remix, 4=split-remix+M
+      real(WP) :: dbg_VF0,dbg_flr0                ! debug
+      real(WP), dimension(2) :: dbg_T0,dbg_T1     ! debug
+      real(WP), dimension(this%nQ) :: dbg_Q0      ! debug
+      logical :: dbg_flr                          ! debug
+      ! If no relaxation model was provided, return
+      if (.not.associated(this%relax)) return
+      ! Return if clvl<maxlvl
+      if (this%amr%clvl().lt.this%amr%maxlvl) return
+      ! Start timer
+      t0=MPI_Wtime()
+      ! Typed access to the relaxation model
+      select type (r=>this%relax)
+      class is (relax_igmix_nasg)
+         rlx=>r
+      class default
+         call die('[amrmpcomp apply_relax_splitremix] requires a relax_igmix_nasg relaxation model')
+      end select
+      ! No single-phase stability test on near-pure cells
+      pstab0=rlx%pure_stability
+      rlx%pure_stability=.false.
+      ! Liquid and gas components of Q (momentum is in neither)
+      iL=[1,3,(n,n=this%Yl_lo,this%Yl_hi)]
+      iG=[2,4,(n,n=this%Yg_lo,this%Yg_hi)]
+      dbg_n=0 ! debug
+      ! Apply relaxation on finest level only (mixture cells are always at finest)
+      lvl=this%amr%maxlvl
+      dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl)
+      cell_vol=this%amr%cell_vol(lvl)
+      call this%amr%mfiter_build(lvl,mfi)
+      do while (mfi%next())
+         ! Get pointers to data
+         pVF  =>this%VF%mf(lvl)%dataptr(mfi)
+         pQ   =>this%Q%mf(lvl)%dataptr(mfi)
+         pCL  =>this%CL%dataptr(mfi)
+         pCG  =>this%CG%dataptr(mfi)
+         pCurv=>this%curv%dataptr(mfi)
+         pPLIC=>this%plic%dataptr(mfi)
+         ! Loop over valid cells
+         bx=mfi%tilebox()
+         do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+
+            ! Check if mixture cell prior to relaxation
+            oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
+            Pjump=this%sigma*pCurv(i,j,k,1)
+            dbg_VF0=pVF(i,j,k,1); dbg_Q0=pQ(i,j,k,:); dbg_T0=phase_T(dbg_VF0,dbg_Q0); dbg_flr0=rlx%acc(5) ! debug
+            if (.not.oldmix.or.abs(pVF(i,j,k,1)-0.5_WP).lt.VFrb) then
+               ! Pure cells and cells inside the band: regular relaxation
+               dbg_branch=1 ! debug
+               call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=Pjump)
+            else
+               ! Near-pure cells: attempt nucleation on the whole cell, keep it only if a seed survived
+               nucleated=.false.
+               if (rlx%do_nucleate.and.(pVF(i,j,k,1).lt.VF_nuc.or.pVF(i,j,k,1).gt.1.0_WP-VF_nuc)) then
+                  VFn=pVF(i,j,k,1); Qn=pQ(i,j,k,:)
+                  call rlx%apply(dt=dt,VF=VFn,Q=Qn,Pjump=Pjump,ierr=ierr)
+                  nucleated=(rlx%nucleated.and.ierr.eq.RELAX_OK)
+                  if (nucleated) then
+                     pVF(i,j,k,1)=VFn; pQ(i,j,k,:)=Qn
+                     dbg_branch=2 ! debug
+                  end if
+               end if
+               if (.not.nucleated) then
+                  ! Split, relax the sub-cell reactor, remix
+                  dbg_branch=3; dbg_flr0=rlx%acc(5) ! debug
+                  call split(pVF(i,j,k,1),pQ(i,j,k,:),Qa,Qr,Vr)
+                  Qr0=Qr; VFr=0.5_WP
+                  call relax_noguard(VFr,Qr,Pjump,ierr)
+                  if (ierr.ne.RELAX_OK) call fail('reactor relaxation',pVF(i,j,k,1),pQ(i,j,k,:),Qr0)
+                  call remix(pVF(i,j,k,1),pQ(i,j,k,:),Qa,Qr,VFr,Vr)
+                  if (remix_mode.eq.remix_rigidM.and.pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi) then
+                     VFn=pVF(i,j,k,1); Qn=pQ(i,j,k,:)
+                     dbg_branch=4 ! debug
+                     model0=rlx%model; rlx%model=Prelax
+                     call relax_noguard(pVF(i,j,k,1),pQ(i,j,k,:),Pjump,ierr)
+                     rlx%model=model0
+                     if (ierr.ne.RELAX_OK) call fail('remix mechanical relaxation',VFn,Qn,Qr0)
+                  end if
+               end if
+            end if
+            ! debug: report cells entering hot, or whose energy density or hottest phase T jumped across relaxation
+            dbg_flr=(rlx%acc(5).gt.dbg_flr0) ! debug
+            dbg_T1=phase_T(pVF(i,j,k,1),pQ(i,j,k,:)) ! debug
+            if (dbg_n.lt.dbg_nmax.and.(maxval(dbg_T0).gt.dbg_Tabs.or.abs(pQ(i,j,k,3)+pQ(i,j,k,4)).gt.dbg_jump*abs(dbg_Q0(3)+dbg_Q0(4)).or. & ! debug
+            &   maxval(dbg_T1).gt.dbg_jump*maxval(dbg_T0))) then ! debug
+               dbg_n=dbg_n+1 ! debug
+               print '(a,3(1x,i0),a,i0,a,l2,a,es12.4)','[splitremix dbg] cell',i,j,k,' branch=',dbg_branch,' floor=',dbg_flr,' Pjump=',Pjump ! debug
+               print '(a,es24.16,a,2es12.4,a,*(es24.16))','   pre  VF=',dbg_VF0,' TL,TG=',dbg_T0,' Q=',dbg_Q0 ! debug
+               print '(a,es24.16,a,2es12.4,a,*(es24.16))','   post VF=',pVF(i,j,k,1),' TL,TG=',dbg_T1,' Q=',pQ(i,j,k,:) ! debug
+               if (dbg_branch.ge.3) print '(a,es12.4,a,*(es24.16))','   reactor Vr=',Vr,' in Q=',Qr0 ! debug
+               if (dbg_branch.ge.3) print '(a,es24.16,a,*(es24.16))','   reactor out VF=',VFr,' Q=',Qr ! debug
+            end if ! debug
+            ! Check if mixture cell after relaxation
+            newmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
+
+            ! If not mixture cells, clean up and cycle
+            if (.not.newmix) then
+               if (pVF(i,j,k,1).lt.VFlo) then
+                  ! Pure gas
+                  pVF(i,j,k,1)=0.0_WP
+                  pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pQ(i,j,k,1)=0.0_WP
+                  pQ(i,j,k,3)=0.0_WP
+                  if (this%liq%ns.gt.1) pQ(i,j,k,this%Yl_lo:this%Yl_hi)=0.0_WP
+                  pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,-1.0e10_WP]
+               else if (pVF(i,j,k,1).gt.VFhi) then
+                  ! Pure liquid
+                  pVF(i,j,k,1)=1.0_WP
+                  pCL(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pCG(i,j,k,1:3)=[this%amr%xlo+(real(i,WP)+0.5_WP)*dx,this%amr%ylo+(real(j,WP)+0.5_WP)*dy,this%amr%zlo+(real(k,WP)+0.5_WP)*dz]
+                  pQ(i,j,k,2)=0.0_WP
+                  pQ(i,j,k,4)=0.0_WP
+                  if (this%gas%ns.gt.1) pQ(i,j,k,this%Yg_lo:this%Yg_hi)=0.0_WP
+                  pPLIC(i,j,k,:)=[0.0_WP,0.0_WP,0.0_WP,+1.0e10_WP]
+               end if
+               cycle
+            end if
+
+            ! If mixture cell, post-process PLIC and barycenters
+            if (.not.oldmix) then
+               rand_dir=[random_uniform(-1.0_WP,1.0_WP),random_uniform(-1.0_WP,1.0_WP),random_uniform(-1.0_WP,1.0_WP)]
+               pPLIC(i,j,k,1:3)=normalize(rand_dir)
+            end if
+            ! Adjust PLIC plane to match new VF
+            lo=[this%amr%xlo+real(i  ,WP)*dx,this%amr%ylo+real(j  ,WP)*dy,this%amr%zlo+real(k  ,WP)*dz]
+            hi=[this%amr%xlo+real(i+1,WP)*dx,this%amr%ylo+real(j+1,WP)*dy,this%amr%zlo+real(k+1,WP)*dz]
+            ! Reposition plane: keep normal, adjust distance for new VF
+            pPLIC(i,j,k,4)=get_plane_dist(pPLIC(i,j,k,1:3),lo,hi,pVF(i,j,k,1))
+            ! Recompute barycenters from adjusted PLIC
+            hex(:,1)=[lo(1),lo(2),lo(3)]
+            hex(:,2)=[hi(1),lo(2),lo(3)]
+            hex(:,3)=[hi(1),hi(2),lo(3)]
+            hex(:,4)=[lo(1),hi(2),lo(3)]
+            hex(:,5)=[lo(1),lo(2),hi(3)]
+            hex(:,6)=[hi(1),lo(2),hi(3)]
+            hex(:,7)=[hi(1),hi(2),hi(3)]
+            hex(:,8)=[lo(1),hi(2),hi(3)]
+            plane=pPLIC(i,j,k,:)
+            call cut_hex_vol(hex,plane,vol_liq,vol_gas,bary_liq,bary_gas)
+            pVF(i,j,k,1)=vol_liq/cell_vol
+            pCL(i,j,k,1:3)=bary_liq
+            pCG(i,j,k,1:3)=bary_gas
+
+         end do; end do; end do
+      end do
+      call this%amr%mfiter_destroy(mfi)
+      rlx%pure_stability=pstab0
+      ! Sync and apply BC
+      call this%VF%average_down(); call this%fill(lvl=this%amr%maxlvl,time=time)
+      call this%Q%average_down(); call this%Q%fill(time=time)
+      ! End timer
+      this%wt_relax=this%wt_relax+(MPI_Wtime()-t0)
+   contains
+      !> Split a cell into the inert part a of the dominant phase (per cell volume) and the reactor
+      !> (per reactor volume Vr_, VF=0.5): the whole minor phase and an equal volume of the dominant one
+      subroutine split(VF_,Q_,Qa_,Qr_,Vr_)
+         real(WP), intent(in) :: VF_
+         real(WP), dimension(:), intent(in) :: Q_
+         real(WP), dimension(:), intent(out) :: Qa_,Qr_
+         real(WP), intent(out) :: Vr_
+         real(WP) :: Vm,Vd
+         Vm=min(VF_,1.0_WP-VF_); Vd=1.0_WP-Vm; Vr_=2.0_WP*Vm
+         Qa_=0.0_WP; Qr_=0.0_WP
+         if (VF_.lt.0.5_WP) then
+            ! Liquid minor, gas dominant
+            Qr_(iL)=Q_(iL)/Vr_
+            Qr_(iG)=Q_(iG)/(2.0_WP*Vd)
+            Qa_(iG)=(1.0_WP-Vm/Vd)*Q_(iG)
+         else
+            ! Gas minor, liquid dominant
+            Qr_(iG)=Q_(iG)/Vr_
+            Qr_(iL)=Q_(iL)/(2.0_WP*Vd)
+            Qa_(iL)=(1.0_WP-Vm/Vd)*Q_(iL)
+         end if
+      end subroutine split
+      !> Rigid remix: phasic mass, species, internal energy and volume of parts a and b add up
+      subroutine remix(VF_,Q_,Qa_,Qr_,VFr_,Vr_)
+         real(WP), intent(inout) :: VF_
+         real(WP), dimension(:), intent(inout) :: Q_
+         real(WP), dimension(:), intent(in) :: Qa_,Qr_
+         real(WP), intent(in) :: VFr_,Vr_
+         Q_(iL)=Qa_(iL)+Vr_*Qr_(iL)
+         Q_(iG)=Qa_(iG)+Vr_*Qr_(iG)
+         if (VF_.lt.0.5_WP) then
+            VF_=Vr_*VFr_
+         else
+            VF_=Vr_*VFr_+1.0_WP-Vr_
+         end if
+      end subroutine remix
+      !> Relaxation call with the model's dissolution switches and reducing-phase guard turned off
+      subroutine relax_noguard(VF_,Q_,Pjump_,ierr_)
+         real(WP), intent(inout) :: VF_
+         real(WP), dimension(:), intent(inout) :: Q_
+         real(WP), intent(in) :: Pjump_
+         integer, intent(out) :: ierr_
+         real(WP) :: dissP0,dissRHO0
+         logical :: guard0
+         dissP0=rlx%diss_P; dissRHO0=rlx%diss_RHO; guard0=rlx%chem_guard
+         rlx%diss_P=1.0e30_WP; rlx%diss_RHO=1.0e30_WP; rlx%chem_guard=.false.
+         ierr_=RELAX_OK
+         call rlx%apply(dt=dt,VF=VF_,Q=Q_,Pjump=Pjump_,ierr=ierr_)
+         rlx%diss_P=dissP0; rlx%diss_RHO=dissRHO0; rlx%chem_guard=guard0
+      end subroutine relax_noguard
+      !> Phase temperatures [TL,TG] of a cell state, 0 for an absent phase ! debug
+      function phase_T(VF_,Q_) result(T_)
+         real(WP), intent(in) :: VF_
+         real(WP), dimension(:), intent(in) :: Q_
+         real(WP), dimension(2) :: T_
+         real(WP), dimension(this%gas%ns) :: yG
+         T_=0.0_WP
+         if (VF_.gt.0.0_WP.and.Q_(1).gt.0.0_WP) T_(1)=this%liq%get_T_from_rho_e(rho=Q_(1)/VF_,e=Q_(3)/Q_(1),y=[1.0_WP])
+         if (VF_.lt.1.0_WP.and.Q_(2).gt.0.0_WP) then
+            yG(1:this%gas%ns-1)=max(0.0_WP,min(1.0_WP,Q_(this%Yg_lo:this%Yg_hi)/Q_(2)))
+            yG(this%gas%ns)=1.0_WP-sum(yG(1:this%gas%ns-1))
+            T_(2)=this%gas%get_T_from_rho_e(rho=Q_(2)/(1.0_WP-VF_),e=Q_(4)/Q_(2),y=yG)
+         end if
+      end function phase_T
+      !> Print the failing cell and stop
+      subroutine fail(what,VF_,Q_,Qr_)
+         character(len=*), intent(in) :: what
+         real(WP), intent(in) :: VF_
+         real(WP), dimension(:), intent(in) :: Q_,Qr_
+         print '(a,a,a,i0,a,3(1x,i0))','[apply_relax_splitremix] ',what,' failed: ierr=',ierr,' cell=',i,j,k
+         print '(a,es25.16,a,es25.16)','   cell VF=',VF_,' Pjump=',Pjump
+         print '(a,*(es25.16))','   cell Q=',Q_
+         print '(a,*(es25.16))','   reactor Q at VF=0.5=',Qr_
+         call die('[amrmpcomp apply_relax_splitremix] '//what//' failed')
+      end subroutine fail
+   end subroutine apply_relax_splitremix
 
    !> Add artificial bulk viscosity to this%beta and this%visc
    subroutine add_viscartif(this,dt,Cartif,Cvisc)

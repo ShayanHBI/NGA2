@@ -32,7 +32,6 @@ module relax_igmix_nasg_finite_class
       real(WP) :: lambda=huge(1.0_WP) !< Mechanical rate [1/(Pa s)] (Pelanti mu); huge = instantaneous
       real(WP) :: theta =huge(1.0_WP) !< Thermal rate [W/(m^3 K)] (Pelanti vartheta); huge = instantaneous
       real(WP) :: nu    =huge(1.0_WP) !< Chemical rate [kg s/m^5] (Pelanti nu); huge = instantaneous
-      integer  :: nu_scale=0          !< Chemical rate scaling: 0 nu, 1 nu*(1-VF), 2 nu*4*VF*(1-VF)
    contains
       procedure :: initialize
       procedure :: apply
@@ -123,7 +122,14 @@ contains
       end if
       if (this%model.ne.Prelax.or.this%lambda.ge.huge(1.0_WP)) then
          ! Parent's apply on this itself, so p_relax/get_p_eq still dispatch to this class
+         VF0=VF; Q0=Q ! debug
          call sg_apply(this,dt,VF,Q,Pjump,ierr)
+         ! debug: report the entry state of a call that leaves NaN or multiplies the internal energy by >10
+         if (any(Q.ne.Q).or.VF.ne.VF.or.Q(3)+Q(4).gt.10.0_WP*max(Q0(3)+Q0(4),tiny(1.0_WP))) then ! debug
+            print'(a,es25.17,a,es25.17)','BADEXIT entry VF=',VF0,' Pjump=',Pjump ! debug
+            print'(a,*(es25.17))','BADEXIT entry Q=',Q0 ! debug
+            print'(a,es25.17,a,*(es25.17))','BADEXIT exit  VF=',VF,' Q=',Q ! debug
+         end if ! debug
          return
       end if
       if (VF.lt.VFlo.or.VF.gt.VFhi) then
@@ -847,6 +853,9 @@ contains
                   drho=min(drho,dT_nuc_max*TL_nuc*this%liq%cv*Q(1)/(Q(3)/Q(1)-eV_nuc))
                   if (dbg_cell) print*,'further capped drho=',drho
                end if
+               ! Cap to the room the stretched liquid frees at pv_sat (isothermal NASG: (v-b)(p+pinf) fixed)
+               drho=min(drho,rhoV_nuc*(VF-this%liq_nasg%b*Q(1))*(pv_sat-pL_nuc)/(pv_sat+this%liq%pinf))
+               if (dbg_cell) print*,'tension-room capped drho=',drho,' room=',(VF-this%liq_nasg%b*Q(1))*(pv_sat-pL_nuc)/(pv_sat+this%liq%pinf) ! debug
                ! if (drho.le.0.0_WP) exit nucleation ! debug
                if (drho.le.0.0_WP) then
                   if (dbg_cell) print*,'cavitation rejected: capped nucleation mass drho<=0, nothing to seed'
@@ -927,6 +936,9 @@ contains
                if (eG_nuc.gt.eL_new) then
                   drho=min(drho,dT_nuc_max*TG_nuc*cvG_nuc*Q(2)/(eG_nuc-eL_new))
                   if (dbg_cell) print*,'capping further, drho=',drho
+                  ! Latent heat may warm the cell by at most half its subcooling, so the seed stays on the condensing side
+                  drho=min(drho,0.5_WP*(Tsat_nuc-TG_nuc)*cvG_nuc*Q(2)/(eG_nuc-eL_new))
+                  if (dbg_cell) print*,'subcooling cap, drho=',drho ! debug
                end if
                if (drho.le.0.0_WP) then
                   if (dbg_cell) print*,'drho negative; drho=',drho
@@ -959,6 +971,12 @@ contains
          else
             if (present(ierr)) ierr=ier
          end if
+         return
+      end if
+      ! A phase volume below round-off is left to the solver's pure-cell snap, as in the parent's apply
+      if (VF.lt.VFlo.or.VF.gt.VFhi) then
+         if (dbg_cell) print*,'pT_relax left VF outside [VFlo,VFhi], no chemical step: VF=',VF ! debug
+         if (present(ierr)) ierr=RELAX_OK
          return
       end if
       ! Step 3: chemical (phase change)
@@ -1075,8 +1093,11 @@ contains
          done=.false.
          iVQ=7+this%liq%ns+this%indV-1
          ! Transfer over dt at ** (eqs. 71-78, or the exact dry-gas step)
-         call this%get_chem_transfer(dt,VF,Q,Pjump,dm,VFeq,Ysat,ok,nucleated=nucleated)
-         if (.not.ok) return
+         call this%get_chem_transfer(dt,VF,Q,Pjump,dm,VFeq,Ysat,ok)
+         if (dbg_cell) print*,'[finite_chem] ok=',ok,' dm=',dm,' (liquid gained; >0 condenses) VF=',VF,' VFeq=',VFeq,' Ysat=',Ysat ! debug
+         if (dbg_cell) print*,'[finite_chem] vapor mass Q(iVQ)=',Q(iVQ),' gas mass Q(2)=',Q(2),' dm/Q(iVQ)=',dm/max(Q(iVQ),tiny(1.0_WP)) ! debug
+         ! A non-finite transfer would pass every bounds test below, so it is rejected here
+         if (.not.ok.or.dm.ne.dm.or.VFeq.ne.VFeq.or.abs(dm).gt.huge(1.0_WP)) return
          if (dm.eq.0.0_WP) then
             done=.true.
             return
@@ -1118,8 +1139,10 @@ contains
             end block skip_chem
          end if
          ! A phase that runs out (mass or volume) transfers completely; no eq. 83 clamp
-         if (dm.lt.0.0_WP.and.(Q(1)+dm.le.0.0_WP.or.VFeq.le.0.0_WP)) then
+         ! Liquid that no longer fits its new volume (b*rhoL at the packing knee) has run out too
+         if (dm.lt.0.0_WP.and.(Q(1)+dm.le.0.0_WP.or.VFeq.le.0.0_WP.or.this%liq_nasg%b*(Q(1)+dm).ge.this%liq_nasg%brhomax*VFeq)) then
             ! Complete evaporation: all liquid joins the gas as vapor, its surface energy Pjump*VF goes to the gas
+            if (dbg_cell) print*,'[finite_chem] COMPLETE EVAPORATION: Q(1)+dm=',Q(1)+dm,' VFeq=',VFeq ! debug
             Q(2)=Q(2)+Q(1)
             Q(iVQ)=Q(iVQ)+Q(1)
             Q(4)=Q(3)+Q(4)+Pjump*VF
@@ -1130,8 +1153,10 @@ contains
             return
          end if
          if (dm.gt.0.0_WP.and.(Q(iVQ)-dm.le.0.0_WP.or.VFeq.ge.1.0_WP)) then
+            if (dbg_cell) print*,'[finite_chem] vapor runs out: Q(iVQ)-dm=',Q(iVQ)-dm,' VFeq=',VFeq,' (dm/Q(iVQ)=',dm/Q(iVQ),')' ! debug
             if (Q(iVQ).ge.(1.0_WP-Y_small)*Q(2)) then
                ! Complete condensation of an (essentially) air-free gas: pure liquid, as the pure-liquid snap
+               if (dbg_cell) print*,'[finite_chem] COMPLETE CONDENSATION (air-free gas): all gas folded into the liquid, VF=1' ! debug
                Q(1)=Q(1)+Q(2)
                Q(3)=Q(3)+Q(4)-Pjump*(1.0_WP-VF)
                Q(2)=0.0_WP
@@ -1144,8 +1169,14 @@ contains
             ! Air remains: all vapor condenses, VF from eq. 78
             VFeq=VF+(VFeq-VF)*Q(iVQ)/dm
             dm=Q(iVQ)
+            if (dbg_cell) print*,'[finite_chem] air remains: all vapor condenses, dm=',dm,' VFeq=',VFeq ! debug
          end if
-         if (VFeq.le.0.0_WP.or.VFeq.ge.1.0_WP.or.Q(1)+dm.le.0.0_WP.or.Q(iVQ)-dm.lt.0.0_WP) return
+         if (VFeq.le.0.0_WP.or.VFeq.ge.1.0_WP.or.Q(1)+dm.le.0.0_WP.or.Q(iVQ)-dm.lt.0.0_WP.or. &
+         &   this%liq_nasg%b*(Q(1)+dm).ge.this%liq_nasg%brhomax*VFeq) then
+            if (dbg_cell) print*,'[finite_chem] REJECTED: VFeq=',VFeq,' Q(1)+dm=',Q(1)+dm,' Q(iVQ)-dm=',Q(iVQ)-dm ! debug
+            return
+         end if
+         if (dbg_cell) print*,'[finite_chem] PARTIAL transfer: dm=',dm,' VF ',VF,' -> ',VFeq ! debug
          ! Update masses, and the surface energy Pjump*dV_l
          Q(1)=Q(1)+dm
          Q(2)=Q(2)-dm
@@ -1160,9 +1191,11 @@ contains
          qG    =sum(y(1:this%gas%ns)*this%gas%q (1:this%gas%ns))
          gammaG=cpG/cvG
          Peq=this%get_p_eq(VF,Q,qG,gammaG,Pjump)
+         if (dbg_cell) print*,'[finite_chem] after transfer: Peq=',Peq,' RHOL=',Q(1)/VF,' RHOG=',Q(2)/(1.0_WP-VF),' Yv=',Yv ! debug
          if (Peq.le.-this%liq%pinf.or.Peq-Pjump.le.0.0_WP) return
          Q(3)=(       VF)*this%liq%get_rhoe_from_p_rho(p=Peq,      rho=Q(1)/(       VF),y=[1.0_WP])
          Q(4)=(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Peq-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)
+         if (dbg_cell) print*,'[finite_chem] after transfer: TL=',this%liq%get_T_from_p_rho(p=Peq,rho=Q(1)/VF,y=[1.0_WP]),' TG=',this%gas%get_T_from_p_rho(p=Peq-Pjump,rho=Q(2)/(1.0_WP-VF),y=y) ! debug
          done=.true.
       end subroutine finite_chem
       subroutine restore_pT_state()
@@ -1212,8 +1245,7 @@ contains
 
    !> Predicted chemical transfer over dt from the state (VF,Q), which is not modified: liquid mass gained dm
    !> (Pelanti eqs. 71-77, or the exact dry-gas step), linearized VFeq (eq. 78) and saturation Ysat at the cell p,T.
-   !> nucleated=.true.: fresh nucleation seed, rate not scaled (nu_scale would starve the seed's growth)
-   subroutine get_chem_transfer(this,dt,VF,Q,Pjump,dm,VFeq,Ysat,ok,nucleated)
+   subroutine get_chem_transfer(this,dt,VF,Q,Pjump,dm,VFeq,Ysat,ok)
       implicit none
       class(relax_igmix_nasg_finite), intent(in)  :: this
       real(WP),                       intent(in)  :: dt
@@ -1222,11 +1254,10 @@ contains
       real(WP),                       intent(in)  :: Pjump
       real(WP),                       intent(out) :: dm,VFeq,Ysat
       logical,                        intent(out) :: ok
-      logical,  optional,             intent(in)  :: nucleated
       real(WP) :: RHOL,RHOG,EL,EG,PL,PG,TL,TG,CL,CG,GamL,GamG,HL,HG,chiL,chiG
       real(WP) :: PHIL,PHIG,zetaL,zetaG,CEp,CET,DTP,SVF,ST,Sp
       real(WP) :: YvS,xv,pv,RV,RA,Rm,sL,sV,g1,g2,KCC,xi1inv,xi2inv,dg,Kdt,frac,lnpvs,xs
-      real(WP) :: mAir,ms,u0,u1,tgt,nu_eff
+      real(WP) :: mAir,ms,u0,u1,tgt
       real(WP), dimension(3,3) :: M,Mc
       real(WP), dimension(3)   :: rhs
       real(WP), dimension(this%gas%ns) :: yS
@@ -1238,16 +1269,6 @@ contains
       ok=.false.
       iVQ=7+this%liq%ns+this%indV-1
       if (this%nu.le.0.0_WP) then; ok=.true.; return; end if
-      ! Effective rate: Pelanti's nu is per unit cell volume; optionally scaled by gas fraction or an interface proxy
-      select case (this%nu_scale)
-      case (1);     nu_eff=this%nu*(1.0_WP-VF)
-      case (2);     nu_eff=this%nu*4.0_WP*VF*(1.0_WP-VF)
-      case default; nu_eff=this%nu
-      end select
-      if (present(nucleated)) then
-         if (nucleated) nu_eff=this%nu
-      end if
-      if (nu_eff.le.0.0_WP) then; ok=.true.; return; end if
       ! Phasic state at ** (each phase at its own p and T); EL, EG are internal energies per unit volume
       RHOL=Q(1)/(       VF); EL=Q(3)/(       VF)
       RHOG=Q(2)/(1.0_WP-VF); EG=Q(4)/(1.0_WP-VF)
@@ -1261,6 +1282,8 @@ contains
       ! Vapor partial pressure p_v=x_v*p_g; dry gas (no vapor) is integrated separately below
       xv=this%get_xv(YvS); pv=xv*PG
       dry=(Q(iVQ).le.0.0_WP.or.pv.lt.this%pv_min)
+      if (dbg_cell) print*,'[get_chem_transfer] state: VF=',VF,' RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG ! debug
+      if (dbg_cell) print*,'[get_chem_transfer] Yv=',YvS,' xv=',xv,' pv=',pv,' dry=',dry,' nu=',this%nu,' dt=',dt ! debug
       ! Phasic coefficients: Gamma, c, chi=c^2-Gamma*h, phi=(drho/dT)_p, zeta=(drho/dp)_T (eqs. 16, 34)
       GamL=this%liq%get_gruneisen_from_rho_e(rho=RHOL,e=EL/RHOL,y=[1.0_WP])
       GamG=this%gas%get_gruneisen_from_rho_e(rho=RHOG,e=EG/RHOG,y=yS)
@@ -1299,6 +1322,7 @@ contains
       Mc=M; Mc(:,1)=rhs; SVF=det3(Mc)/DTP
       Mc=M; Mc(:,2)=rhs; ST =det3(Mc)/DTP
       Mc=M; Mc(:,3)=rhs; Sp =det3(Mc)/DTP
+      if (dbg_cell) print*,'[get_chem_transfer] S_alpha=',SVF,' S_T=',ST,' S_p=',Sp,' (d alpha_l, dT, dp per unit dm)' ! debug
       if (dry) then
          ! Dry gas: K_CC->inf and eq. 77 gives dm->0, yet the ODE evaporates. Keep only the singular mixing
          ! term F_C=Rv*T*ln(m_s/m_v) and integrate it exactly: E1(ln(m_s/m_v))=E1(ln(m_s/m_v**))+nu*Rv*T*dt/m_s
@@ -1313,10 +1337,10 @@ contains
             return
          end if
          ! u1 from E1(ln(1/u1))=E1(ln(1/u0))+tau, tau=nu*Rv*T*dt/m_s; u1=1 when tau exceeds E1(1e-300)~690
-         if (this%nu.ge.huge(1.0_WP).or.log(nu_eff)+log(RV*TG*dt/ms).gt.log(690.0_WP)) then
+         if (this%nu.ge.huge(1.0_WP).or.log(this%nu)+log(RV*TG*dt/ms).gt.log(690.0_WP)) then
             u1=1.0_WP
          else
-            tgt=nu_eff*RV*TG*dt/ms
+            tgt=this%nu*RV*TG*dt/ms
             if (u0.gt.0.0_WP) tgt=tgt+exp(log_E1(-log(u0)))
             if (tgt.gt.690.0_WP) then
                u1=1.0_WP
@@ -1326,6 +1350,7 @@ contains
          end if
          dm=-(max(u1,u0)-u0)*ms
          lnpvs=(g1-g2)/(RV*TG)
+         if (dbg_cell) print*,'[get_chem_transfer] DRY branch: g1=',g1,' g2(p0)=',g2,' m_s=',ms,' u0=',u0,' u1=',u1,' dm=',dm ! debug
       else
          ! Phasic entropies and chemical potentials; vapor at its partial pressure
          sL=this%liq%get_s_from_p_T(p=PL,T=TL,y=[1.0_WP])
@@ -1340,11 +1365,14 @@ contains
          ! Fraction 1-exp(-Kg*dt) with Kg=nu*(1/xi_1+1/xi_2) (eq. 76); instantaneous when nu=huge or nu*Kdt>=50
          Kdt=(xi1inv+xi2inv)*dt
          frac=1.0_WP
-         if (this%nu.lt.huge(1.0_WP).and.log(nu_eff)+log(Kdt).lt.log(50.0_WP)) frac=1.0_WP-exp(-nu_eff*Kdt)
+         if (this%nu.lt.huge(1.0_WP).and.log(this%nu)+log(Kdt).lt.log(50.0_WP)) frac=1.0_WP-exp(-this%nu*Kdt)
          ! Partial density (eq. 77), Delta g=g_2-g_1
          dg=g2-g1
          dm=dg/(xi1inv+xi2inv)*frac
          lnpvs=(g1-g2)/(RV*TG)+log(pv)
+         if (dbg_cell) print*,'[get_chem_transfer] g_liq=',g1,' g_vap=',g2,' dg=g_vap-g_liq=',dg,' (>0 condenses)' ! debug
+         if (dbg_cell) print*,'[get_chem_transfer] sL=',sL,' sV=',sV,' KCC=',KCC,' 1/xi1=',xi1inv,' 1/xi2=',xi2inv,' nu*Kdt=',this%nu*Kdt,' frac=',frac ! debug
+         if (dbg_cell) print*,'[get_chem_transfer] dm=dg/(1/xi1+1/xi2)*frac=',dm,' psat(T)~',exp(lnpvs),' vs pv=',pv ! debug
       end if
       ! Volume fraction (eq. 78)
       VFeq=VF+SVF*dm
@@ -1352,6 +1380,7 @@ contains
       xs=exp(lnpvs-log(PG))
       Ysat=1.0_WP
       if (xs.lt.1.0_WP) Ysat=xs*Mv/(xs*Mv+(1.0_WP-xs)*Ma)
+      if (dbg_cell) print*,'[get_chem_transfer] VFeq=VF+S_alpha*dm=',VFeq,' Ysat=',Ysat ! debug
       ok=.true.
    end subroutine get_chem_transfer
 

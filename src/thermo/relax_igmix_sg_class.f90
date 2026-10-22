@@ -65,6 +65,9 @@ module relax_igmix_sg_class
       logical  :: do_nucleate=.true.       !< Seed opposite phase in near-pure metastable cells (cavitation/condensation)
       real(WP) :: p_cav=huge(1.0_WP)       !< Cavitation delay: nucleate only when pL < p_cav (default: nucleate at p_sat)
       real(WP) :: Tctol=0.0_WP             !< Condensation temperature tolerance: nucleate only when TG < Tsat-Tctol (default: nucleate at Tsat)
+      logical  :: pure_stability=.true.    !< Test near-pure cells for single-phase stability in pTg_relax
+      logical  :: nucleated=.false.        !< Result of the last apply: a nucleation seed was created and kept
+      logical  :: chem_guard=.true.        !< Decline phase change when the reducing phase starts below Y_small (pTg_relax)
       !> Dispatch
       integer  :: model=Prelax
       real(WP) :: Tratmax=10.0_WP          !< PThybrid: temperature contrast max(TG/TL,TL/TG) above which pT_relax is used
@@ -166,6 +169,7 @@ contains
 
    subroutine apply(this,dt,VF,Q,Pjump,ierr)
       use amrvof_class, only: VFlo,VFhi
+      use nasg_class,   only: nasg
       implicit none
       class(relax_igmix_sg),  intent(inout) :: this
       real(WP),               intent(in)    :: dt
@@ -176,7 +180,8 @@ contains
       real(WP), dimension(this%gas%ns) :: y
       real(WP) :: Yv,cvG,cpG,qG,gammaG,PG,PL,Ptar,Eold,TL,TG,RHOG
       integer  :: iVQ,ier
-      logical :: run_pTg,interfacial
+      logical :: run_pTg,interfacial,floor_ok
+      this%nucleated=.false.
       interfacial=((VF.ge.VFlo).and.(VF.le.VFhi))
       if (dbg_cell) call this%debug_dump('ENTRY apply',VF,Q,Pjump)
 
@@ -352,7 +357,13 @@ contains
       if (this%Pmin_gas.gt.-1.0e29_WP) Ptar=max(Ptar,this%Pmin_gas+Pjump)
       if (this%Tmin_liq.gt.0.0_WP) Ptar=max(Ptar,this%liq%get_p_from_rho_T(rho=Q(1)/VF,T=this%Tmin_liq,y=[1.0_WP]))
       if (this%Tmin_gas.gt.0.0_WP) Ptar=max(Ptar,this%gas%get_p_from_rho_T(rho=Q(2)/(1.0_WP-VF),T=this%Tmin_gas,y=y)+Pjump)
-      if (PL.lt.Ptar) then
+      ! No floor for a liquid past the NASG packing knee: raising p there injects energy without bound
+      floor_ok=.true.
+      select type (liq=>this%liq)
+      class is (nasg)
+         if (Q(1).gt.0.0_WP.and.liq%b*Q(1).ge.liq%brhomax*VF) floor_ok=.false.
+      end select
+      if (PL.lt.Ptar.and.floor_ok) then
          this%acc(5)=this%acc(5)+1.0_WP
          this%acc(6)=this%acc(6)+(VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])+(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)-Eold)*this%vol
          PL=Ptar
@@ -588,6 +599,7 @@ contains
          real(WP), parameter :: pure_VFlo=0.05_WP,pure_VFhi=0.95_WP
          logical  :: conv
          integer  :: it
+         if (.not.this%pure_stability) exit pure_phase_stability
          if (VF.lt.pure_VFlo) then
             if (dbg_cell) print*,'attempting pure gas'
             ! Transfer all liquid mass and energy to vapor
@@ -838,6 +850,7 @@ contains
             return
          end if
       end if
+      this%nucleated=nucleated
       call this%pT_relax(dt,VF,Q,Pjump,ier)
       if (ier.ne.RELAX_OK) then
          if(dbg_cell) print*,'pT_relax failed ier=',ier
@@ -975,7 +988,7 @@ contains
       if (VF.lt.0.0_WP) then; VF=0.0_WP; p=max(p,-this%liq%pinf); end if
       if (VF.gt.1.0_WP) then; VF=1.0_WP; p=max(p,0.0_WP);         end if
       ! Confirm we had enough of the reducing phase to begin with
-      if (.not.nucleated) then
+      if (.not.nucleated.and.this%chem_guard) then
          if (VF.lt.VF0) then
             ! Liquid turned into vapor while initial liquid content was smaller than the threshold
             if (Q0(1)/rho0.lt.Y_small) then
@@ -1017,6 +1030,7 @@ contains
       end subroutine restore_pT_state
       subroutine undo_nucleation()
          VF=VFin; Q=Qin
+         this%nucleated=.false.
       end subroutine undo_nucleation
       subroutine dealloc()
          if (allocated(Q0)) deallocate(Q0)
@@ -1153,7 +1167,11 @@ contains
                end if
                alpha=0.5_WP*alpha
             end do
-            if (.not.accepted) exit
+            ! A line search that cannot improve a residual already within tolerance (e.g. F1=0) means converged
+            if (.not.accepted) then
+               if (abs(F1).lt.this%F1_tol) conv=.true.
+               exit
+            end if
             p_err=abs(log(p_eq/pOld))
             call this%get_coeffs_lv(p_eq,rho0,rhoe0,cvG,gammaG,qG,Pjump,ap,bp,dp,dapdp,dbpdp,ddpdp)
             T_eq=get_T_lv(ap,bp,dp); if (T_eq.le.0.0_WP) return

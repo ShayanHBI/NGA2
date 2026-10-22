@@ -13,7 +13,7 @@ NGA2 is a high-performance Fortran CFD research library for solving fluid PDEs (
 NGA2 uses a GNUmake build system. Each example in `examples/` has its own `GNUmakefile`. There is no top-level build; you build from within a specific example directory.
 
 ```bash
-cd examples/Sembian_blastwave
+cd examples/amrcomp_impact
 make -j8
 make -j8 DEBUG=TRUE
 make clean
@@ -38,11 +38,10 @@ The build system is in `tools/GNUMake/`. New source files must be registered in 
 ## Running
 
 ```bash
-mpiexec -n 4 ./nga2.*   # use mpiexec -n, not mpirun -np
-./nga2.*                 # single-core
+mpiexec -n 4 ./nga2.dp.gnu.opt.mpi.exe -i input   # use mpiexec -n, not mpirun -np
 ```
 
-Runtime parameters are read from a plain-text `input` file in the working directory. Parameters are key-value pairs (`Key : Value`) parsed by `inputfile_class` / `param`.
+The `-i <file>` flag is **required**: `param_init` (`src/libraries/param.f90`) only parses a parameter file when `-i`/`--input=` is given; without it no file is read and the run aborts on the first required `param_read`. Parameters are key-value pairs (`Key : Value`) parsed by `inputfile_class` / `param`.
 
 ---
 
@@ -68,8 +67,8 @@ Each example provides two modules in its `src/` directory:
 | `libraries/` | Infrastructure: `precision`, `parallel`, `param`, `inputfile_class`, `monitor_class`, `timetracker_class`, `event_class`, `messager`, `timer_class`, `mathtools`, etc. |
 | `grid/` | `sgrid_class`, `pgrid_class`, `coupler_class`, `iterator_class` |
 | `amrbase/` | AMR grid (`amrgrid_class`), data containers (`amrdata_class`, `amrflux_class`), visualization (`amrviz_class`), I/O (`amrio_class`), solvers (`amrsolver_class`, `amrmg_class`) |
-| `amrmpsolvers/` | AMR multiphase solvers: `amrvof_class` (VOF), `amrmpcomp_class` (compressible two-phase), `amrmpinc_class` (incompressible two-phase); **`relax_class`, `relax_sg_class`, `relax_nasg_class`** (PTg relaxation models) |
-| `eos/` | EOS and mixture classes — see [EOS Library](#eos-library) below |
+| `amrmpsolvers/` | AMR multiphase solvers: `amrvof_class` (VOF), `amrmpcomp_class` (compressible two-phase), `amrmpinc_class` (incompressible two-phase) |
+| `thermo/` | EOS and relaxation classes — see [Thermodynamics Library](#thermodynamics-library-srcthermo) below |
 | `solver/` | Single-grid linear solvers: HYPRE, DDADI, FFT, diagonal, BBMG |
 | `two_phase/` | Two-phase flow: `tpns_class`, `vfs_class`, `lgpc_class`, `ccl_class`, `stracker_class`, `plicnet.f90` |
 | `compressible/` | Compressible solvers: `mast_class`, `matm_class` |
@@ -83,118 +82,67 @@ Each example provides two modules in its `src/` directory:
 
 ---
 
-## EOS Library (`src/eos/`)
+## Thermodynamics Library (`src/thermo/`)
 
-### Class Hierarchy
+### Abstract Bases (`src/libraries/`)
+
+- **`material`** (`material_class.f90`): fields `name`, `ns` (=1 for pure substances), `species_names(:)`. Every method takes a trailing composition `y(:)` (ignored by pure substances). Methods follow `p, rho, T` argument precedence: `get_p/T/c/cv/gruneisen_from_rho_e(rho,e,y)`, `get_T/c/e/rhoe_from_p_rho(p,rho,y)`, `get_e/rho/h/s/g/rhoe_from_p_T(p,T,y)`, `get_hk_from_p_T(p,T,y,hk)` (subroutine), `get_p_from_rho_T`, `get_cv_from_rho_T`. Prefer `*_from_rho_e` in hot loops.
+- **`thermorelax`** (`thermorelax_class.f90`): fields `Yv_ref`, `Jr` (set by caller before `apply`); deferred `apply(dt,VF,Q,Pjump,ierr)`; default no-op `get_chem_transfer(...)`. Exports error codes `RELAX_OK=0` … `RELAX_VACUUM_VAPOR=8`.
+
+### EOS Classes
 
 ```
-eos  (abstract interface — no data)           eos_class.f90
-└── ig   (ideal gas: γ, cv, q, qp)            ig_class.f90
-    └── sg   (stiffened gas: + pinf)          sg_class.f90
-        └── nasg (Noble-Abel SG: + b)         nasg_class.f90
-
-mix  (abstract interface — no data)           mix_class.f90
-└── igmix (ideal-gas mixture of ig species)  igmix_class.f90
+material
+├── ideal_gas      (gamma, cv, cp, R, q, qp)        ideal_gas_class.f90
+│   └── stiffened_gas  (+ pinf)                     stiffened_gas_class.f90
+│       └── nasg       (+ b, brhomax=0.9 clamp)     nasg_class.f90
+├── igmix          (per-species arrays gamma, cv, cp, R, q, qp)   igmix_class.f90
+└── coolprop       (only with USE_COOLPROP=TRUE)    coolprop_class.f90
 ```
 
-### Key Conventions
+`initialize` signatures (all keyword-optional `name`):
+```fortran
+call g%initialize(gamma,cv,q,qp,name)                  ! ideal_gas
+call s%initialize(gamma,pinf,cv,q,qp,name)             ! stiffened_gas
+call w%initialize(gamma,pinf,b,cv,q,qp,name)           ! nasg
+call m%initialize(gamma,cv,q,qp,species_names,name)    ! igmix: array args, ns=size(gamma)
+```
+Parameters are public fields; there are no getters.
 
-- **`eos`** has no data. Caloric parameters live in `ig` and are inherited by all subclasses. Access all EOS parameters as **public fields directly** — there are no getter methods.
-- **`ig` public fields**: `gamma`, `cv`, `cp` (=γcv, stored at init), `R` (=(γ−1)cv, stored at init), `q`, `qp`. `sg` adds `pinf`; `nasg` adds `b`.
-- **Argument ordering** follows `p, rho, T` precedence: `get_*(rho,e)`, `get_*(p,rho)`, `get_*(p,T)`, `get_*(rho,T)`.
-- **`mix` closures** carry an additional trailing `y(:)` (gas-phase mass fractions, unnormalized; normalized internally). Interface otherwise mirrors `eos`.
-- **Initialize chain**: each subclass initializes only its own new field, then delegates up:
-  ```fortran
-  ! ig:   initialize(gamma, cv [, q, qp])
-  ! sg:   initialize(gamma, cv [, pinf, q, qp])    ! q,qp must come before pinf
-  ! nasg: initialize(gamma, cv [, pinf, b, q, qp]) ! same ordering rule
-  ```
-  Arguments `pinf`, `b`, `q`, `qp` are all optional and default to zero.
-- **`igmix%set_species(eosG(:))`** takes the full array of species in one call (`class(ig), target, intent(in) :: eosG(:)`). Species pointers are non-owning; the caller keeps the objects alive.
-- **`igmix` mixture rules**: `cv`, `R`, and `q` are mass-fraction-weighted averages; entropy uses per-species partial pressures.
-- **`igmix` species accessors**: `get_species_cv(is)`, `get_species_cp(is)`, `get_species_gamma(is)`, `get_species_q(is)` expose per-species scalars to external code.
+### Relaxation Classes
+
+All store EOS objects as `liq`/`gas` pointers (pass `target` objects) and share the base `apply(dt,VF,Q,Pjump,ierr)`.
+
+| Type | Extends | `initialize` | Model |
+|---|---|---|---|
+| `relax_ig_sg` | `thermorelax` | `(gas,liq)` — gas first | IG/SG p, pT (`Prelax=1`, `PTrelax=2`) |
+| `relax_ig_nasg` | `thermorelax` | `(gas,liq)` | IG/NASG; adds `PThybrid=3` |
+| `relax_igmix_sg` | `thermorelax` | `(liq,gas,indV,indA)` | SG/NASG liquid + igmix gas; `model` = `Prelax=1`, `PTrelax=2`, `PTgrelax=3`, `PThybrid=4` |
+| `relax_igmix_nasg` | `relax_igmix_sg` | same | Pelanti 2022 instantaneous relaxation |
+| `relax_igmix_nasg_finite` | `relax_igmix_sg` | same | Pelanti 2022 finite-rate (Sec. 7.2.3, eqs. 51, 71–83); rates `lambda`, `theta`, `nu` (default `huge` = instantaneous), `nu_scale` |
+| `relax_igmix_max_ent` | `thermorelax` | `(liq,gas,indV,indA)` | Constrained entropy maximization, sequential M→T→C |
+| `relax_numerical` | `thermorelax` | `(liq,gas)` | Mechanical-only Newton, any `material` |
+
+`indV`/`indA` are the vapor/air species indices in the `igmix` gas. Model constants (`Prelax`, …) are exported by `relax_igmix_sg_class`.
 
 ---
 
-## Relaxation Library (`src/amrmpsolvers/relax*.f90`)
+## `amrmpcomp` Solver (`src/amrmpsolvers/amrmpcomp_class.f90`)
 
-### Class Hierarchy
+### Thermo Setup
 
-```
-relax  (abstract base — liq/gas pointers, saturation coefficients, tolerances)
-├── relax_nasg  (Pelanti 2022 3-step PTg relaxation for NASG liquid)
-└── relax_sg    (quadratic-solver 3-step PTg relaxation for SG liquid)
-```
-
-### Usage Pattern
-
+The case sets public pointers directly before `initialize` (which dies if `liq`/`gas` are unset):
 ```fortran
-type(relax_nasg), target :: rm   ! or relax_sg
-
-call rm%initialize(liq=eosL, gas=mixG, AS=AS, BS=BS, CS=CS, DS=DS, ES=ES)
-! Then assign to the solver:
-fs%relax_model => rm
+fs%liq=>water; fs%gas=>gas
+call fs%initialize(amr=amr,name=trim(case_name))
+call relax_model%initialize(liq=water,gas=gas,indV=1,indA=2)
+relax_model%model=PTgrelax
+fs%relax=>relax_model          ! class(thermorelax), pointer
 ```
-
-The `initialize` signature is `(liq, gas, AS, BS, CS, DS, ES)` where AS–ES are the Clausius-Clapeyron saturation curve coefficients:
-```
-AS = (CpL - CpV + qpV - qpL) / (CpV - CvV)
-BS = (qL - qV)                / (CpV - CvV)
-CS = (CpV - CpL)              / (CpV - CvV)
-DS = (CpL - CvL)              / (CpV - CvV)
-ES = bL                       / (CpV - CvV)   ! ES=0 for SG
-```
-
-`initialize` extracts `PinfL`, `bL`, and gas species scalars from `liq` and `gas` at setup time. The full 3-step relaxation (mechanical → thermal → chemical) is invoked via `rm%apply(VF, Q, Pjump)`.
-
-### Differences Between relax_nasg and relax_sg
-
-| Feature | NASG | SG |
-|---|---|---|
-| Step 1 (mechanical) | Pelanti 2022 ODE (impedance + acoustic) | Direct quadratic in pressure |
-| Step 2 (thermal) | ODE system with `zetaL = ρL(1−bρL)/(p+P∞)` | Quadratic with `etaL=qL`, `etaG=qG`, PinfG=0 |
-| PTsat curve | `AS + (BS+ES·p)/T + CS·ln T + DS·ln(p+P∞) − ln pv` | `AS + BS/T + CS·ln T + DS·ln(p+P∞) − ln pv` |
-| `get_T_lvg` numerator | `(1−Yv) − bL·(ρ0(1−Yv) − ρA0)` | `(1−Yv)` |
-| `get_coeffs_lv` | Uses `(1−bL·Σρ)` co-volume factor | Uses `etaL=qL, etaG=qG, PinfG=0` |
-
-### Standalone Compilation (no AMReX/MPI needed)
-
-The relax classes depend only on `precision`, `eos`, and `mix` — they can be compiled standalone for testing:
-
-```bash
-gfortran -O2 \
-  ../../src/libraries/precision_dp.f90 \
-  ../../src/eos/eos_class.f90 ../../src/eos/ig_class.f90 \
-  ../../src/eos/sg_class.f90  ../../src/eos/nasg_class.f90 \
-  ../../src/eos/mix_class.f90 ../../src/eos/igmix_class.f90 \
-  ../../src/amrmpsolvers/relax_class.f90 \
-  ../../src/amrmpsolvers/relax_sg_class.f90 \
-  ../../src/amrmpsolvers/relax_nasg_class.f90 \
-  mytest.f90 -o mytest
-```
-
----
-
-## `amrmpcomp` — Updated API
-
-### EOS and Relaxation Setup
-
-The old function-pointer API (`fs%getPL`, `fs%getPG`, etc.) has been replaced:
-
-```fortran
-! Before initialize:
-call fs%set_thermo(eosL, mixG)   ! polymorphic: class(eos), class(mix)
-fs%relax_model => rm             ! polymorphic: class(relax)
-call fs%initialize(amr=amr, name=trim(case_name))
-```
-
-`set_thermo` stores `fs%liq => eosL` and `fs%gas => mixG`. `fs%relax_model` is a `class(relax), pointer`.
 
 ### Conserved Variable Layout
 
-`nQ = 7 + (ns−1)` — only `ns−1` species mass fractions are transported (one carrier species is reconstructed).
-
-**Species ordering convention**: species 1…ns−1 are **transported** (stored in Q); species ns is the **carrier** (reconstructed as `1 − Σ Ys`). For Sembian (ns=2): species 1 = vapor (Q(8)), species 2 = air (carrier, not stored).
+`nQ = 7 + (liq%ns−1) + (gas%ns−1)`. Of each phase's `ns` species, the first `ns−1` are transported; species `ns` is the carrier, reconstructed as `1 − Σ`.
 
 | Q index | Quantity |
 |---|---|
@@ -203,150 +151,28 @@ call fs%initialize(amr=amr, name=trim(case_name))
 | 3 | `VF·ρL·eL` |
 | 4 | `(1−VF)·ρG·eG` |
 | 5–7 | `ρu`, `ρv`, `ρw` |
-| 8 : 6+ns | `(1−VF)·ρG·Ys` for transported species s=1…ns−1 |
+| `Yl_lo:Yl_hi` = 8 : 6+liq%ns | liquid partial densities |
+| `Yg_lo:Yg_hi` = 7+liq%ns : 5+liq%ns+gas%ns | `(1−VF)·ρG·Ys` gas partial densities |
 
-For Sembian (ns=2): nQ=8, Q(8) = `(1−VF)·ρG·Yv`. In `get_primitive`, the carrier mass fraction is reconstructed as `y(ns) = 1 − Σ y(1:ns−1)` before EOS calls.
-
-The `Yg` field (`amrmpcomp%Yg`) stores the `ns−1` transported species mass fractions as an amrdata object with ncomp=ns−1.
-
----
-
-## Sembian Blastwave Example (`examples/Sembian_blastwave/`)
-
-### Overview
-
-Cylindrical shock wave impacting a water cylinder in air. AMR compressible two-phase simulation with PTg phase-change relaxation. Runtime selection between SG and NASG liquid EOS.
-
-### Input Files
-
-| File | EOS | Notes |
-|---|---|---|
-| `input_NASG` | NASG | Uses `Liquid EOS type : NASG`. Reference: Le Metayer & Saurel (2016), Table V |
-| `input_SG`   | SG   | Uses `Liquid EOS type : SG`.   Reference: Flatten & Lund (2011) |
-
-Copy or symlink the desired file to `input` before running:
-```bash
-ln -sf input_NASG input
-mpiexec -n 8 ./nga2.*
-```
-
-### EOS Parameters
-
-**NASG** (Le Metayer & Saurel 2016, Table V, range 300–500 K):
-
-| Parameter | Liquid | Vapor |
-|---|---|---|
-| γ | 1.19 | 1.47 |
-| cv [J/(kg·K)] | 3610 | 955 |
-| P∞ [Pa] | 7.028×10⁸ | 0 |
-| b [m³/kg] | 6.61×10⁻⁴ | 0 |
-| q [J/kg] | −1 177 788 | 2 077 616 |
-| q′ [J/(kg·K)] | 0 | 14 317 |
-
-**SG** (Flatten & Lund 2011, range 300–500 K):
-
-| Parameter | Liquid | Vapor |
-|---|---|---|
-| γ | 2.35 | 1.43 |
-| cv [J/(kg·K)] | 1816 | 1040 |
-| P∞ [Pa] | 10⁹ | 0 |
-| q [J/kg] | −1 167 000 | 2 030 000 |
-| q′ [J/(kg·K)] | 0 | −23 400 |
-
-Air (both cases): γ=1.40, cv=718 J/(kg·K), q=0, q′=0.
-
-### Gas Species Ordering
-
-In `igmix`, species ordering is:
-- **Species 1**: vapor (transported, Q(8) = `(1−VF)·ρG·Yv`)
-- **Species 2**: air (carrier, reconstructed as `Y_air = 1 − Yv`)
-
-```fortran
-call eosG(1)%initialize(gamma=GammaV, cv=CvV, q=qV, qp=qpV)   ! vapor
-call eosG(2)%initialize(gamma=GammaA, cv=CvA, q=qA, qp=qpA)   ! air (carrier)
-call mixG%initialize(ns=2); call mixG%set_species(eosG)
-```
-
-### Case Name and Output
-
-The case name is constructed at runtime: `Sembian_blastwave_NASG` or `Sembian_blastwave_SG`. This propagates to AMR grid name, solver name, visualization directory, and restart directory.
+For a pure liquid and vapor+air gas (vapor=1, air=2): nQ=8, Q(8) = `(1−VF)·ρG·Yv`. Primitive fields `fs%Yl`, `fs%Yg` (amrdata, ncomp=ns−1) exist only when ns>1.
 
 ---
 
-## Standalone Unit Test: `test_relax.f90`
+## Reference Case: `examples/amrcomp_impact/`
 
-Tests the EOS and relaxation classes without AMReX or MPI.
-
-### Build and Run
-
-```bash
-cd examples/Sembian_blastwave
-
-# Using the dedicated Makefile (recommended):
-make -f Makefile.test_relax        # compile
-make -f Makefile.test_relax run    # compile + run
-make -f Makefile.test_relax clean  # remove binaries and .mod files
-```
-
-`test_relax` must be run from the `Sembian_blastwave/` directory because it reads `input_NASG` and `input_SG` directly using its own lightweight key-value file reader (`read_real` subroutine) — no NGA2 `param` library needed.
-
-### What It Does
-
-1. Reads NASG EOS parameters from `input_NASG` (with hard-coded defaults as fallback).
-2. Reads SG EOS parameters from `input_SG`.
-3. For each configuration: initializes EOS objects (`nasg`/`sg`, `igmix`) and a relaxation model (`relax_nasg`/`relax_sg`).
-4. Runs a single-cell PTg relaxation test (T=490 K, p=10⁵ Pa, VF=0.5, Yv=1).
-5. Writes saturation-curve CSVs by sweeping T from 300 to 500 K at fixed pressure.
-
-### Output CSVs
-
-| File | EOS | Contents |
-|---|---|---|
-| `test_relax_NASG.csv` | NASG | T, p, Yv, VF, ρL, ρG, hG |
-| `test_relax_SG.csv` | SG | T, p, Yv, VF, ρL, ρG, hG |
-
-CSV column units: T [K], p [Pa], Yv [–], VF [–], ρL [kg/m³], ρG [kg/m³], hG [J/kg].
-
-### Key Subroutines
-
-| Subroutine | Signature | Purpose |
-|---|---|---|
-| `read_real` | `(file, key, val, default)` | Parse `Key : Value` from NGA2 input format |
-| `make_Q` | `(liq, gas, p, T, VF_in, Yv_in → VF, Q)` | Build conserved Q from (p,T,VF,Yv) |
-| `get_thermo` | `(liq, gas, VF, Q → PL,PG,ρL,ρG,TL,TG,Yv,hG)` | Extract primitives from Q |
-| `write_PTg_curve` | `(file, liq, gas, rm, p0, VF0, Yv0, Tmin, Tmax, nT)` | Sweep T and write CSV |
-
-All subroutines are generic via `class(eos)`, `class(mix)`, `class(relax)` arguments — pass any EOS/relax combination.
+Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_nasg_finite` relaxation. `Relaxation type` (p, pT, pThybrid, pTg) selects `relax_model%model`; finite rates are read from `Mechanical/Thermal/Chemical relaxation rate`. Only `src/simulation.f90` is in its `Make.package`.
 
 ---
 
-## Post-Processing (`examples/Sembian_blastwave/`)
+## Standalone Test Drivers (no AMReX/MPI)
 
-### `NGA2_VS_IAPWS.py`
+| Directory | Build | Tests |
+|---|---|---|
+| `examples/eos_relax/` | `make` (targets `run`, `verify`, `residuals`, `bench`, `compare`, `finite`, …) | single-cell relaxation, max-ent verification, equilibrium residuals, finite-rate tests, `test_pelanti_ref` (literal Pelanti transcription) |
+| `examples/amrcomp_impact/framework_checks/` | manual `gfortran`, see `clustering_framework.md` §6 | clustering starvation criteria |
+| `examples/amrcomp_venturi/eos_check/` | `make -f Makefile.test_eos run` | NASG water/vapor/air vs Liu et al. 2026 Table 4 |
 
-Compares `test_relax` output against IAPWS-IF97 saturation data. Requires `pip install iapws`.
-
-```bash
-./test_relax               # generate CSVs first
-python NGA2_VS_IAPWS.py    # produces NGA2_VS_IAPWS.pdf
-```
-
-**Configuration** (top of script):
-
-```python
-CURVES = {
-    "NASG": "test_relax_NASG.csv",
-    "SG":   "test_relax_SG.csv",
-}
-```
-
-To add a new EOS variant, add one line to `CURVES`. The script produces a 2×2 figure:
-- p vs T (log scale) — with IAPWS-IF97 saturation pressure
-- hG vs T — with IAPWS-IF97 saturated vapor enthalpy
-- ρL vs T — with IAPWS-IF97 saturated liquid density
-- ρG vs T — with IAPWS-IF97 saturated vapor density
-
-Uses LaTeX fonts (`text.usetex=True`). Uses IAPWS-IF97 via `IAPWS97(T=T, x=0/1)`.
+These link `src/libraries/{precision,material_class,thermorelax_class}.f90` and `src/thermo/*.f90` with local stubs (`messager_stub.f90`). Many of these files are untracked; check `git status` before assuming they exist.
 
 ---
 
@@ -360,15 +186,32 @@ Uses LaTeX fonts (`text.usetex=True`). Uses IAPWS-IF97 via `IAPWS97(T=T, x=0/1)`
 - **Explicit keyword arguments**: use for calls with many parameters.
 - **No spaces around arithmetic operators** or after commas in array indices and call arguments (except in type/use declarations).
 - **No documentation files in the repo** unless explicitly requested.
+- **Comments**: new comments are 1 line, 2 at most. No doc-comment essays, no derivations or "why this replaces the old approach" in code; rationale goes in chat. Never reference a session, a debug trace or a specific cell in a comment.
+- **Never delete existing comments**, even stale-looking ones.
+- No semicolon packing (except a short obviously-related pair) and no unnecessary `&` line breaks.
+
+---
+
+## Working Rules for Claude
+
+- **Say before you edit**: before any Edit/Write to code, state in 1–2 sentences what will change.
+- **Never edit the user's `input` files** for test runs, not even temporarily. Copy to `input_test` and run with `-i input_test`.
+- **Keep `input` in sync once a change is agreed**: when a code change adds, renames or removes a parameter, or a setting tried in `input_test` is agreed on, update `input` to match (new keys with their agreed values, removed keys deleted) so the user's next run uses the current version. Say which lines changed.
+- **No background runs**: never launch simulations or long processes in the background (`&`, `nohup`, `run_in_background`) without asking first. Earlier approval does not carry forward. Check for orphaned `nga2` processes after a crash or timeout.
+- **Follow papers literally**: when implementing a published method, use the paper's variable names and equation order, comment blocks with equation numbers, and add no machinery the paper lacks (substeps, extra closures). Mark unavoidable departures in one line. If the paper's scheme has a weakness, report it with numbers and ask.
+- **Rigorous derivations**: derive from first principles, state what every derivative/capacity holds fixed, and verify key identities numerically against the solver's own EOS routines (standalone Fortran drivers) before presenting. Label results derived / verified / hypothesis.
+- **Fix, don't work around**: when a feature is blocked by other solver logic, analyse why and propose a structural fix with evidence. No debug-only bypass switches unless asked.
+- **Theory documents** must read top to bottom: every term defined before use, every equation derived, no case-specific sample numbers in the framework (those go in verification drivers/notes).
+- **Verify against purpose before handoff**: an implementation is done when it does its job on real data (e.g. the cells it exists for are actually handled), not when it compiles and components match formulas.
 
 ---
 
 ## Testing
 
-No separate test suite. Tests are example cases and `test_relax`. Run an example and check monitor output files and visualization output.
+No separate test suite. Tests are example cases (check `monitor/` files and visualization output) and the standalone drivers above.
 
 ```bash
-cd examples/Sembian_blastwave
-mpiexec -n 8 ./nga2.*          # full simulation
-make -f Makefile.test_relax run  # standalone EOS/relax unit test
+cd examples/amrcomp_impact
+mpiexec -n 8 ./nga2.dp.gnu.opt.mpi.exe -i input_test   # full simulation from a copy of input
+cd ../eos_relax && make run                             # standalone EOS/relax test
 ```

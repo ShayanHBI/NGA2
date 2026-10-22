@@ -732,6 +732,8 @@ contains
          fs%Tmin_gas=0.1_WP
          relax_model%Pmin_liq=fs%Pmin_liq; relax_model%Tmin_liq=fs%Tmin_liq
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
+         ! Relaxation liquid T floor below the case's vapor temperatures (a 300 K floor on condensation seeds blows up the gas); rescue keeps 300 K
+         relax_model%Tmin_liq=0.1_WP
          ! Pre-relaxation clustering
          fs%cluster_on=.true.
          call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A1
@@ -997,7 +999,8 @@ contains
          call fs%build_plic(time=time%t)
          call debug_probe('03-post-build_plic(merge_Q+clean_Q)')
          ! Relax
-         call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
+         ! call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
+         call fs%apply_relax_splitremix(dt=0.5_WP*time%dt,time=time%tmid)
          ! Near-wall liquid fold
          call fold_wall_vapor(time%tmid)
          call debug_probe('04-post-apply_relax')
@@ -1028,7 +1031,8 @@ contains
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
          ! Relax
-         call fs%apply_relax(dt=time%dt,time=time%t)
+         ! call fs%apply_relax(dt=time%dt,time=time%t)
+         call fs%apply_relax_splitremix(dt=time%dt,time=time%t)
          ! Near-wall liquid fold
          call fold_wall_vapor(time%t)
          call fs%get_primitive(Q=fs%Q)
