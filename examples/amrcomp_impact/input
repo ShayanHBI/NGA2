@@ -34,6 +34,10 @@ Relax vapor fraction tolerance : 0.1
 # Sliver whose gas, and a neighbour whose gas, sit below this fraction of the sliver's liquid pressure: isentropic two-cell mix (0: off)
 # Also pairs a liquid-full cell whose liquid sits below this fraction of a gas-bearing neighbour's gas pressure
 Relax vacuum pressure ratio : 0.8
+# Small-cell merge (merge_Q) ahead of relaxation
+Merge Q : .true.
+# Split-remix: gas sliver (gas fraction below Relax sliver gas fraction) whose gas sits below this fraction of PL-Pjump is not relaxed (0: off)
+Relax sliver skip ratio : 0.2
 
 Initial vapor mass fraction: 0
 
@@ -94,12 +98,12 @@ Sutherland temperature : 0.073
 Max dt     : 1e-3
 Initial dt : 1e-3
 Max CFL    : 0.75
-Max time   : 12
+Max time   : 11
 
 # Output
 Output period     : 0.1
-Checkpoint period : 1
-Restart from      : 
+Checkpoint period : 0.1
+Restart from      : 1.00000E+01
 
 # Relaxation clustering
 Mechanical clustering : .false.

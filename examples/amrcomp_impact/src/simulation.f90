@@ -192,10 +192,12 @@ contains
    !> phases' thermo straight from Q, cell velocity and face-velocity divergence. Only writes for t>=probe_t0.
    subroutine probe_boxes(label)
       use amrex_amr_module, only: amrex_mfiter,amrex_box
+      use relax_igmix_sg_class, only: dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi ! debug
       implicit none
       character(len=*), intent(in) :: label
-      integer, parameter :: pilo=425,pihi=434,pjlo=958,pjhi=964,pic=430,pjc=961
-      real(WP), parameter :: probe_t0=1.0e10_WP
+      ! integer, parameter :: pilo=425,pihi=434,pjlo=958,pjhi=964,pic=430,pjc=961
+      real(WP), parameter :: probe_t0=0.0_WP
+      integer :: pilo,pihi,pjlo,pjhi,pic,pjc
       integer :: lvl,it,di,dj,i,j
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
@@ -205,6 +207,9 @@ contains
       logical, save :: opened=.false.
       character(len=32) :: fname
       if (time%t.lt.probe_t0) return
+      ! Probe the input's debug trace box, offsets relative to its lower corner
+      if (dbg_ilo.gt.dbg_ihi.or.dbg_jlo.gt.dbg_jhi) return
+      pilo=dbg_ilo; pihi=dbg_ihi; pjlo=dbg_jlo; pjhi=dbg_jhi; pic=dbg_ilo; pjc=dbg_jlo
       ! one file per rank: stdout from several ranks interleaves records
       if (.not.opened) then
          opened=.true.
@@ -236,10 +241,10 @@ contains
                TG=fs%gas%get_T_from_rho_e(rho=RHOG,e=eG,y=[Yv,1.0_WP-Yv])
             end if
             divU=(pU(i+1,j,0,1)-pU(i,j,0,1))/amr%dx(lvl)+(pV(i,j+1,0,1)-pV(i,j,0,1))/amr%dy(lvl)+(pW(i,j,1,1)-pW(i,j,0,1))/amr%dz(lvl)
-            write(iunit,'("PROBE,",a,",",i0,",",es16.8,5(",",i0),23(",",es16.8))') trim(label),time%n,time%t,it,di,dj,i,j, &
+            write(iunit,'("PROBE,",a,",",i0,",",es16.8,5(",",i0),25(",",es16.8))') trim(label),time%n,time%t,it,di,dj,i,j, &
             &  VFc,pQ(i,j,0,1),pQ(i,j,0,2),pQ(i,j,0,3),pQ(i,j,0,4),pQ(i,j,0,8),RHOL,eL,PL,TL,RHOG,eG,PG,TG,Yv, &
             &  pStr(i,j,0,1),pCid(i,j,0,1),pCurv(i,j,0,1),pQ(i,j,0,5)/(pQ(i,j,0,1)+pQ(i,j,0,2)),pQ(i,j,0,6)/(pQ(i,j,0,1)+pQ(i,j,0,2)), &
-            &  pU(i,j,0,1),pU(i+1,j,0,1),divU
+            &  pU(i,j,0,1),pU(i+1,j,0,1),divU,pV(i,j,0,1),pV(i,j+1,0,1) ! debug: y-face velocities
          end do; end do
       end do
       call amr%mfiter_destroy(mfi)
@@ -695,6 +700,10 @@ contains
          ! fs%vacmix_aG=relax_model%sliver_aG
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
+         call param_read('Merge Q',fs%merge_on,default=.true.)
+         ! Split-remix: gas sliver whose gas sits below this fraction of its liquid's pressure is not relaxed (0: off)
+         call param_read('Relax sliver skip ratio',fs%sskip_r,default=0.0_WP)
+         call param_read('Relax sliver gas fraction',fs%sskip_aG,default=0.01_WP)
          ! relax_model%diss_P=200.0_WP
          ! relax_model%diss_RHO=200.0_WP
          ! relax_model%Tratmax=5.0_WP
@@ -960,6 +969,7 @@ contains
          call rescfile%add_column(flr_e,'Floor dE')
          call rescfile%add_column(stuck_n,'Stuck n')
          call rescfile%add_column(fs%pool_n,'Pool n')
+         call rescfile%add_column(fs%sskip_n,'SSkip n')
          call rescfile%add_column(fs%strand_n,'Strand n')
          call rescfile%add_column(fs%vacsl_n,'A0 slivers')
          call rescfile%add_column(fs%vaccand_n,'A0 cand')

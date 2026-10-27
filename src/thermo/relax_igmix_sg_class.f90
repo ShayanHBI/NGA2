@@ -903,8 +903,12 @@ contains
       ! the pL-pVsat margin in this branch and checkers the Yv field; -Pjump tested, confirmed worse.
       ! if ((.not.nucleated).and.(VF.gt.0.5_WP).and.(Q(2).gt.0.0_WP).and.(Q(2).ne.Q(7+this%liq%ns+this%indV-1))) then
       if ((.not.nucleated).and.(VF.gt.0.5_WP).and.(Q(2).gt.0.0_WP).and.(Yv.lt.Y_small)) then
-         xv_eq=this%get_pvsat(p,T)/p
+         ! xv_eq=this%get_pvsat(p,T)/p
+         ! The stiff liquid holds the gas volume, so the dry gas keeps its partial pressure and the vapor adds on top
+         xv_eq=this%get_pvsat(p,T)/(p+this%get_pvsat(p,T))
          Yv=xv_eq*Mv/(xv_eq*Mv+(1.0_WP-xv_eq)*Ma)
+         ! Keep the guess inside the reachable range (Yv_hi: all liquid evaporated)
+         Yv=min(Yv,Yv0+0.5_WP*(min(Yvmax,1.0_WP-rhoA0/rho0)-Yv0))
       end if
       if (nucleated) then
          ! Liquid wants to cavitate but there is not enough of it
@@ -985,8 +989,34 @@ contains
       VF=(rho0-RHOG)/(RHOL-RHOG)
       if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' pTg converged: RHOL=',RHOL,', RHOG=',RHOG
       if (dbg_cell) print*,'   VF=',VF,', p=',p,', T=',T
-      if (VF.lt.0.0_WP) then; VF=0.0_WP; p=max(p,-this%liq%pinf); end if
-      if (VF.gt.1.0_WP) then; VF=1.0_WP; p=max(p,0.0_WP);         end if
+      ! if (VF.lt.0.0_WP) then; VF=0.0_WP; p=max(p,-this%liq%pinf); end if
+      ! if (VF.gt.1.0_WP) then; VF=1.0_WP; p=max(p,0.0_WP);         end if
+      ! Saturation state needs more of a phase than the cell holds: the equilibrium is the single-phase boundary
+      if (VF.gt.1.0_WP.or.VF.lt.0.0_WP) then
+         if (VF.gt.1.0_WP) then
+            call boundary_all_liquid(p,T,Yv,chem_relax)
+         else
+            call boundary_all_vapor(1.0_WP-rhoA0/rho0,p,T,Yv,chem_relax)
+         end if
+         if (.not.chem_relax) then
+            if (nucleated) then
+               call undo_nucleation()
+               if (present(ierr)) ierr=RELAX_NUC_FAILED
+            else
+               call restore_pT_state()
+               if (present(ierr)) ierr=RELAX_FAILED
+            end if
+            call dealloc(); return
+         end if
+         y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
+         RHOL=this%liq%get_rho_from_p_T(p=p,T=T,y=[1.0_WP])
+         RHOG=this%gas%get_rho_from_p_T(p=p-Pjump,T=T,y=y)
+         if (VF.gt.1.0_WP) then
+            VF=min(1.0_WP,(rho0-rhoA0)/RHOL)
+         else
+            VF=0.0_WP
+         end if
+      end if
       ! Confirm we had enough of the reducing phase to begin with
       if (.not.nucleated.and.this%chem_guard) then
          if (VF.lt.VF0) then

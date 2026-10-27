@@ -28,10 +28,10 @@ INPUT = "wall_pTg"     # case identifier -> reads amrviz/cavitation_<INPUT>
 #   "Umag"      velocity magnitude                (whole domain)
 #   "Mach"      Mach number                       (whole domain)
 #   "schlieren" numerical schlieren of mixture density (SCHLIEREN_PHASE only)
-FIELD = "VF"
+FIELD = "schlieren"
 
 SHOW_INTERFACE = True   # overlay the PLIC interface
-INTERFACE_COLOR = "white"
+INTERFACE_COLOR = "red"
 INTERFACE_LINEWIDTH = 1.2
 
 START_TIME = 0.0        # [mus] skip frames before this time (animation mode only)
@@ -46,9 +46,10 @@ VMAX_OVERRIDE = None
 # View limits and all plotted coordinates are in mm, time in mus (raw plotfile/vtp data is in m and s).
 M_TO_MM = 1.0e3
 S_TO_MUS = 1.0e6
-VIEW_XLIM = (-3.0, 3.0)
-# VIEW_XLIM = (-15.0, 15.0)
-VIEW_YLIM = (-3.0, 3.0)
+# VIEW_XLIM = (-4.5, 4.5)
+VIEW_XLIM = (-15.0, 15.0)
+# VIEW_YLIM = (-4.5, 4.5)
+VIEW_YLIM = (-15.0, 15.0)
 
 CMAP_OVERRIDE = None    # None -> "jet", except "gray" for schlieren
 

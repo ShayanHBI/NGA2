@@ -119,6 +119,11 @@ module amrmpcomp_class
       ! Pass A0 census (cumulative): slivers seen, slivers with a qualifying vacuum neighbour, pairs mixed
       real(WP) :: vacsl_acc=0.0_WP,vaccand_acc=0.0_WP,vacpair_acc=0.0_WP
       real(WP) :: vacsl_n=0.0_WP,vaccand_n=0.0_WP,vacpair_n=0.0_WP
+      ! Split-remix sliver skip: gas sliver (1-VF<sskip_aG) with PG<sskip_r*(PL-Pjump) is left unrelaxed for that call
+      real(WP) :: sskip_r=0.0_WP        !< gas-to-liquid pressure fraction below which a sliver is not relaxed (0: off)
+      real(WP) :: sskip_aG=0.01_WP      !< gas fraction below which a cell counts as a gas sliver
+      real(WP) :: sskip_acc=0.0_WP      !< cumulative skipped slivers (rank-local)
+      real(WP) :: sskip_n=0.0_WP
 
       ! Pressure solver for pressure projection
       logical :: use_projection=.false.
@@ -752,6 +757,7 @@ contains
    subroutine add_phasic_pressure(this,scale,gravity,mask)
       use amrex_amr_module, only: amrex_multifab
       use amrex_interface,  only: amrmfab_average_down_face
+      use relax_igmix_sg_class, only: dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
       implicit none
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: scale
@@ -845,10 +851,16 @@ contains
             pPG=>this%PG%mf(lvl)%dataptr(mfi)
             pUVW=>this%UVW%mf(lvl)%dataptr(mfi)
             if (present(mask)) pMask=>mask%mf(lvl)%dataptr(mfi)
+            pFx=>Fx(lvl)%dataptr(mfi); pFy=>Fy(lvl)%dataptr(mfi) ! debug
             bx=mfi%tilebox()
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
                div=dxi*(pU(i+1,j,k,1)-pU(i,j,k,1))+dyi*(pV(i,j+1,k,1)-pV(i,j,k,1))+dzi*(pW(i,j,k+1,1)-pW(i,j,k,1))
                coeff=1.0_WP; if (present(mask)) coeff=pMask(i,j,k,1)
+               ! debug: pressure step of a debug-box cell: face accelerations W,E,S,N, face velocities after them, phasic pdV energy
+               if (lvl.eq.this%amr%maxlvl.and.i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) & ! debug
+               &  print '(a,i0,es12.4,2(1x,i0),*(1x,es15.7))','[PP] ',this%relax_diag_step,scale,i,j,pVF(i,j,k,1),pPL(i,j,k,1),pPG(i,j,k,1), & ! debug
+               &  pFx(i,j,k,1),pFx(i+1,j,k,1),pFy(i,j,k,1),pFy(i,j+1,k,1),pU(i,j,k,1),pU(i+1,j,k,1),pV(i,j,k,1),pV(i,j+1,k,1),div, & ! debug
+               &  -scale*coeff*pVF(i,j,k,1)*pPL(i,j,k,1)*div,-scale*coeff*(1.0_WP-pVF(i,j,k,1))*pPG(i,j,k,1)*div ! debug
                ! debug: confirm add_phasic_pressure's per-phase pdV split at the traced cell
                ! if (lvl.eq.this%amr%maxlvl.and.i.eq.965.and.j.eq.1030.and.k.eq.0) then
                !    print*,'ADD_PHASIC_PRESSURE i=',i,' j=',j,' VF=',pVF(i,j,k,1),' PL=',pPL(i,j,k,1),' PG=',pPG(i,j,k,1),&
@@ -1296,6 +1308,7 @@ contains
    subroutine get_dQdt(this,dQdt,dt,time)
       use amrex_amr_module, only: amrex_multifab
       use mpi_f08, only: MPI_Wtime
+      use relax_igmix_sg_class, only: dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
       implicit none
       class(amrmpcomp), intent(inout) :: this
       type(amrdata), intent(inout) :: dQdt
@@ -1922,6 +1935,7 @@ contains
          type(amrex_mfiter) :: mfi
          type(amrex_box) :: bx
          integer :: lvl,i,j,k
+         integer :: n ! debug
          real(WP), dimension(:,:,:,:), contiguous, pointer :: rhs,pFx,pFy,pFz,pBand
          real(WP), dimension(:,:,:,:), contiguous, pointer :: pVFold  ! Intentional masking
          real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pVisc,pBeta,pUVW!,pPL,pPG
@@ -2007,6 +2021,15 @@ contains
                   end if
                   ! Divergence of conserved variable fluxes (all components)
                   rhs(i,j,k,:)=dxi*(pFx(i+1,j,k,:)-pFx(i,j,k,:))+dyi*(pFy(i,j+1,k,:)-pFy(i,j,k,:))+dzi*(pFz(i,j,k+1,:)-pFz(i,j,k,:))
+                  ! debug: transport ledger of a debug-box band cell, per cell volume, face order W,E,S,N, positive into the cell
+                  if (lvl.eq.this%amr%maxlvl.and.i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) then ! debug
+                     if (pBand(i,j,k,1).gt.0.0_WP) print '(a,i0,es12.4,2(1x,i0),*(1x,es15.7))','[TR] ',this%relax_diag_step,dt,i,j, & ! debug
+                     &  pVFold(i,j,k,1),pVF(i,j,k,1),Lvol_old/vol,Gvol_old/vol,Lvol_new/vol,Gvol_new/vol, & ! debug
+                     &  pU(i,j,k,1),pU(i+1,j,k,1),pV(i,j,k,1),pV(i,j+1,k,1), & ! debug
+                     &  pVx(i,j,k,1)/vol,-pVx(i+1,j,k,1)/vol,pVy(i,j,k,1)/vol,-pVy(i,j+1,k,1)/vol, & ! debug
+                     &  pVx(i,j,k,2)/vol,-pVx(i+1,j,k,2)/vol,pVy(i,j,k,2)/vol,-pVy(i,j+1,k,2)/vol, & ! debug
+                     &  (-dt*dxi*pFx(i,j,k,n),dt*dxi*pFx(i+1,j,k,n),-dt*dyi*pFy(i,j,k,n),dt*dyi*pFy(i,j+1,k,n),n=1,4) ! debug
+                  end if ! debug
                   ! Velocity gradients at cell center
                   dUdx(1,1)=0.5_WP*dxi*(pUVW(i+1,j,k,1)-pUVW(i-1,j,k,1))
                   dUdx(2,1)=0.5_WP*dyi*(pUVW(i,j+1,k,1)-pUVW(i,j-1,k,1))
@@ -2577,6 +2600,7 @@ contains
    !> Conserves phasic masses, momentum, and total energy exactly; leaves VF untouched. Finest level only; requires fresh Q ghosts on entry, re-syncs Q on exit.
    subroutine merge_Q(this,time)
       use amrex_amr_module, only: amrex_multifab,amrex_multifab_destroy
+      use relax_igmix_sg_class, only: dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
       implicit none
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: time
@@ -2589,6 +2613,9 @@ contains
       type(amrex_multifab) :: pool
       real(WP) :: VFc,sM,sE,sVol,sKE,M1,M2,rhoG,eG,rhoL,eL,ekin
       real(WP), dimension(3) :: uP,ua,sMom,mom,uC,uG,uL,lmom,gmom
+      real(WP), dimension(this%gas%ns-1) :: sYg,YgP
+      real(WP), dimension(this%liq%ns-1) :: sYl,YlP
+      integer :: ig0,il0
       logical  :: gasm,liqm
       ! Return if disabled
       if (.not.this%merge_on) return
@@ -2598,8 +2625,10 @@ contains
       foff(:,1)=[-1,0,0]; foff(:,2)=[1,0,0]; foff(:,3)=[0,-1,0]; foff(:,4)=[0,1,0]; foff(:,5)=[0,0,-1]; foff(:,6)=[0,0,1]
       fopp=[2,1,4,3,6,5]
       ! Pooled-state field: 1-5 gas (rho,e,ux,uy,uz), 6 gas-valid, 7-11 liq, 12 liq-valid,
-      ! 13/14 accepted-claimant face bitmasks (gas/liq) so pass 2 reproduces pass 1's decisions
-      call this%amr%mfab_build(lvl,pool,ncomp=14,nover=1,atface=[.false.,.false.,.false.])
+      ! 13/14 accepted-claimant face bitmasks (gas/liq) so pass 2 reproduces pass 1's decisions,
+      ! then the pooled transported mass fractions: gas from ig0+1, liquid from il0+1
+      ig0=14; il0=ig0+this%gas%ns-1
+      call this%amr%mfab_build(lvl,pool,ncomp=il0+this%liq%ns-1,nover=1,atface=[.false.,.false.,.false.])
       call pool%setval(0.0_WP)
       ! ---- Pass 1: each reservoir cell pools its phase with its SICK small claimants ----
       call this%amr%mfiter_build(lvl,mfi)
@@ -2610,7 +2639,7 @@ contains
             VFc=pVF(i,j,k,1)
             ! GAS pool: is this cell a gas reservoir?
             if (VFc.lt.this%merge_VFhi) then
-               sM=pQ(i,j,k,2); sE=pQ(i,j,k,4); sVol=1.0_WP-VFc
+               sM=pQ(i,j,k,2); sE=pQ(i,j,k,4); sVol=1.0_WP-VFc; sYg=pQ(i,j,k,this%Yg_lo:this%Yg_hi)
                uP=pQ(i,j,k,5:7)/(pQ(i,j,k,1)+pQ(i,j,k,2)); sMom=pQ(i,j,k,2)*uP; sKE=pQ(i,j,k,2)*sum(uP**2); ncl=0; msk=0
                do f=1,6
                   ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
@@ -2619,6 +2648,7 @@ contains
                         ua=pQ(ia,ja,ka,5:7)/(pQ(ia,ja,ka,1)+pQ(ia,ja,ka,2))
                         sM=sM+pQ(ia,ja,ka,2); sE=sE+pQ(ia,ja,ka,4); sKE=sKE+pQ(ia,ja,ka,2)*sum(ua**2)
                         sVol=sVol+1.0_WP-pVF(ia,ja,ka,1); sMom=sMom+pQ(ia,ja,ka,2)*ua; ncl=ncl+1; msk=ibset(msk,f)
+                        sYg=sYg+pQ(ia,ja,ka,this%Yg_lo:this%Yg_hi)
                      end if
                   end if
                end do
@@ -2627,12 +2657,13 @@ contains
                   eG=(sE+0.5_WP*(sKE-sum(sMom**2)/sM))/sM              ! mixing-dissipated KE -> internal energy
                   if (eG.gt.0.0_WP) then
                      pP(i,j,k,1)=sM/sVol; pP(i,j,k,2)=eG; pP(i,j,k,3:5)=sMom/sM; pP(i,j,k,6)=1.0_WP; pP(i,j,k,13)=real(msk,WP)
+                     pP(i,j,k,ig0+1:il0)=sYg/sM
                   end if
                end if
             end if
             ! LIQUID pool: is this cell a liquid reservoir?
             if (VFc.gt.this%merge_VFlo) then
-               sM=pQ(i,j,k,1); sE=pQ(i,j,k,3); sVol=VFc
+               sM=pQ(i,j,k,1); sE=pQ(i,j,k,3); sVol=VFc; sYl=pQ(i,j,k,this%Yl_lo:this%Yl_hi)
                uP=pQ(i,j,k,5:7)/(pQ(i,j,k,1)+pQ(i,j,k,2)); sMom=pQ(i,j,k,1)*uP; sKE=pQ(i,j,k,1)*sum(uP**2); ncl=0; msk=0
                do f=1,6
                   ia=i+foff(1,f); ja=j+foff(2,f); ka=k+foff(3,f)
@@ -2641,6 +2672,7 @@ contains
                         ua=pQ(ia,ja,ka,5:7)/(pQ(ia,ja,ka,1)+pQ(ia,ja,ka,2))
                         sM=sM+pQ(ia,ja,ka,1); sE=sE+pQ(ia,ja,ka,3); sKE=sKE+pQ(ia,ja,ka,1)*sum(ua**2)
                         sVol=sVol+pVF(ia,ja,ka,1); sMom=sMom+pQ(ia,ja,ka,1)*ua; ncl=ncl+1; msk=ibset(msk,f)
+                        sYl=sYl+pQ(ia,ja,ka,this%Yl_lo:this%Yl_hi)
                      end if
                   end if
                end do
@@ -2649,6 +2681,7 @@ contains
                   eL=(sE+0.5_WP*(sKE-sum(sMom**2)/sM))/sM              ! mixing-dissipated KE -> internal energy
                   if (eL.gt.0.0_WP) then
                      pP(i,j,k,7)=sM/sVol; pP(i,j,k,8)=eL; pP(i,j,k,9:11)=sMom/sM; pP(i,j,k,12)=1.0_WP; pP(i,j,k,14)=real(msk,WP)
+                     pP(i,j,k,il0+1:il0+this%liq%ns-1)=sYl/sM
                   end if
                end if
             end if
@@ -2671,41 +2704,47 @@ contains
             if (pdir.gt.0) then
                ia=i+foff(1,pdir); ja=j+foff(2,pdir); ka=k+foff(3,pdir)
                if (pP(ia,ja,ka,6).gt.0.5_WP.and.btest(nint(pP(ia,ja,ka,13)),fopp(pdir))) then
-                  rhoG=pP(ia,ja,ka,1); eG=pP(ia,ja,ka,2); uG=pP(ia,ja,ka,3:5); gasm=.true.
+                  rhoG=pP(ia,ja,ka,1); eG=pP(ia,ja,ka,2); uG=pP(ia,ja,ka,3:5); YgP=pP(ia,ja,ka,ig0+1:il0); gasm=.true.
                end if
             end if
             if (.not.gasm.and.pP(i,j,k,6).gt.0.5_WP) then
-               rhoG=pP(i,j,k,1); eG=pP(i,j,k,2); uG=pP(i,j,k,3:5); gasm=.true.
+               rhoG=pP(i,j,k,1); eG=pP(i,j,k,2); uG=pP(i,j,k,3:5); YgP=pP(i,j,k,ig0+1:il0); gasm=.true.
             end if
             ! Liquid adoption (mirror)
             pdir=lpd(i,j,k)
             if (pdir.gt.0) then
                ia=i+foff(1,pdir); ja=j+foff(2,pdir); ka=k+foff(3,pdir)
                if (pP(ia,ja,ka,12).gt.0.5_WP.and.btest(nint(pP(ia,ja,ka,14)),fopp(pdir))) then
-                  rhoL=pP(ia,ja,ka,7); eL=pP(ia,ja,ka,8); uL=pP(ia,ja,ka,9:11); liqm=.true.
+                  rhoL=pP(ia,ja,ka,7); eL=pP(ia,ja,ka,8); uL=pP(ia,ja,ka,9:11); YlP=pP(ia,ja,ka,il0+1:il0+this%liq%ns-1); liqm=.true.
                end if
             end if
             if (.not.liqm.and.pP(i,j,k,12).gt.0.5_WP) then
-               rhoL=pP(i,j,k,7); eL=pP(i,j,k,8); uL=pP(i,j,k,9:11); liqm=.true.
+               rhoL=pP(i,j,k,7); eL=pP(i,j,k,8); uL=pP(i,j,k,9:11); YlP=pP(i,j,k,il0+1:il0+this%liq%ns-1); liqm=.true.
             end if
             ! Apply: set phase to pooled (rho*,e*) at own VF; keep the un-merged phase's momentum.
             ! Species partial masses are rescaled to the new phase mass (preserves mass fractions;
             ! composition is not pooled across the pair)
+            ! Composition is pooled too: e* belongs to the pooled mixture, so a member keeping its own Y would read a different T
             if (liqm) then
                pQ(i,j,k,1)=rhoL*VFc; pQ(i,j,k,3)=rhoL*eL*VFc; lmom=pQ(i,j,k,1)*uL
-               if (this%liq%ns.gt.1.and.M1.gt.0.0_WP) pQ(i,j,k,this%Yl_lo:this%Yl_hi)=pQ(i,j,k,this%Yl_lo:this%Yl_hi)*(pQ(i,j,k,1)/M1)
+               ! if (this%liq%ns.gt.1.and.M1.gt.0.0_WP) pQ(i,j,k,this%Yl_lo:this%Yl_hi)=pQ(i,j,k,this%Yl_lo:this%Yl_hi)*(pQ(i,j,k,1)/M1)
+               pQ(i,j,k,this%Yl_lo:this%Yl_hi)=pQ(i,j,k,1)*YlP
             else
                lmom=M1*uC
             end if
             if (gasm) then
                pQ(i,j,k,2)=rhoG*(1.0_WP-VFc); pQ(i,j,k,4)=rhoG*eG*(1.0_WP-VFc); gmom=pQ(i,j,k,2)*uG
-               if (this%gas%ns.gt.1.and.M2.gt.0.0_WP) pQ(i,j,k,this%Yg_lo:this%Yg_hi)=pQ(i,j,k,this%Yg_lo:this%Yg_hi)*(pQ(i,j,k,2)/M2)
+               ! if (this%gas%ns.gt.1.and.M2.gt.0.0_WP) pQ(i,j,k,this%Yg_lo:this%Yg_hi)=pQ(i,j,k,this%Yg_lo:this%Yg_hi)*(pQ(i,j,k,2)/M2)
+               pQ(i,j,k,this%Yg_lo:this%Yg_hi)=pQ(i,j,k,2)*YgP
             else
                gmom=M2*uC
             end if
             pQ(i,j,k,5:7)=lmom+gmom
             ! Census: pool adoptions (rescue monitor)
             if (gasm.or.liqm) this%pool_acc=this%pool_acc+1.0_WP
+            ! debug: pool adoption of a debug-box cell (partner face 1..6 = W,E,S,N,B,T)
+            if ((gasm.or.liqm).and.i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) & ! debug
+            &  print '(a,i0,2(1x,i0),2l2,2(1x,i0),*(1x,es15.7))','[MQ] ',this%relax_diag_step,i,j,gasm,liqm,gpd(i,j,k),lpd(i,j,k),VFc,M1,pQ(i,j,k,1),M2,pQ(i,j,k,2) ! debug
             ! Single-velocity collapse: thermalize the intra-cell gas-liquid relative KE into internal energy
             if ((gasm.or.liqm).and.pQ(i,j,k,1).gt.0.0_WP.and.pQ(i,j,k,2).gt.0.0_WP) then
                ekin=0.5_WP*pQ(i,j,k,1)*pQ(i,j,k,2)/(pQ(i,j,k,1)+pQ(i,j,k,2))*sum((lmom/pQ(i,j,k,1)-gmom/pQ(i,j,k,2))**2)
@@ -5356,14 +5395,15 @@ contains
       use amrvof_geometry,        only: get_plane_dist,cut_hex_vol
       use mathtools,              only: normalize
       use random,                 only: random_uniform
-      use thermorelax_class,      only: RELAX_OK
+      use thermorelax_class,      only: RELAX_OK,RELAX_VACUUM_VAPOR
       use relax_igmix_sg_class,   only: Prelax
       use relax_igmix_nasg_class, only: relax_igmix_nasg
+      use relax_igmix_sg_class,   only: dbg_cell,dbg_i,dbg_j,dbg_k,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
       implicit none
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: dt
       real(WP), intent(in) :: time
-      real(WP), parameter :: VFrb=0.0_WP         !< VF relaxation band: cells with abs(VF-0.5)<VFrb relax whole
+      real(WP), parameter :: VFrb=0.0_WP        !< VF relaxation band: cells with abs(VF-0.5)<VFrb relax whole
       real(WP), parameter :: VF_nuc=0.01_WP      !< Near-pure band where nucleation is attempted first (pTg_relax's VF_nuc)
       integer,  parameter :: remix_rigid=1       !< Additive remix of the relaxed part b and the inert part a
       integer,  parameter :: remix_rigidM=2      !< Additive remix, then whole-cell mechanical relaxation
@@ -5373,19 +5413,19 @@ contains
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC
-      logical :: oldmix,newmix,nucleated,pstab0
+      logical :: oldmix,newmix,nucleated,pstab0,skipped
       real(WP) :: dx,dy,dz,cell_vol,vol_liq,vol_gas
       real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas,rand_dir
       real(WP), dimension(3,8) :: hex
       real(WP), dimension(4) :: plane
       class(relax_igmix_nasg), pointer :: rlx
       integer, dimension(:), allocatable :: iL,iG
-      real(WP) :: Pjump,VFn,VFr,Vr
+      real(WP) :: Pjump,VFn,VFr,Vr,vol0
       real(WP), dimension(this%nQ) :: Qn,Qa,Qr,Qr0
       real(WP), parameter :: dbg_jump=10.0_WP     ! debug: flag a relaxation that multiplies energy density or the hottest phase T by more than this
       real(WP), parameter :: dbg_Tabs=1.0e4_WP    ! debug: flag a cell entering relaxation with a phase T above this
       integer,  parameter :: dbg_nmax=50          ! debug: max flagged cells printed per rank per call
-      integer :: dbg_branch,dbg_n                 ! debug: branch 1=regular, 2=nucleation kept, 3=split-remix, 4=split-remix+M
+      integer :: dbg_branch,dbg_n                 ! debug: branch 1=regular, 2=nucleation kept, 3=split-remix, 4=split-remix+M, 5=sliver skipped
       real(WP) :: dbg_VF0,dbg_flr0                ! debug
       real(WP), dimension(2) :: dbg_T0,dbg_T1     ! debug
       real(WP), dimension(this%nQ) :: dbg_Q0      ! debug
@@ -5431,8 +5471,16 @@ contains
             oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
             Pjump=this%sigma*pCurv(i,j,k,1)
             dbg_VF0=pVF(i,j,k,1); dbg_Q0=pQ(i,j,k,:); dbg_T0=phase_T(dbg_VF0,dbg_Q0); dbg_flr0=rlx%acc(5) ! debug
-            if (.not.oldmix.or.abs(pVF(i,j,k,1)-0.5_WP).lt.VFrb) then
-               ! Pure cells and cells inside the band: regular relaxation
+            dbg_cell=(i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) ! debug
+            if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug
+            ! Gas sliver its liquid would compress strongly: leave it at its arriving state, no relaxation
+            skipped=.false.
+            if (this%sskip_r.gt.0.0_WP.and.oldmix.and.1.0_WP-pVF(i,j,k,1).lt.this%sskip_aG.and.all(pQ(i,j,k,1:4).gt.0.0_WP)) &
+            &  skipped=sliver_skip(pVF(i,j,k,1),pQ(i,j,k,:))
+            if (skipped) then
+               dbg_branch=5 ! debug
+            else if (.not.oldmix.or.abs(pVF(i,j,k,1)-0.5_WP).lt.VFrb.or.any(pQ(i,j,k,1:4).le.0.0_WP)) then
+               ! Pure cells, cells inside the band and cells with a non-positive phase quantity: regular relaxation
                dbg_branch=1 ! debug
                call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=Pjump)
             else
@@ -5452,7 +5500,12 @@ contains
                   dbg_branch=3; dbg_flr0=rlx%acc(5) ! debug
                   call split(pVF(i,j,k,1),pQ(i,j,k,:),Qa,Qr,Vr)
                   Qr0=Qr; VFr=0.5_WP
+                  ! Ledger in physical units: the reactor holds Vr of the cell
+                  vol0=rlx%vol; rlx%vol=Vr*vol0
                   call relax_noguard(VFr,Qr,Pjump,ierr)
+                  rlx%vol=vol0
+                  ! No vapor can exist at the reactor state: consistent pT state, not a failure
+                  if (ierr.eq.RELAX_VACUUM_VAPOR) ierr=RELAX_OK
                   if (ierr.ne.RELAX_OK) call fail('reactor relaxation',pVF(i,j,k,1),pQ(i,j,k,:),Qr0)
                   call remix(pVF(i,j,k,1),pQ(i,j,k,:),Qa,Qr,VFr,Vr)
                   if (remix_mode.eq.remix_rigidM.and.pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi) then
@@ -5468,14 +5521,14 @@ contains
             ! debug: report cells entering hot, or whose energy density or hottest phase T jumped across relaxation
             dbg_flr=(rlx%acc(5).gt.dbg_flr0) ! debug
             dbg_T1=phase_T(pVF(i,j,k,1),pQ(i,j,k,:)) ! debug
-            if (dbg_n.lt.dbg_nmax.and.(maxval(dbg_T0).gt.dbg_Tabs.or.abs(pQ(i,j,k,3)+pQ(i,j,k,4)).gt.dbg_jump*abs(dbg_Q0(3)+dbg_Q0(4)).or. & ! debug
+            if (dbg_cell.or.dbg_n.lt.dbg_nmax.and.(maxval(dbg_T0).gt.dbg_Tabs.or.abs(pQ(i,j,k,3)+pQ(i,j,k,4)).gt.dbg_jump*abs(dbg_Q0(3)+dbg_Q0(4)).or. & ! debug
             &   maxval(dbg_T1).gt.dbg_jump*maxval(dbg_T0))) then ! debug
-               dbg_n=dbg_n+1 ! debug
-               print '(a,3(1x,i0),a,i0,a,l2,a,es12.4)','[splitremix dbg] cell',i,j,k,' branch=',dbg_branch,' floor=',dbg_flr,' Pjump=',Pjump ! debug
+               if (.not.dbg_cell) dbg_n=dbg_n+1 ! debug
+               print '(a,3(1x,i0),a,i0,a,es16.8,a,i0,a,l2,a,es12.4)','[splitremix dbg] cell',i,j,k,' n=',this%relax_diag_step,' t=',time,' branch=',dbg_branch,' floor=',dbg_flr,' Pjump=',Pjump ! debug
                print '(a,es24.16,a,2es12.4,a,*(es24.16))','   pre  VF=',dbg_VF0,' TL,TG=',dbg_T0,' Q=',dbg_Q0 ! debug
                print '(a,es24.16,a,2es12.4,a,*(es24.16))','   post VF=',pVF(i,j,k,1),' TL,TG=',dbg_T1,' Q=',pQ(i,j,k,:) ! debug
-               if (dbg_branch.ge.3) print '(a,es12.4,a,*(es24.16))','   reactor Vr=',Vr,' in Q=',Qr0 ! debug
-               if (dbg_branch.ge.3) print '(a,es24.16,a,*(es24.16))','   reactor out VF=',VFr,' Q=',Qr ! debug
+               if (dbg_branch.eq.3.or.dbg_branch.eq.4) print '(a,es12.4,a,*(es24.16))','   reactor Vr=',Vr,' in Q=',Qr0 ! debug
+               if (dbg_branch.eq.3.or.dbg_branch.eq.4) print '(a,es24.16,a,*(es24.16))','   reactor out VF=',VFr,' Q=',Qr ! debug
             end if ! debug
             ! Check if mixture cell after relaxation
             newmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
@@ -5532,6 +5585,7 @@ contains
          end do; end do; end do
       end do
       call this%amr%mfiter_destroy(mfi)
+      dbg_cell=.false. ! debug
       rlx%pure_stability=pstab0
       ! Sync and apply BC
       call this%VF%average_down(); call this%fill(lvl=this%amr%maxlvl,time=time)
@@ -5575,6 +5629,19 @@ contains
             VF_=Vr_*VFr_+1.0_WP-Vr_
          end if
       end subroutine remix
+      !> True for a gas sliver whose gas sits below sskip_r*(PL-Pjump): it is left unrelaxed for this call
+      logical function sliver_skip(VF_,Q_) result(skip_)
+         real(WP), intent(in) :: VF_
+         real(WP), dimension(:), intent(in) :: Q_
+         real(WP), dimension(this%gas%ns) :: yG
+         real(WP) :: PL_,PG_
+         yG(1:this%gas%ns-1)=max(0.0_WP,min(1.0_WP,Q_(this%Yg_lo:this%Yg_hi)/Q_(2)))
+         yG(this%gas%ns)=1.0_WP-sum(yG(1:this%gas%ns-1))
+         PL_=this%liq%get_p_from_rho_e(rho=Q_(1)/VF_,e=Q_(3)/Q_(1),y=[1.0_WP])
+         PG_=this%gas%get_p_from_rho_e(rho=Q_(2)/(1.0_WP-VF_),e=Q_(4)/Q_(2),y=yG)
+         skip_=(PG_.lt.this%sskip_r*(PL_-Pjump))
+         if (skip_) this%sskip_acc=this%sskip_acc+1.0_WP
+      end function sliver_skip
       !> Relaxation call with the model's dissolution switches and reducing-phase guard turned off
       subroutine relax_noguard(VF_,Q_,Pjump_,ierr_)
          real(WP), intent(inout) :: VF_
@@ -5853,14 +5920,16 @@ contains
 
       ! Reduce the rescue+merge census (cumulative counters; accumulators stay rank-local)
       rescue_census: block
-         real(WP), dimension(11) :: tmp
+         real(WP), dimension(12) :: tmp
          tmp(1:6)=this%resc_acc; tmp(7)=this%pool_acc; tmp(8)=this%strand_acc
          tmp(9)=this%vacsl_acc; tmp(10)=this%vaccand_acc; tmp(11)=this%vacpair_acc
-         call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,11,MPI_REAL_WP,MPI_SUM,this%amr%comm,ierr)
+         tmp(12)=this%sskip_acc
+         call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,12,MPI_REAL_WP,MPI_SUM,this%amr%comm,ierr)
          this%resc_nl=tmp(1); this%resc_ml=tmp(2); this%resc_el=tmp(3)
          this%resc_ng=tmp(4); this%resc_mg=tmp(5); this%resc_eg=tmp(6)
          this%pool_n =tmp(7); this%strand_n=tmp(8)
          this%vacsl_n=tmp(9); this%vaccand_n=tmp(10); this%vacpair_n=tmp(11)
+         this%sskip_n=tmp(12)
       end block rescue_census
 
       ! VF-conditional phasic extrema

@@ -12,7 +12,8 @@ module simulation
    use amrio_class,            only: amrio
    use nasg_class,             only: nasg
    use igmix_class,            only: igmix
-   use relax_igmix_nasg_finite_class, only: relax_igmix_nasg_finite
+   ! use relax_igmix_nasg_finite_class, only: relax_igmix_nasg_finite
+   use relax_igmix_nasg_class, only: relax_igmix_nasg
    implicit none
    private
 
@@ -53,7 +54,8 @@ module simulation
    type(igmix), target :: gas
 
    !> Relaxation model
-   type(relax_igmix_nasg_finite), target :: relax_model
+   ! type(relax_igmix_nasg_finite), target :: relax_model
+   type(relax_igmix_nasg), target :: relax_model
    character(len=str_medium) :: relaxation_type,case_name
    integer :: nsteps_diag                            !< diag run: bounded number of steps (-1 = unlimited)
 
@@ -392,11 +394,11 @@ contains
          case default; call die('[simulation_init] Relaxation type must be p, pT, pThybrid, or pTg')
          end select
          ! Finite relaxation rates (Pelanti 2022: lambda=mu, theta=vartheta, nu); omitted = instantaneous
-         call param_read('Mechanical relaxation rate',relax_model%lambda,default=huge(1.0_WP))
-         call param_read('Thermal relaxation rate',relax_model%theta,default=huge(1.0_WP))
-         call param_read('Chemical relaxation rate',relax_model%nu,default=huge(1.0_WP))
-         write(message,'("[Relaxation rates] lambda=",es12.5," theta=",es12.5," nu=",es12.5)') relax_model%lambda,relax_model%theta,relax_model%nu
-         call log(message)
+         ! call param_read('Mechanical relaxation rate',relax_model%lambda,default=huge(1.0_WP))
+         ! call param_read('Thermal relaxation rate',relax_model%theta,default=huge(1.0_WP))
+         ! call param_read('Chemical relaxation rate',relax_model%nu,default=huge(1.0_WP))
+         ! write(message,'("[Relaxation rates] lambda=",es12.5," theta=",es12.5," nu=",es12.5)') relax_model%lambda,relax_model%theta,relax_model%nu
+         ! call log(message)
          ! Nucleation thresholds in SI: liquid pressure [Pa] below which cavitation seeds, condensation tolerance [K]
          if (trim(relaxation_type).eq.'pTg') then
             call param_read('Cavitation pressure threshold',relax_model%p_cav)
@@ -408,13 +410,13 @@ contains
          write(message,'("[Saturation] psat(T0)=",es12.5," Tsat(p0)=",es12.5," p_cav=",es12.5)') psat0,Tsat0,relax_model%p_cav
          call log(message)
          relax_model%RHOGmin=0.0_WP
-         call param_read('Relax skip gas density',relax_model%rhoG_skip,default=0.0_WP)
-         call param_read('Relax sliver gas fraction',relax_model%sliver_aG,default=0.0_WP)
-         call param_read('Relax liquid thermal tolerance',relax_model%dTtol_L,default=0.0_WP)
-         call param_read('Relax vapor fraction tolerance',relax_model%dYtol,default=0.0_WP)
+         ! call param_read('Relax skip gas density',relax_model%rhoG_skip,default=0.0_WP)
+         ! call param_read('Relax sliver gas fraction',relax_model%sliver_aG,default=0.0_WP)
+         ! call param_read('Relax liquid thermal tolerance',relax_model%dTtol_L,default=0.0_WP)
+         ! call param_read('Relax vapor fraction tolerance',relax_model%dYtol,default=0.0_WP)
          ! Pass A0: a sliver whose gas, and a neighbour whose gas, sit below this fraction of the sliver's PL are mixed isentropically (0: off)
          call param_read('Relax vacuum pressure ratio',fs%vacmix_pratio,default=0.0_WP)
-         fs%vacmix_aG=relax_model%sliver_aG
+         ! fs%vacmix_aG=relax_model%sliver_aG
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
          ! Floors in SI
@@ -637,7 +639,8 @@ contains
          call probe_line('S1a_transport') ! debug
          call fs%build_plic(time=time%t)
          call probe_line('S1b_plic') ! debug
-         call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
+         ! call fs%apply_relax(dt=0.5_WP*time%dt,time=time%tmid)
+         call fs%apply_relax_splitremix(dt=0.5_WP*time%dt,time=time%tmid)
          call probe_line('S1c_relax') ! debug
          call fs%get_primitive(Q=fs%Q)
          call fs%build_subVF()
@@ -655,7 +658,8 @@ contains
          call probe_line('S2a_transport') ! debug
          call fs%build_plic(time=time%t)
          call probe_line('S2b_plic') ! debug
-         call fs%apply_relax(dt=time%dt,time=time%t)
+         ! call fs%apply_relax(dt=time%dt,time=time%t)
+         call fs%apply_relax_splitremix(dt=time%dt,time=time%t)
          call probe_line('S2c_relax') ! debug
          call fs%get_primitive(Q=fs%Q)
          call fs%build_subVF()
@@ -705,12 +709,12 @@ contains
             call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
             diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
             flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
-            sliverL_n=relax_model%nsliver_L
-            call MPI_ALLREDUCE(MPI_IN_PLACE,sliverL_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            sliverLf_n=relax_model%nsliver_Lf
-            call MPI_ALLREDUCE(MPI_IN_PLACE,sliverLf_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            chemskip_n=relax_model%nchem_skip
-            call MPI_ALLREDUCE(MPI_IN_PLACE,chemskip_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            ! sliverL_n=relax_model%nsliver_L
+            ! call MPI_ALLREDUCE(MPI_IN_PLACE,sliverL_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            ! sliverLf_n=relax_model%nsliver_Lf
+            ! call MPI_ALLREDUCE(MPI_IN_PLACE,sliverLf_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            ! chemskip_n=relax_model%nchem_skip
+            ! call MPI_ALLREDUCE(MPI_IN_PLACE,chemskip_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
          end block relax_census
          call mfile%write()
          call consfile%write()

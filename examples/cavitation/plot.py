@@ -10,7 +10,7 @@ import pyvista as pv
 import yt
 
 parser = argparse.ArgumentParser()
-parser.add_argument("input", help="case identifier, e.g. wall_NASG_pTg")
+parser.add_argument("input", help="case identifier, e.g. wall_pTg")
 args = parser.parse_args()
 
 INPUT = args.input
@@ -25,7 +25,7 @@ FIG_WIDTH_IN     = 6
 UV_LEFT_MARGIN_IN  = 0.6
 UV_RIGHT_MARGIN_IN = 1.0
 PL_LEFT_MARGIN_IN  = 0.75
-PL_RIGHT_MARGIN_IN = 0.8
+PL_RIGHT_MARGIN_IN = 0.95
 BOTTOM_MARGIN_IN = 0.55
 TOP_MARGIN_IN    = 0.3
 ROW_GAP_IN       = 0.8
@@ -140,7 +140,7 @@ x_span = re[0] - le[0]
 y_span = re[1] - le[1]
 data_height_over_width = y_span / x_span
 
-x_ticks = [-10, -5, 0, 5, 10]
+x_ticks = [-10, 0, 10]
 y_ticks = x_ticks
 
 # Row 1: U and V side by side, sharing one colorbar.
@@ -395,9 +395,9 @@ VF_CBAR_LABEL = r"$\alpha$"
 VF_VMIN, VF_VMAX = 0.0, 1.0
 VF_TICKS = np.linspace(VF_VMIN, VF_VMAX, 5)
 
-VF_VIEW_XLIM = (-4, 4)
-VF_VIEW_YLIM = (-4, 4)
-VF_X_TICKS = [-2, 0, 2]
+VF_VIEW_XLIM = (-4.5, 4.5)
+VF_VIEW_YLIM = (-4.5, 4.5)
+VF_X_TICKS = [-4, -2, 0, 2, 4]
 VF_Y_TICKS = VF_X_TICKS
 
 

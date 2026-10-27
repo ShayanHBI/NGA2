@@ -44,10 +44,10 @@ Condensation temperature tolerance : 50 ! 0
 # Chemical relaxation rate   : 1e-4
 
 # Overshoot safety rules (0: off)
-Relax skip gas density         : 0
-Relax sliver gas fraction      : 0
-Relax liquid thermal tolerance : 0
-Relax vapor fraction tolerance : 0
+# Relax skip gas density         : 0
+# Relax sliver gas fraction      : 0
+# Relax liquid thermal tolerance : 0
+# Relax vapor fraction tolerance : 0
 Relax vacuum pressure ratio    : 0
 
 # Relaxation clustering
@@ -75,4 +75,4 @@ Max time   : 3e-3
 # Output
 Output period     : 5e-5
 Checkpoint period : 5e-4
-Restart from      : 5.00100E-04
+Restart from      : !5.00100E-04
