@@ -22,9 +22,9 @@ Relaxation type                           : pTg
 VF relaxation band                        : 0
 Cavitation pressure threshold coefficient : 0.8
 Condensation temperature tolerance        : 0.1
-! Mechanical relaxation rate              : 1.0
-! Thermal relaxation rate                 : 1.0
-Chemical relaxation rate                : 0.001
+Mechanical relaxation rate                : huge
+Thermal relaxation rate                   : huge
+Chemical relaxation rate                  : 3.6e-5
 
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####

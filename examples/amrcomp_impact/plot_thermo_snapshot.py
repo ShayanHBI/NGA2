@@ -10,7 +10,7 @@ import pyvista as pv
 import yt
 
 parser = argparse.ArgumentParser()
-parser.add_argument("input", help="case identifier, e.g. pTg")
+parser.add_argument("input", help="case identifier, e.g. pTg_inst or pTg_finite")
 parser.add_argument("time", type=float, help="simulation time to render (closest available frame is used)")
 args = parser.parse_args()
 

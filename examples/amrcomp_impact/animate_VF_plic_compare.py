@@ -17,8 +17,8 @@ parser.add_argument("--pdf", action="store_true",
 args = parser.parse_args()
 
 # Cases to compare: top row / bottom row.
-TOP_INPUT, TOP_LABEL = "pThybrid", "pThybrid"
-BOTTOM_INPUT, BOTTOM_LABEL = "pTg", "pTg"
+TOP_INPUT, TOP_LABEL = "pTg_inst", r"pTg\ inst"
+BOTTOM_INPUT, BOTTOM_LABEL = "pTg_finite", r"pTg\ finite"
 
 FIELD = "VF"
 CBAR_LABEL = r"$\alpha$"

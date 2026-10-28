@@ -18,13 +18,10 @@ module relax_igmix_nasg_finite_class
       !> Typed pointer for direct b access (avoids select type in hot path)
       type(nasg), pointer :: liq_nasg=>null()
       !> matm-style p/pT relaxation parameters (mirror relax_ig_nasg)
-      real(WP) :: RHOGmin=1.0e-2_WP   !< Skip mechanical relax when gas density falls below this
-      real(WP) :: phist  =1.0_WP      !< Temporal weighting on equilibrium pressure
-      real(WP) :: phi0   =0.0_WP      !< Temporal weighting on interface pressure
       !> Relaxation parameters
-      real(WP) :: lambda=huge(1.0_WP) !< Mechanical rate [1/(Pa s)] (Pelanti mu); huge = instantaneous
-      real(WP) :: theta =huge(1.0_WP) !< Thermal rate [W/(m^3 K)] (Pelanti vartheta); huge = instantaneous
-      real(WP) :: nu    =huge(1.0_WP) !< Chemical rate [kg s/m^5] (Pelanti nu); huge = instantaneous
+      real(WP) :: MRR   =huge(1.0_WP) !< Mechanical rate [1/(Pa s)] (Pelanti mu); huge = instantaneous
+      real(WP) :: TRR   =huge(1.0_WP) !< Thermal rate [W/(m^3 K)] (Pelanti vartheta); huge = instantaneous
+      real(WP) :: CRR   =huge(1.0_WP) !< Chemical rate [kg s/m^5] (Pelanti nu); huge = instantaneous
    contains
       procedure :: initialize
       procedure :: apply
@@ -74,9 +71,9 @@ contains
       real(WP) :: VF0                   ! debug
       real(WP), dimension(size(Q)) :: Q0 ! debug
       ! Each step is posed on the previous step's equilibrium manifold: pT needs instantaneous p, pTg also instantaneous T
-      if (this%model.ne.Prelax.and.this%lambda.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pT, pTg and pThybrid require lambda=huge')
-      if (this%model.eq.PTgrelax.and.this%theta.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pTg requires theta=huge')
-      if (this%model.ne.Prelax.or.this%lambda.ge.huge(1.0_WP)) then
+      if (this%model.ne.Prelax.and.this%MRR.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pT, pTg and pThybrid require MRR=huge')
+      if (this%model.eq.PTgrelax.and.this%TRR.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pTg requires TRR=huge')
+      if (this%model.ne.Prelax.or.this%MRR.ge.huge(1.0_WP)) then
          ! Parent's apply on this itself, so p_relax/get_p_eq still dispatch to this class
          VF0=VF; Q0=Q ! debug
          call sg_apply(this,dt,VF,Q,Pjump,ierr)
@@ -121,8 +118,8 @@ contains
       real(WP) :: cvG,cpG,qG,gammaG,gL,pinfL,qL,Yv
       real(WP) :: y(this%gas%ns)
       integer  :: iVQ
-      ! Instantaneous (lambda=huge): closed-form mechanical equilibrium instead of the exponential step
-      if (this%lambda.ge.huge(1.0_WP)) then
+      ! Instantaneous (MRR=huge): closed-form mechanical equilibrium instead of the exponential step
+      if (this%MRR.ge.huge(1.0_WP)) then
          call p_exact(this,VF,Q,Pjump,ierr)
          return
       end if
@@ -163,18 +160,18 @@ contains
       xiLinv=(GamL*(Pint-PL)+rhoL*cL**2)/(       VF)
       xiGinv=(GamG*(Pint-Pjump-PG)+rhoG*cG**2)/(1.0_WP-VF)
       if (xiLinv+xiGinv.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
-      ! Fraction of the gap crossed in dt, 1-exp(-Kp*dt) with Kp=lambda*(1/xi_l+1/xi_g) (eq. 55).
-      ! Instantaneous when lambda=huge or lambda*Kdt>=50 (exp(-50)<eps); compared in logs so lambda*Kdt never overflows
+      ! Fraction of the gap crossed in dt, 1-exp(-Kp*dt) with Kp=MRR*(1/xi_l+1/xi_g) (eq. 55).
+      ! Instantaneous when MRR=huge or MRR*Kdt>=50 (exp(-50)<eps); compared in logs so MRR*Kdt never overflows
       Kdt=(xiLinv+xiGinv)*dt
       inst=.true.; frac=1.0_WP
-      if (this%lambda.lt.huge(1.0_WP)) then
-         if (this%lambda.le.0.0_WP.or.Kdt.le.0.0_WP) then
+      if (this%MRR.lt.huge(1.0_WP)) then
+         if (this%MRR.le.0.0_WP.or.Kdt.le.0.0_WP) then
             inst=.false.; frac=0.0_WP
-         else if (log(this%lambda)+log(Kdt).lt.log(50.0_WP)) then
-            inst=.false.; frac=1.0_WP-exp(-this%lambda*Kdt)
+         else if (log(this%MRR)+log(Kdt).lt.log(50.0_WP)) then
+            inst=.false.; frac=1.0_WP-exp(-this%MRR*Kdt)
          end if
       end if
-      ! Instantaneous by rate (lambda*Kdt>=50): closed form as well
+      ! Instantaneous by rate (MRR*Kdt>=50): closed form as well
       if (inst) then
          call p_exact(this,VF,Q,Pjump,ierr)
          return
@@ -229,8 +226,8 @@ contains
       call this%p_relax(dt,VF,Q,Pjump)
       ! Skip if any conserved quantity is non-positive
       if (any(Q(1:4).le.0.0_WP)) then; if (present(ierr)) ierr=RELAX_DEGENERATE; return; end if
-      ! Instantaneous (theta=huge): closed-form p,T equilibrium instead of the exponential step
-      if (this%theta.ge.huge(1.0_WP)) then
+      ! Instantaneous (TRR=huge): closed-form p,T equilibrium instead of the exponential step
+      if (this%TRR.ge.huge(1.0_WP)) then
          call pT_exact(this,VF,Q,Pjump,ierr)
          return
       end if
@@ -279,18 +276,18 @@ contains
       xiTLinv=-(RHOL/(       VF)*Z+zetaL*COF)/(PHIL*D)
       xiTGinv=-(RHOG/(1.0_WP-VF)*Z-zetaG*COF)/(PHIG*D)
       if (xiTLinv+xiTGinv.le.0.0_WP) then; if (present(ierr)) ierr=RELAX_FAILED; return; end if
-      ! Fraction of the gap crossed in dt, 1-exp(-KT*dt) with KT=theta*(1/xiT_l+1/xiT_g) (eq. 66).
-      ! Instantaneous when theta=huge or theta*Kdt>=50 (exp(-50)<eps); compared in logs so theta*Kdt never overflows
+      ! Fraction of the gap crossed in dt, 1-exp(-KT*dt) with KT=TRR*(1/xiT_l+1/xiT_g) (eq. 66).
+      ! Instantaneous when TRR=huge or TRR*Kdt>=50 (exp(-50)<eps); compared in logs so TRR*Kdt never overflows
       Kdt=(xiTLinv+xiTGinv)*dt
       frac=1.0_WP
-      if (this%theta.lt.huge(1.0_WP)) then
-         if (this%theta.le.0.0_WP.or.Kdt.le.0.0_WP) then
+      if (this%TRR.lt.huge(1.0_WP)) then
+         if (this%TRR.le.0.0_WP.or.Kdt.le.0.0_WP) then
             frac=0.0_WP
-         else if (log(this%theta)+log(Kdt).lt.log(50.0_WP)) then
-            frac=1.0_WP-exp(-this%theta*Kdt)
+         else if (log(this%TRR)+log(Kdt).lt.log(50.0_WP)) then
+            frac=1.0_WP-exp(-this%TRR*Kdt)
          end if
       end if
-      ! Instantaneous by rate (theta*Kdt>=50): closed form as well
+      ! Instantaneous by rate (TRR*Kdt>=50): closed form as well
       if (frac.ge.1.0_WP) then
          call pT_exact(this,VF,Q,Pjump,ierr)
          return
@@ -439,7 +436,7 @@ contains
    !> Mechanical + thermal + chemical (phase change) relaxation.
    !> Nucleates a tiny opposite phase in metastable pure cells; calls pT_relax;
    !> runs pure-phase admissibility tests; falls back to LV (pure water) or LVG (with non-condensable) Newton solves.
-   !> Finite-rate chemical step when nu<huge (Pelanti 2022 eqs. 71-83).
+   !> Finite-rate chemical step when CRR<huge (Pelanti 2022 eqs. 71-83).
    subroutine pTg_relax(this,dt,VF,Q,Pjump,ierr)
       use amrvof_class, only: VFlo,VFhi
       implicit none
@@ -474,8 +471,8 @@ contains
          real(WP), parameter :: pure_VFlo=0.05_WP,pure_VFhi=0.95_WP
          logical  :: conv
          integer  :: it
-         ! Instantaneous-equilibrium shortcut: skipped at finite nu
-         if (this%nu.lt.huge(1.0_WP)) exit pure_phase_stability
+         ! Instantaneous-equilibrium shortcut: skipped at finite CRR
+         if (this%CRR.lt.huge(1.0_WP)) exit pure_phase_stability
          if (VF.lt.pure_VFlo) then
             if (dbg_cell) print*,'attempting pure gas'
             ! Transfer all liquid mass and energy to vapor
@@ -561,8 +558,8 @@ contains
       condensed=.false.
       ! Nucleation: seed a tiny opposite phase in metastable pure-ish cells so pTg starts well-conditioned.
       ! Gated by do_nucleate -- off defers cavitation/condensation of pure cells (first phase-change pass).
-      ! No nucleation at nu=0: the seed is itself a phase change
-      if (this%do_nucleate.and.near_pure.and.this%nu.gt.0.0_WP) then
+      ! No nucleation at CRR=0: the seed is itself a phase change
+      if (this%do_nucleate.and.near_pure.and.this%CRR.gt.0.0_WP) then
          nucleation: block
             real(WP), parameter :: dT_nuc_max=0.05_WP ! max self-heating (relative to TL_nuc/TG_nuc) a nucleation seed may cause
             real(WP) :: rhoL_nuc,pL_nuc,TL_nuc,pv_sat,rhoV_nuc,eV_nuc
@@ -830,7 +827,7 @@ contains
          ! Return here
          call dealloc(); return
       end if
-      ! Chemical step: Pelanti's exponential solution for any nu (nu=huge gives frac=1), no iterative solve
+      ! Chemical step: Pelanti's exponential solution for any CRR (CRR=huge gives frac=1), no iterative solve
       finite_chemical: block
          logical :: done
          call finite_chem(done)
@@ -846,7 +843,7 @@ contains
             call dealloc(); return
          end if
          ! Confirm we had enough of the reducing phase to begin with
-         if (.not.nucleated) then
+         if (.not.nucleated.and.this%chem_guard) then
             if ((VF.lt.VF0.and.Q0(1)/rho0.lt.Y_small).or.(VF.gt.VF0.and.Yv0.lt.Y_small)) then
                call restore_pT_state(); call dealloc()
                if (present(ierr)) ierr=RELAX_FAILED
@@ -1005,7 +1002,7 @@ contains
       Ysat=0.0_WP
       ok=.false.
       iVQ=7+this%liq%ns+this%indV-1
-      if (this%nu.le.0.0_WP) then; ok=.true.; return; end if
+      if (this%CRR.le.0.0_WP) then; ok=.true.; return; end if
       ! Phasic state at ** (each phase at its own p and T); EL, EG are internal energies per unit volume
       RHOL=Q(1)/(       VF); EL=Q(3)/(       VF)
       RHOG=Q(2)/(1.0_WP-VF); EG=Q(4)/(1.0_WP-VF)
@@ -1020,7 +1017,7 @@ contains
       xv=this%get_xv(YvS); pv=xv*PG
       dry=(Q(iVQ).le.0.0_WP.or.pv.lt.this%pv_min)
       if (dbg_cell) print*,'[get_chem_transfer] state: VF=',VF,' RHOL=',RHOL,' RHOG=',RHOG,' PL=',PL,' PG=',PG,' TL=',TL,' TG=',TG ! debug
-      if (dbg_cell) print*,'[get_chem_transfer] Yv=',YvS,' xv=',xv,' pv=',pv,' dry=',dry,' nu=',this%nu,' dt=',dt ! debug
+      if (dbg_cell) print*,'[get_chem_transfer] Yv=',YvS,' xv=',xv,' pv=',pv,' dry=',dry,' CRR=',this%CRR,' dt=',dt ! debug
       ! Phasic coefficients: Gamma, c, chi=c^2-Gamma*h, phi=(drho/dT)_p, zeta=(drho/dp)_T (eqs. 16, 34)
       GamL=this%liq%get_gruneisen_from_rho_e(rho=RHOL,e=EL/RHOL,y=[1.0_WP])
       GamG=this%gas%get_gruneisen_from_rho_e(rho=RHOG,e=EG/RHOG,y=yS)
@@ -1062,7 +1059,7 @@ contains
       if (dbg_cell) print*,'[get_chem_transfer] S_alpha=',SVF,' S_T=',ST,' S_p=',Sp,' (d alpha_l, dT, dp per unit dm)' ! debug
       if (dry) then
          ! Dry gas: K_CC->inf and eq. 77 gives dm->0, yet the ODE evaporates. Keep only the singular mixing
-         ! term F_C=Rv*T*ln(m_s/m_v) and integrate it exactly: E1(ln(m_s/m_v))=E1(ln(m_s/m_v**))+nu*Rv*T*dt/m_s
+         ! term F_C=Rv*T*ln(m_s/m_v) and integrate it exactly: E1(ln(m_s/m_v))=E1(ln(m_s/m_v**))+CRR*Rv*T*dt/m_s
          g1=this%liq%get_g_from_p_T(p=PL,T=TL,y=[1.0_WP])
          g2=this%gas%cp(this%indV)*TG+this%gas%q(this%indV)-TG*(this%gas%cp(this%indV)*log(TG)+this%gas%qp(this%indV))
          ! m_s: vapor mass at which F_C=0, from p_vs=exp((g_l-g_v0)/(Rv*T)) and the dilute x_v=(Ma/Mv)*m_v/m_a
@@ -1073,11 +1070,11 @@ contains
             ok=.true.
             return
          end if
-         ! u1 from E1(ln(1/u1))=E1(ln(1/u0))+tau, tau=nu*Rv*T*dt/m_s; u1=1 when tau exceeds E1(1e-300)~690
-         if (this%nu.ge.huge(1.0_WP).or.log(this%nu)+log(RV*TG*dt/ms).gt.log(690.0_WP)) then
+         ! u1 from E1(ln(1/u1))=E1(ln(1/u0))+tau, tau=CRR*Rv*T*dt/m_s; u1=1 when tau exceeds E1(1e-300)~690
+         if (this%CRR.ge.huge(1.0_WP).or.log(this%CRR)+log(RV*TG*dt/ms).gt.log(690.0_WP)) then
             u1=1.0_WP
          else
-            tgt=this%nu*RV*TG*dt/ms
+            tgt=this%CRR*RV*TG*dt/ms
             if (u0.gt.0.0_WP) tgt=tgt+exp(log_E1(-log(u0)))
             if (tgt.gt.690.0_WP) then
                u1=1.0_WP
@@ -1099,16 +1096,16 @@ contains
          xi1inv= Sp/RHOL-sL*ST
          xi2inv=-(Sp*RV*TG/PG-sV*ST)+KCC
          if (xi1inv+xi2inv.le.0.0_WP) return
-         ! Fraction 1-exp(-Kg*dt) with Kg=nu*(1/xi_1+1/xi_2) (eq. 76); instantaneous when nu=huge or nu*Kdt>=50
+         ! Fraction 1-exp(-Kg*dt) with Kg=CRR*(1/xi_1+1/xi_2) (eq. 76); instantaneous when CRR=huge or CRR*Kdt>=50
          Kdt=(xi1inv+xi2inv)*dt
          frac=1.0_WP
-         if (this%nu.lt.huge(1.0_WP).and.log(this%nu)+log(Kdt).lt.log(50.0_WP)) frac=1.0_WP-exp(-this%nu*Kdt)
+         if (this%CRR.lt.huge(1.0_WP).and.log(this%CRR)+log(Kdt).lt.log(50.0_WP)) frac=1.0_WP-exp(-this%CRR*Kdt)
          ! Partial density (eq. 77), Delta g=g_2-g_1
          dg=g2-g1
          dm=dg/(xi1inv+xi2inv)*frac
          lnpvs=(g1-g2)/(RV*TG)+log(pv)
          if (dbg_cell) print*,'[get_chem_transfer] g_liq=',g1,' g_vap=',g2,' dg=g_vap-g_liq=',dg,' (>0 condenses)' ! debug
-         if (dbg_cell) print*,'[get_chem_transfer] sL=',sL,' sV=',sV,' KCC=',KCC,' 1/xi1=',xi1inv,' 1/xi2=',xi2inv,' nu*Kdt=',this%nu*Kdt,' frac=',frac ! debug
+         if (dbg_cell) print*,'[get_chem_transfer] sL=',sL,' sV=',sV,' KCC=',KCC,' 1/xi1=',xi1inv,' 1/xi2=',xi2inv,' CRR*Kdt=',this%CRR*Kdt,' frac=',frac ! debug
          if (dbg_cell) print*,'[get_chem_transfer] dm=dg/(1/xi1+1/xi2)*frac=',dm,' psat(T)~',exp(lnpvs),' vs pv=',pv ! debug
       end if
       ! Volume fraction (eq. 78)

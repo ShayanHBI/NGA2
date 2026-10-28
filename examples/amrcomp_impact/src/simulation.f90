@@ -12,8 +12,9 @@ module simulation
    use amrio_class,            only: amrio
    use nasg_class,             only: nasg
    use igmix_class,            only: igmix
-   ! use relax_igmix_nasg_finite_class, only: relax_igmix_nasg_finite
+   use relax_igmix_sg_class,   only: relax_igmix_sg
    use relax_igmix_nasg_class, only: relax_igmix_nasg
+   use relax_igmix_nasg_finite_class, only: relax_igmix_nasg_finite
    implicit none
    private
    
@@ -52,8 +53,9 @@ module simulation
    type(igmix), target :: gas
 
    !> Relaxation model
-   ! type(relax_igmix_nasg_finite), target :: relax_model
-   type(relax_igmix_nasg), target :: relax_model
+   type(relax_igmix_nasg), target :: relax_inst
+   type(relax_igmix_nasg_finite), target :: relax_finite
+   class(relax_igmix_sg), pointer :: relax_model
    character(len=str_medium) :: relaxation_type,case_name
    integer  :: nsteps_diag                            !< diag run: bounded number of steps (-1 = unlimited)
    real(WP) :: p_cav_cof
@@ -500,6 +502,21 @@ contains
       call solver%amr%mfiter_destroy(mfi)
    end subroutine my_tagger
 
+   !> Read a relaxation rate: a number or the word huge (instantaneous); absent key = huge
+   subroutine read_rate(tag,rate)
+      use param, only: param_read
+      implicit none
+      character(len=*), intent(in) :: tag
+      real(WP), intent(out) :: rate
+      character(len=str_medium) :: val
+      call param_read(tag,val,default='huge')
+      if (trim(val).eq.'huge') then
+         rate=huge(1.0_WP)
+      else
+         read(val,*) rate
+      end if
+   end subroutine read_rate
+
    !> Initialization of problem solver
    subroutine simulation_init
       use param, only: param_read
@@ -507,7 +524,27 @@ contains
 
       ! Determine case name from relaxation type
       call param_read('Relaxation type',relaxation_type)
-      case_name='impact_relax_'//trim(relaxation_type)
+      case_name='impact_relax_'//trim(relaxation_type)//'_inst'
+
+      ! Select relaxation model: any rate key present -> finite-rate class (all huge = its instantaneous mode), none -> relax_igmix_nasg
+      select_relax_model: block
+         use param,    only: param_exists
+         use messager, only: log
+         use string,   only: str_long
+         character(len=str_long) :: message
+         if (param_exists('Mechanical relaxation rate').or.param_exists('Thermal relaxation rate').or.param_exists('Chemical relaxation rate')) then
+            ! Finite relaxation rates (Pelanti 2022: lambda=mu, theta=vartheta, nu); omitted = instantaneous
+            call read_rate('Mechanical relaxation rate',relax_finite%MRR)
+            call read_rate('Thermal relaxation rate',relax_finite%TRR)
+            call read_rate('Chemical relaxation rate',relax_finite%CRR)
+            write(message,'("[Relaxation rates] MRR=",es12.5e3," TRR=",es12.5e3," CRR=",es12.5e3)') relax_finite%MRR,relax_finite%TRR,relax_finite%CRR
+            call log(message)
+            if (min(relax_finite%MRR,relax_finite%TRR,relax_finite%CRR).lt.huge(1.0_WP)) case_name='impact_relax_'//trim(relaxation_type)//'_finite'
+            relax_model=>relax_finite
+         else
+            relax_model=>relax_inst
+         end if
+      end block select_relax_model
 
       ! Initialize AMR grid
       create_amrgrid: block
@@ -681,12 +718,6 @@ contains
          case ('pThybrid'); relax_model%model=PThybrid
          case default; call die('[simulation_init] Relaxation type must be p, pT, pThybrid, or pTg')
          end select
-         ! Finite relaxation rates (Pelanti 2022: lambda=mu, theta=vartheta, nu); omitted = instantaneous
-         ! call param_read('Mechanical relaxation rate',relax_model%lambda,default=huge(1.0_WP))
-         ! call param_read('Thermal relaxation rate',relax_model%theta,default=huge(1.0_WP))
-         ! call param_read('Chemical relaxation rate',relax_model%nu,default=huge(1.0_WP))
-         ! write(message,'("[Relaxation rates] lambda=",es12.5," theta=",es12.5," nu=",es12.5)') relax_model%lambda,relax_model%theta,relax_model%nu
-         ! call log(message)
          relax_model%RHOGmin=0.0_WP
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP

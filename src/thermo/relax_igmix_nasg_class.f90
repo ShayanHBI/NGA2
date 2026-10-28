@@ -18,9 +18,6 @@ module relax_igmix_nasg_class
       !> Typed pointer for direct b access (avoids select type in hot path)
       type(nasg), pointer :: liq_nasg=>null()
       !> matm-style p/pT relaxation parameters (mirror relax_ig_nasg)
-      real(WP) :: RHOGmin=1.0e-2_WP   !< Skip mechanical relax when gas density falls below this
-      real(WP) :: phist  =1.0_WP      !< Temporal weighting on equilibrium pressure
-      real(WP) :: phi0   =0.0_WP      !< Temporal weighting on interface pressure
    contains
       procedure :: initialize
       procedure :: p_relax

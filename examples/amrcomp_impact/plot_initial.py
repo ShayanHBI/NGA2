@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import yt
 
-CASE = "impact_relax_pTg"
+CASE = "impact_relax_pTg_inst"
 PLTFILE = f"amrviz/{CASE}/plt.nga2.cell.000001"
 FIELD = "Mach"
 CBAR_LABEL = r"$\mathrm{Mach}$"

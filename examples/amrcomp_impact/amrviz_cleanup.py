@@ -2,7 +2,7 @@
 """Thin an amrviz/<case> directory to a uniform time grid within [tmin,tmax].
 
 Usage:
-  ./amrviz_cleanup.py amrviz/impact_relax_pTg --tmin 0.0 --tmax 10.0 --dt 0.1 --execute
+  ./amrviz_cleanup.py amrviz/impact_relax_pTg_inst --tmin 0.0 --tmax 10.0 --dt 0.1 --execute
 
 Dry-run by default (reports what would be deleted); pass --execute to actually delete.
 """

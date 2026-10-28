@@ -414,10 +414,10 @@ contains
          ! Relaxation start time (0: relax from the first step)
          call param_read('Relaxation start time',relax_t0,default=0.0_WP)
          ! Finite relaxation rates (Pelanti 2022: lambda=mu, theta=vartheta, nu); omitted = instantaneous
-         call param_read('Mechanical relaxation rate',relax_model%lambda,default=huge(1.0_WP))
-         call param_read('Thermal relaxation rate',relax_model%theta,default=huge(1.0_WP))
-         call param_read('Chemical relaxation rate',relax_model%nu,default=huge(1.0_WP))
-         write(message,'("[Relaxation rates] lambda=",es12.5," theta=",es12.5," nu=",es12.5)') relax_model%lambda,relax_model%theta,relax_model%nu
+         call param_read('Mechanical relaxation rate',relax_model%MRR,default=huge(1.0_WP))
+         call param_read('Thermal relaxation rate',relax_model%TRR,default=huge(1.0_WP))
+         call param_read('Chemical relaxation rate',relax_model%CRR,default=huge(1.0_WP))
+         write(message,'("[Relaxation rates] MRR=",es12.5," TRR=",es12.5," CRR=",es12.5)') relax_model%MRR,relax_model%TRR,relax_model%CRR
          call log(message)
          ! Nucleation thresholds in SI: liquid pressure [Pa] below which cavitation seeds, condensation tolerance [K]
          if (trim(relaxation_type).eq.'pTg') then

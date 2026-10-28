@@ -72,6 +72,10 @@ module relax_igmix_sg_class
       integer  :: model=Prelax
       real(WP) :: Tratmax=10.0_WP          !< PThybrid: temperature contrast max(TG/TL,TL/TG) above which pT_relax is used
       real(WP) :: VFratmax=10.0_WP         !< Max per-call phase-volume change factor in p_relax (partial relax beyond)
+      !> matm-style p/pT relaxation parameters (mirror relax_ig_nasg)
+      real(WP) :: RHOGmin=1.0e-2_WP   !< Skip mechanical relax when gas density falls below this
+      real(WP) :: phist  =1.0_WP      !< Temporal weighting on equilibrium pressure
+      real(WP) :: phi0   =0.0_WP      !< Temporal weighting on interface pressure
       !> Case-owned stability guards (defaults are no-ops; a case opts in by setting these)
       real(WP) :: Pmin_liq=-1.0e30_WP   !< Liquid pressure floor (e.g. max sustainable tension); off by default
       real(WP) :: Tmin_liq=-1.0_WP      !< Liquid temperature floor; off by default

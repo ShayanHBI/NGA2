@@ -2857,8 +2857,7 @@ contains
       use mathtools,              only: normalize
       use random,                 only: random_uniform
       use thermorelax_class,      only: RELAX_OK,RELAX_VACUUM_VAPOR
-      use relax_igmix_sg_class,   only: Prelax
-      use relax_igmix_nasg_class, only: relax_igmix_nasg
+      use relax_igmix_sg_class,   only: Prelax,relax_igmix_sg
       use relax_igmix_sg_class,   only: dbg_cell,dbg_i,dbg_j,dbg_k,dbg_ilo,dbg_ihi,dbg_jlo,dbg_jhi,dbg_klo,dbg_khi ! debug
       implicit none
       class(amrmpcomp), intent(inout) :: this
@@ -2878,7 +2877,7 @@ contains
       real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas,rand_dir
       real(WP), dimension(3,8) :: hex
       real(WP), dimension(4) :: plane
-      class(relax_igmix_nasg), pointer :: rlx
+      class(relax_igmix_sg), pointer :: rlx
       integer, dimension(:), allocatable :: iL,iG
       real(WP) :: Pjump,VFn,VFr,Vr,vol0
       real(WP), dimension(this%nQ) :: Qn,Qa,Qr,Qr0
@@ -2898,10 +2897,10 @@ contains
       t0=MPI_Wtime()
       ! Typed access to the relaxation model
       select type (r=>this%relax)
-      class is (relax_igmix_nasg)
+      class is (relax_igmix_sg)
          rlx=>r
       class default
-         call die('[amrmpcomp apply_relax_splitremix] requires a relax_igmix_nasg relaxation model')
+         call die('[amrmpcomp apply_relax_splitremix] requires a relax_igmix_sg relaxation model')
       end select
       ! No single-phase stability test on near-pure cells
       pstab0=rlx%pure_stability
