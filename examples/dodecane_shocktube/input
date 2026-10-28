@@ -44,19 +44,6 @@ Condensation temperature tolerance : 0
 # Thermal relaxation rate    : 2000
 # Chemical relaxation rate   : 1e-4
 
-# Overshoot safety rules (0: off)
-Relax skip gas density         : 0
-Relax sliver gas fraction      : 0
-Relax liquid thermal tolerance : 0
-Relax vapor fraction tolerance : 0
-Relax vacuum pressure ratio    : 0
-
-# Relaxation clustering
-Mechanical clustering : .false.
-Thermal clustering    : .false.
-Chemical clustering   : .false.
-Dissolve stranded gas : .false.
-
 # Transport properties and subgrid models (physical transport off)
 Liquid viscosity                 : 0
 Gas viscosity                    : 0

@@ -45,7 +45,6 @@ module simulation
    !> Simulation monitoring
    type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
-   real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
    !> Near-wall liquid fold: after each relaxation, gas within wall_band finest cells of a wall is folded into the liquid
    logical  :: wall_fold=.false.
@@ -723,8 +722,6 @@ contains
          relax_model%VFratmax=VFratmax
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
-         ! relax_model%diss_P=200.0_WP
-         ! relax_model%diss_RHO=200.0_WP
          ! fs%rho_floor=1.0e-3_WP
          fs%Pmin_liq=-0.9_WP*eosL%pinf
          fs%Tmin_liq=300.0_WP
@@ -735,13 +732,7 @@ contains
          ! Relaxation liquid T floor below the case's vapor temperatures (a 300 K floor on condensation seeds blows up the gas); rescue keeps 300 K
          relax_model%Tmin_liq=0.1_WP
          ! Pre-relaxation clustering
-         fs%cluster_on=.true.
-         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A1
-         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A2
-         call param_read('Dissolve stranded gas',fs%dissolve_on,default=.true.)
          ! Solo-vs-clustered relaxation diagnostic CSV
-         call param_read('Relax diagnostic',fs%relax_diag_on,default=.false.)
-         call param_read('Diag stride',fs%relax_diag_stride,default=20)
          ! Near-wall liquid fold
          call param_read('Wall liquid fold',wall_fold,default=.false.)
          call param_read('Wall liquid band',wall_band,default=4)
@@ -831,8 +822,6 @@ contains
          call viz%add_scalar(fs%TG,1,'TG')
          call viz%add_scalar(fs%IL,1,'IL')
          call viz%add_scalar(fs%IG,1,'IG')
-         call viz%add_scalar(fs%cluster_idx,1,'cluster_idx')
-         call viz%add_scalar(fs%stranded,1,'stranded')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -951,15 +940,12 @@ contains
          call rescfile%add_column(fs%resc_ng,'GasResc n')
          call rescfile%add_column(fs%resc_mg,'GasResc dm')
          call rescfile%add_column(fs%resc_eg,'GasResc dE')
-         call rescfile%add_column(diss_n,'Diss n')
-         call rescfile%add_column(diss_m,'Diss dm')
          call rescfile%add_column(quad_n,'Quad n')
          call rescfile%add_column(swap_n,'Swap n')
          call rescfile%add_column(flr_n,'Floor n')
          call rescfile%add_column(flr_e,'Floor dE')
          call rescfile%add_column(stuck_n,'Stuck n')
          call rescfile%add_column(fs%pool_n,'Pool n')
-         call rescfile%add_column(fs%strand_n,'Strand n')
          call rescfile%add_column(wfold_n,'WallFold n')
          call rescfile%add_column(wfold_m,'WallFold dm')
          call rescfile%write()
@@ -983,7 +969,7 @@ contains
             call time%adjust_dt()
          end if
          call time%increment()
-         fs%relax_diag_step=time%n   ! diag: drives relax_diag_stride
+         fs%relax_diag_step=time%n   ! debug: step label for the solver's debug prints
 
          ! Remember old state
          call fs%store_old()
@@ -1085,12 +1071,11 @@ contains
          relax_census: block
             use mpi_f08,  only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
             use parallel, only: MPI_REAL_WP
-            real(WP), dimension(7) :: tmp
+            real(WP), dimension(5) :: tmp
             integer :: ierr
             tmp=relax_model%acc
-            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
-            flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
+            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,5,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            quad_n=tmp(1); swap_n=tmp(2); flr_n=tmp(3); flr_e=tmp(4); stuck_n=tmp(5)
             ! Near-wall liquid fold census
             tmp(1:2)=wfold_acc
             call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,2,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)

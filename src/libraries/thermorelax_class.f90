@@ -17,9 +17,6 @@ module thermorelax_class
    integer, parameter :: RELAX_NUC_FAILED  =7 !< Nucleation failed. Thermo-mechanical relaxation is attempted but chemical is skipped.
    integer, parameter :: RELAX_VACUUM_VAPOR=8 !< Near-vacuum vapor (p_v too small)
    type, abstract :: thermorelax
-      !> Reference vapor fraction for the current cell (largest Yv of its gas-bearing neighbours), set by
-      !> the caller before apply; 0 means none given
-      real(WP) :: Yv_ref=0.0_WP
    contains
       procedure(relax_iface), deferred :: apply
       procedure :: get_chem_transfer

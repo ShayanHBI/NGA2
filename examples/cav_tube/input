@@ -1,5 +1,3 @@
-# Water cavitation tube (Pelanti 2022, Sec. 8.2.1), SI units, starting from pure liquid
-
 # AMR grid
 Base nx       : 2000 ! 5000
 Base ny       : 1
@@ -33,39 +31,24 @@ Vapor qp        : 14317
 Air gamma       : 1.4
 Air cv          : 718
 
-# Relaxation (p, pT, pThybrid, pTg)
-Relaxation type : pTg
-# Liquid pressure [Pa] below which a pure-liquid cell cavitates; condensation tolerance [K]
+# Relaxation
+Relaxation type                    : pTg
+VF relaxation band                 : 1
 Cavitation pressure threshold      : 0 ! 1e30
 Condensation temperature tolerance : 50 ! 0
-# Finite relaxation rates (Pelanti 2022); omit a line for instantaneous
-# Mechanical relaxation rate : 1.0
-# Thermal relaxation rate    : 2000
-# Chemical relaxation rate   : 1e-4
-
-# Overshoot safety rules (0: off)
-# Relax skip gas density         : 0
-# Relax sliver gas fraction      : 0
-# Relax liquid thermal tolerance : 0
-# Relax vapor fraction tolerance : 0
-Relax vacuum pressure ratio    : 0
-
-# Relaxation clustering
-Mechanical clustering : .false.
-Thermal clustering    : .false.
-Chemical clustering   : .false.
-Dissolve stranded gas : .false.
+! Mechanical relaxation rate       : 1.0
+! Thermal relaxation rate          : 2000
+! Chemical relaxation rate         : 1e-4
 
 # Transport properties and subgrid models (physical transport off)
-Liquid viscosity                 : 0
-Gas viscosity                    : 0
-Liquid thermal conductivity      : 0
-Gas thermal conductivity         : 0
-# Artificial bulk viscosity (0: off); the second coefficient is the shear-to-bulk ratio
+Liquid viscosity                      : 0
+Gas viscosity                         : 0
+Liquid thermal conductivity           : 0
+Gas thermal conductivity              : 0
 Artificial bulk viscosity coefficient : 5
-Artificial viscosity coefficient : 0
-Use Vreman                       : .false.
-Surface tension                  : 0
+Artificial viscosity coefficient      : 0
+Use Vreman                            : .false.
+Surface tension                       : 0
 
 # Time integration
 Max dt     : 1.5e-7 ! 6e-8

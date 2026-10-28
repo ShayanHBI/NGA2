@@ -77,14 +77,12 @@ module relax_igmix_sg_class
       real(WP) :: Tmin_liq=-1.0_WP      !< Liquid temperature floor; off by default
       real(WP) :: Pmin_gas=-1.0e30_WP   !< Gas pressure floor (e.g. ~saturation pressure); off by default
       real(WP) :: Tmin_gas=-1.0_WP      !< Gas temperature floor; off by default
-      real(WP) :: diss_P=1.0e30_WP      !< Dissolution: absorb gas where phasic gas pressure exceeds this (1e30=off)
-      real(WP) :: diss_RHO=1.0e30_WP    !< Dissolution: absorb gas where phasic gas density exceeds this (1e30=off)
       real(WP) :: vol=1.0_WP            !< Cell volume for ledger units (set by the case; apply() runs on the finest level only)
-      !> Ledger: rank-local cumulative accumulators (1-2 dissolution n/dm; 3 quadratic proposal
-      !> succeeded; 4 proposal failed, completed by the swap alone; 5-6 floor n/dE; 7 untouched
-      !> cells, non-positive phase mass). The model only counts; reduction across ranks is the
-      !> monitoring code's business (the case reduces acc itself)
-      real(WP), dimension(7) :: acc=0.0_WP
+      !> Ledger: rank-local cumulative accumulators (1 quadratic proposal succeeded; 2 proposal
+      !> failed, completed by the swap alone; 3-4 floor n/dE; 5 untouched cells, non-positive
+      !> phase mass). The model only counts; reduction across ranks is the monitoring code's
+      !> business (the case reduces acc itself)
+      real(WP), dimension(5) :: acc=0.0_WP
    contains
       procedure :: initialize
       procedure :: debug_dump
@@ -178,7 +176,7 @@ contains
       real(WP),               intent(in)    :: Pjump
       integer,  optional,     intent(out)   :: ierr
       real(WP), dimension(this%gas%ns) :: y
-      real(WP) :: Yv,cvG,cpG,qG,gammaG,PG,PL,Ptar,Eold,TL,TG,RHOG
+      real(WP) :: Yv,cvG,cpG,qG,gammaG,PL,Ptar,Eold,TL,TG
       integer  :: iVQ,ier
       logical :: run_pTg,interfacial,floor_ok
       this%nucleated=.false.
@@ -193,36 +191,6 @@ contains
          end if
       end if
       iVQ=7+this%liq%ns+this%indV-1
-      ! Absorb (seed culling, high-pressure extreme): a gas packet above diss_P is
-      ! supercritical and mixes into the liquid; conserves cell totals exactly, the cell
-      ! becomes pure liquid, and the caller's pure-cell snap completes the PLIC reset
-      if ((this%diss_P.lt.1.0e30_WP).and.(Q(2).gt.0.0_WP).and.(Q(4).gt.0.0_WP)) then
-         ! Yv=Q(iVQ)/Q(2)
-         Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP)) ! debug: clamp as get_primitive does (near-total VF collapse can leave Q(iVQ)>Q(2))
-         y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
-         PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
-         if (PG.gt.this%diss_P) then
-            this%acc(1)=this%acc(1)+1.0_WP; this%acc(2)=this%acc(2)+Q(2)*this%vol
-            Q(1)=Q(1)+Q(2); Q(3)=Q(3)+Q(4)
-            Q(2)=0.0_WP; Q(4)=0.0_WP; Q(iVQ)=0.0_WP
-            VF=1.0_WP
-            if (dbg_cell) call this%debug_dump('ABSORB',VF,Q,Pjump)
-            if (present(ierr)) ierr=RELAX_OK
-            return
-         end if
-      end if
-      if ((this%model.eq.PTgrelax).and.(this%diss_RHO.lt.1.0e30_WP).and.(Q(2).gt.0.0_WP).and.(Q(4).gt.0.0_WP)) then
-         RHOG=Q(2)/(1.0_WP-VF)
-         if (RHOG.gt.this%diss_RHO) then
-            this%acc(1)=this%acc(1)+1.0_WP; this%acc(2)=this%acc(2)+Q(2)*this%vol
-            Q(1)=Q(1)+Q(2); Q(3)=Q(3)+Q(4)
-            Q(2)=0.0_WP; Q(4)=0.0_WP; Q(iVQ)=0.0_WP
-            VF=1.0_WP
-            if (dbg_cell) call this%debug_dump('ABSORB-RHOG',VF,Q,Pjump)
-            if (present(ierr)) ierr=RELAX_OK
-            return
-         end if
-      end if
       ! Stage 1 — propose VF: stock quadratic relaxation (Prelax/PTrelax/PThybrid dispatch).
       ! Its return code only feeds the ledger; the energy split is set unconditionally below.
       ier=RELAX_OK
@@ -314,16 +282,16 @@ contains
       end select
       ! Ledger the proposal outcome; a non-positive phase mass is the only untouched exit
       if (ier.eq.RELAX_OK) then
-         this%acc(3)=this%acc(3)+1.0_WP
+         this%acc(1)=this%acc(1)+1.0_WP
       else if (Q(1).le.0.0_WP.or.Q(2).le.0.0_WP) then
-         this%acc(7)=this%acc(7)+1.0_WP
+         this%acc(5)=this%acc(5)+1.0_WP
          ! if (dbg_cell) print*,'i=',dbg_i,' j=',dbg_j,' EXIT stuck (acc7) VF=',VF,' Q=',Q,&
          ! &                    ' RHOL=',Q(1)/VF,' PL=',this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP]),&
          ! &                    ' TL=',this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP]) ! debug
          if (present(ierr)) ierr=ier
          return
       else
-         this%acc(4)=this%acc(4)+1.0_WP
+         this%acc(2)=this%acc(2)+1.0_WP
       end if
       ! The proposal may exit at the VF bounds; the solver's pure-cell snap owns those
       if (VF.lt.VFlo.or.VF.gt.VFhi) then
@@ -364,8 +332,8 @@ contains
          if (Q(1).gt.0.0_WP.and.liq%b*Q(1).ge.liq%brhomax*VF) floor_ok=.false.
       end select
       if (PL.lt.Ptar.and.floor_ok) then
-         this%acc(5)=this%acc(5)+1.0_WP
-         this%acc(6)=this%acc(6)+(VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])+(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)-Eold)*this%vol
+         this%acc(3)=this%acc(3)+1.0_WP
+         this%acc(4)=this%acc(4)+(VF*this%liq%get_rhoe_from_p_rho(p=Ptar,rho=Q(1)/VF,y=[1.0_WP])+(1.0_WP-VF)*this%gas%get_rhoe_from_p_rho(p=Ptar-Pjump,rho=Q(2)/(1.0_WP-VF),y=y)-Eold)*this%vol
          PL=Ptar
       end if
       ! Write the split

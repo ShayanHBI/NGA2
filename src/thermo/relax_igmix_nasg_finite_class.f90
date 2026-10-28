@@ -21,13 +21,6 @@ module relax_igmix_nasg_finite_class
       real(WP) :: RHOGmin=1.0e-2_WP   !< Skip mechanical relax when gas density falls below this
       real(WP) :: phist  =1.0_WP      !< Temporal weighting on equilibrium pressure
       real(WP) :: phi0   =0.0_WP      !< Temporal weighting on interface pressure
-      real(WP) :: rhoG_skip=0.0_WP    !< Skip all relaxation (p, T, chemical) where the gas density is below this (0: off)
-      real(WP) :: sliver_aG=0.0_WP    !< Gas sliver (1-VF below this) compressed by its liquid: isentropic gas compression only (0: off)
-      real(WP) :: dTtol_L=0.0_WP      !< Liquid dragged by the gas more than this relative T excursion: isentropic liquid to pressure equilibrium only (0: off)
-      real(WP) :: nsliver_L=0.0_WP    !< Cumulative count of liquid-sliver treatments (debug)
-      real(WP) :: nsliver_Lf=0.0_WP   !< Cumulative count of liquid slivers that fell through to pTg (debug)
-      real(WP) :: dYtol=0.0_WP        !< Skip the chemical step where it would move Yv by more than this times Ysat (0: off)
-      real(WP) :: nchem_skip=0.0_WP   !< Cumulative count of chemical steps skipped by dYtol (debug)
       !> Relaxation parameters
       real(WP) :: lambda=huge(1.0_WP) !< Mechanical rate [1/(Pa s)] (Pelanti mu); huge = instantaneous
       real(WP) :: theta =huge(1.0_WP) !< Thermal rate [W/(m^3 K)] (Pelanti vartheta); huge = instantaneous
@@ -42,10 +35,6 @@ module relax_igmix_nasg_finite_class
       procedure :: get_T_lvg
       procedure :: get_coeffs_lv
       procedure :: get_p_eq
-      procedure :: p_isentropic_gas
-      procedure :: p_isentropic_liq
-      procedure :: liq_dragged
-      procedure :: log_liq_sliver ! debug
    end type relax_igmix_nasg_finite
 
 contains
@@ -82,44 +71,11 @@ contains
       real(WP),                       intent(in)    :: Pjump
       integer,  optional,             intent(out)   :: ierr
       integer :: ier
-      logical :: done
       real(WP) :: VF0                   ! debug
       real(WP), dimension(size(Q)) :: Q0 ! debug
       ! Each step is posed on the previous step's equilibrium manifold: pT needs instantaneous p, pTg also instantaneous T
       if (this%model.ne.Prelax.and.this%lambda.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pT, pTg and pThybrid require lambda=huge')
       if (this%model.eq.PTgrelax.and.this%theta.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pTg requires theta=huge')
-      ! The treatments below return before the parent's apply: its fixed-VF energy split (and pT_exact)
-      ! would otherwise overwrite the phasic energies they set
-      ! Near-vacuum gas: no relaxation of any kind
-      if (Q(2).gt.0.0_WP.and.VF.lt.1.0_WP) then
-         if (Q(2)/(1.0_WP-VF).lt.this%rhoG_skip) then
-            if (dbg_cell) call this%debug_dump('SKIP apply (vacuum gas)',VF,Q,Pjump)
-            if (present(ierr)) ierr=RELAX_VACUUM_GAS
-            return
-         end if
-      end if
-      ! Gas sliver its liquid would compress: isentropic gas compression only, no thermal or chemical step
-      if (VF.lt.1.0_WP.and.1.0_WP-VF.lt.this%sliver_aG) then
-         call this%p_isentropic_gas(VF,Q,Pjump,done)
-         if (done) then
-            if (dbg_cell) call this%debug_dump('EXIT apply (isentropic sliver)',VF,Q,Pjump)
-            if (present(ierr)) ierr=RELAX_OK
-            return
-         end if
-      end if
-      ! Liquid sliver: isentropic liquid to pressure equilibrium only, so the gas cannot heat/cool it
-      if (this%dTtol_L.gt.0.0_WP.and.this%liq_dragged(VF,Q)) then
-         VF0=VF; Q0=Q ! debug
-         call this%p_isentropic_liq(VF,Q,Pjump,done)
-         if (done) then
-            this%nsliver_L=this%nsliver_L+1.0_WP
-            ! call this%log_liq_sliver(VF0,Q0,Pjump,VF,Q) ! debug
-            if (dbg_cell) call this%debug_dump('EXIT apply (isentropic liquid sliver)',VF,Q,Pjump)
-            if (present(ierr)) ierr=RELAX_OK
-            return
-         end if
-         if (Q(2).gt.0.0_WP) this%nsliver_Lf=this%nsliver_Lf+1.0_WP ! debug
-      end if
       if (this%model.ne.Prelax.or.this%lambda.ge.huge(1.0_WP)) then
          ! Parent's apply on this itself, so p_relax/get_p_eq still dispatch to this class
          VF0=VF; Q0=Q ! debug
@@ -138,13 +94,13 @@ contains
       end if
       if (dbg_cell) call this%debug_dump('ENTRY apply (finite Prelax)',VF,Q,Pjump)
       call this%p_relax(dt,VF,Q,Pjump,ier)
-      ! Ledger as the parent: 3 proposal succeeded, 7 non-positive phase mass, 4 proposal failed (cell left as is)
+      ! Ledger as the parent: 1 proposal succeeded, 5 non-positive phase mass, 2 proposal failed (cell left as is)
       if (ier.eq.RELAX_OK) then
-         this%acc(3)=this%acc(3)+1.0_WP
+         this%acc(1)=this%acc(1)+1.0_WP
       else if (Q(1).le.0.0_WP.or.Q(2).le.0.0_WP) then
-         this%acc(7)=this%acc(7)+1.0_WP
+         this%acc(5)=this%acc(5)+1.0_WP
       else
-         this%acc(4)=this%acc(4)+1.0_WP
+         this%acc(2)=this%acc(2)+1.0_WP
       end if
       if (dbg_cell) call this%debug_dump('EXIT apply (finite Prelax)',VF,Q,Pjump,ier)
       if (present(ierr)) ierr=ier
@@ -426,189 +382,6 @@ contains
       VF=VFeq
       if (present(ierr)) ierr=RELAX_OK
    end subroutine p_exact
-
-   !> Gas sliver compressed by its liquid: the gas follows its own isentrope (p*v^gammaG fixed, frozen
-   !> composition) to PL=PG+Pjump; the liquid gives up exactly the gas's work, so Q(3)+Q(4)+Pjump*VF is
-   !> kept and the dissipation heats the liquid. done=.false. (cell untouched) unless the gas is compressed.
-   subroutine p_isentropic_gas(this,VF,Q,Pjump,done)
-      implicit none
-      class(relax_igmix_nasg_finite), intent(inout) :: this
-      real(WP),                       intent(inout) :: VF
-      real(WP), dimension(:),         intent(inout) :: Q
-      real(WP),                       intent(in)    :: Pjump
-      logical,                        intent(out)   :: done
-      real(WP) :: Yv,cvG,cpG,qG,gammaG,bL,gL,pinfL,qL,PL,PG,x0,xlo,xhi,xm,Q3f,Q4f,PGf,PLf
-      real(WP) :: y(this%gas%ns)
-      integer  :: iVQ,it
-      done=.false.
-      if (any(Q(1:4).le.0.0_WP)) return
-      ! Frozen gas composition -> mixture-effective ideal-gas parameters
-      iVQ=7+this%liq%ns+this%indV-1
-      Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP))
-      y=0.0_WP; y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
-      cvG   =sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
-      cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
-      qG    =sum(y(1:this%gas%ns)*this%gas%q (1:this%gas%ns))
-      gammaG=cpG/cvG
-      bL=this%liq_nasg%b; gL=this%liq%gamma; pinfL=this%liq%pinf; qL=this%liq%q
-      PL=this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
-      PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
-      if (PG.le.0.0_WP.or.PL.le.-pinfL.or.VF-bL*Q(1).le.0.0_WP) return
-      ! Only where relaxation would compress the gas
-      if (PL-Pjump.le.PG) return
-      ! Final gas fraction x in (0,x0): residual PL(x)-Pjump-PG(x) is positive at x0 and -> -inf as x->0
-      x0=1.0_WP-VF
-      xhi=x0; xlo=1.0e-12_WP*x0
-      do it=1,200
-         xm=sqrt(xlo*xhi)
-         call state(xm)
-         if (PLf-Pjump-PGf.gt.0.0_WP) then; xhi=xm; else; xlo=xm; end if
-         if (xhi/xlo-1.0_WP.lt.1.0e-14_WP) exit
-      end do
-      call state(sqrt(xlo*xhi))
-      if (Q3f.le.0.0_WP.or.PLf.le.-pinfL) return
-      VF=1.0_WP-sqrt(xlo*xhi)
-      Q(3)=Q3f; Q(4)=Q4f
-      done=.true.
-   contains
-      !> Gas on its isentrope at gas fraction x; liquid takes the remaining energy
-      subroutine state(x)
-         real(WP), intent(in) :: x
-         PGf=PG*(x0/x)**gammaG
-         Q4f=x*PGf/(gammaG-1.0_WP)+Q(2)*qG
-         Q3f=Q(3)-(Q4f-Q(4))-Pjump*(x0-x)
-         PLf=(gL-1.0_WP)*(Q3f-Q(1)*qL)/(1.0_WP-x-bL*Q(1))-gL*pinfL
-      end subroutine state
-   end subroutine p_isentropic_gas
-
-   !> Pass A2 criterion of amrmpcomp (need_thermal_state): thermal equilibration drags the liquid by the gas
-   !> share of the heat capacity m*cv. True if that relative TL excursion exceeds dTtol_L (gas excursion not compared).
-   logical function liq_dragged(this,VF,Q) result(drag)
-      implicit none
-      class(relax_igmix_nasg_finite), intent(inout) :: this
-      real(WP),                       intent(in)    :: VF
-      real(WP), dimension(:),         intent(in)    :: Q
-      real(WP) :: rhoL,eL,rhoG,eG,Yv,TL,TG,Cliq,Cgas,capfrac_gas,dTL_rel
-      integer  :: iVQ
-      drag=.false.
-      if (VF.le.0.0_WP.or.VF.ge.1.0_WP.or.Q(1).le.0.0_WP.or.Q(2).le.0.0_WP) return
-      iVQ=7+this%liq%ns+this%indV-1
-      Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP))
-      rhoL=Q(1)/VF; eL=Q(3)/Q(1)
-      rhoG=Q(2)/(1.0_WP-VF); eG=Q(4)/Q(2)
-      TL=this%liq%get_T_from_rho_e(rhoL,eL,[1.0_WP])
-      TG=this%gas%get_T_from_rho_e(rhoG,eG,[Yv,1.0_WP-Yv])
-      if (TL.le.0.0_WP.or.TG.le.0.0_WP) return
-      Cliq=Q(1)*this%liq%get_cv_from_rho_e(rhoL,eL,[1.0_WP])
-      Cgas=Q(2)*this%gas%get_cv_from_rho_e(rhoG,eG,[Yv,1.0_WP-Yv])
-      if (Cliq.le.0.0_WP.or.Cgas.le.0.0_WP) return
-      capfrac_gas=Cgas/(Cliq+Cgas)
-      dTL_rel=capfrac_gas*abs(TG-TL)/TL
-      drag=(dTL_rel.gt.this%dTtol_L)
-   end function liq_dragged
-
-   !> Liquid sliver: the liquid follows its own isentrope ((p+pinf)*(v-b)^gammaL fixed) to PL=PG+Pjump, in
-   !> either direction; the gas takes the liquid's work, so Q(3)+Q(4)+Pjump*VF is kept and the dissipation heats
-   !> the gas. done=.false. (cell untouched) if the state is invalid.
-   subroutine p_isentropic_liq(this,VF,Q,Pjump,done)
-      implicit none
-      class(relax_igmix_nasg_finite), intent(inout) :: this
-      real(WP),                       intent(inout) :: VF
-      real(WP), dimension(:),         intent(inout) :: Q
-      real(WP),                       intent(in)    :: Pjump
-      logical,                        intent(out)   :: done
-      real(WP) :: Yv,cvG,cpG,qG,gammaG,bL,gL,pinfL,qL,PL,PG,y0,z0,lo,hi,m,yf,Q3f,Q4f,PGf,PLf,res0
-      real(WP) :: y(this%gas%ns)
-      integer  :: iVQ,it
-      done=.false.
-      if (any(Q(1:4).le.0.0_WP)) return
-      ! Frozen gas composition -> mixture-effective ideal-gas parameters
-      iVQ=7+this%liq%ns+this%indV-1
-      Yv=max(0.0_WP,min(Q(iVQ)/Q(2),1.0_WP))
-      y=0.0_WP; y(this%indV)=Yv; y(this%indA)=1.0_WP-Yv
-      cvG   =sum(y(1:this%gas%ns)*this%gas%cv(1:this%gas%ns))
-      cpG   =sum(y(1:this%gas%ns)*this%gas%cp(1:this%gas%ns))
-      qG    =sum(y(1:this%gas%ns)*this%gas%q (1:this%gas%ns))
-      gammaG=cpG/cvG
-      bL=this%liq_nasg%b; gL=this%liq%gamma; pinfL=this%liq%pinf; qL=this%liq%q
-      PL=this%liq%get_p_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
-      PG=this%gas%get_p_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=y)
-      if (PG.le.0.0_WP.or.PL.le.-pinfL.or.VF-bL*Q(1).le.0.0_WP) return
-      if (Pjump+pinfL.le.0.0_WP) return
-      y0=VF; z0=VF-bL*Q(1)
-      res0=PL-Pjump-PG
-      ! Bisection on log z, z=yf-bL*Q(1); residual PLf-Pjump-PGf is >0 at lo and <0 at hi
-      if (res0.gt.0.0_WP) then
-         ! Liquid expands: up to where PLf=Pjump (residual=-PGf<0 there), PLf>=Pjump so the gas only gains energy
-         lo=z0; hi=min(z0*((PL+pinfL)/(Pjump+pinfL))**(1.0_WP/gL),1.0_WP-bL*Q(1)-1.0e-12_WP)
-      else if (res0.lt.0.0_WP) then
-         ! Liquid compressed: residual -> +inf as z->0
-         lo=1.0e-12_WP*z0; hi=z0
-      else
-         lo=z0; hi=z0
-      end if
-      do it=1,200
-         if (hi/lo-1.0_WP.lt.1.0e-14_WP) exit
-         m=sqrt(lo*hi)
-         call state(bL*Q(1)+m)
-         if (PLf-Pjump-PGf.gt.0.0_WP) then; lo=m; else; hi=m; end if
-      end do
-      call state(bL*Q(1)+sqrt(lo*hi))
-      if (Q3f.le.0.0_WP.or.Q4f.le.0.0_WP.or.PGf.le.0.0_WP.or.PLf.le.-pinfL) return
-      VF=yf
-      Q(3)=Q3f; Q(4)=Q4f
-      done=.true.
-   contains
-      !> Liquid on its isentrope at liquid fraction yy; gas takes the remaining energy
-      subroutine state(yy)
-         real(WP), intent(in) :: yy
-         yf=yy
-         PLf=(PL+pinfL)*(z0/(yy-bL*Q(1)))**gL-pinfL
-         Q3f=(yy-bL*Q(1))*(PLf+gL*pinfL)/(gL-1.0_WP)+Q(1)*qL
-         Q4f=Q(4)-(Q3f-Q(3))-Pjump*(yy-y0)
-         PGf=(gammaG-1.0_WP)*(Q4f-Q(2)*qG)/(1.0_WP-yy)
-      end subroutine state
-   end subroutine p_isentropic_liq
-
-   !> debug: one CSV row per liquid-sliver firing, with the counterfactual TL that pT_exact would have
-   !> given on the same pre-relax state (liqsliver_r<rank>.csv)
-   subroutine log_liq_sliver(this,VF0,Q0,Pjump,VF,Q)
-      use parallel, only: rank
-      implicit none
-      class(relax_igmix_nasg_finite), intent(inout) :: this
-      real(WP),                       intent(in)    :: VF0,Pjump,VF
-      real(WP), dimension(:),         intent(in)    :: Q0,Q
-      real(WP), dimension(size(Q0)) :: Qc
-      real(WP) :: VFc,Yv,TL0,TG0,PL0,PG0,TLr,TGr,TLc,TGc
-      integer :: ierc,iVQ
-      integer, save :: iunit
-      logical, save :: opened=.false.
-      character(len=32) :: fname
-      if (.not.opened) then
-         opened=.true.
-         write(fname,'("liqsliver_r",i0,".csv")') rank
-         open(newunit=iunit,file=trim(fname),status='replace',action='write')
-         write(iunit,'(a)') 'VF0,Q1,Q2,PL0,PG0,TL0,TG0,VFr,TLr,TGr,VFc,TLc,TGc,ierc'
-      end if
-      iVQ=7+this%liq%ns+this%indV-1
-      Yv=max(0.0_WP,min(Q0(iVQ)/Q0(2),1.0_WP))
-      PL0=this%liq%get_p_from_rho_e(rho=Q0(1)/VF0,e=Q0(3)/Q0(1),y=[1.0_WP])
-      PG0=this%gas%get_p_from_rho_e(rho=Q0(2)/(1.0_WP-VF0),e=Q0(4)/Q0(2),y=[Yv,1.0_WP-Yv])
-      TL0=this%liq%get_T_from_rho_e(rho=Q0(1)/VF0,e=Q0(3)/Q0(1),y=[1.0_WP])
-      TG0=this%gas%get_T_from_rho_e(rho=Q0(2)/(1.0_WP-VF0),e=Q0(4)/Q0(2),y=[Yv,1.0_WP-Yv])
-      TLr=this%liq%get_T_from_rho_e(rho=Q(1)/VF,e=Q(3)/Q(1),y=[1.0_WP])
-      TGr=this%gas%get_T_from_rho_e(rho=Q(2)/(1.0_WP-VF),e=Q(4)/Q(2),y=[Yv,1.0_WP-Yv])
-      ! Counterfactual: instantaneous pT equilibrium on the pre-relax state
-      VFc=VF0; Qc=Q0
-      call pT_exact(this,VFc,Qc,Pjump,ierc)
-      TLc=-1.0_WP; TGc=-1.0_WP
-      if (ierc.eq.RELAX_OK) then
-         TLc=this%liq%get_T_from_rho_e(rho=Qc(1)/VFc,e=Qc(3)/Qc(1),y=[1.0_WP])
-         TGc=this%gas%get_T_from_rho_e(rho=Qc(2)/(1.0_WP-VFc),e=Qc(4)/Qc(2),y=[Yv,1.0_WP-Yv])
-      end if
-      write(iunit,'(13(es16.8,","),i0)') VF0,Q0(1),Q0(2),PL0,PG0,TL0,TG0,VF,TLr,TGr,VFc,TLc,TGc,ierc
-      flush(iunit)
-   end subroutine log_liq_sliver
 
    !> Instantaneous thermal relaxation on a pressure-relaxed state: matm-style quadratic of relax_igmix_nasg%pT_relax
    !> (PL=Peq, PG=Peq-Pjump, TL=TG), with surface energy conserved: the energy target is E'=Eth+Pjump*(VF-b*Q(1))
@@ -1101,42 +874,6 @@ contains
          if (dm.eq.0.0_WP) then
             done=.true.
             return
-         end if
-         ! Pass A3 composition criterion of amrmpcomp (need_chem_state): a transfer that would move Yv by more
-         ! than dYtol*Ysat in one call (little gas in the cell) is skipped; nucleation seeds always transfer.
-         ! Yardstick min(Ysat,max(Yv,Yv_ref,dYtol*Ysat)) with Yv_ref the neighbours' Yv; the floor keeps
-         ! round-off Yv (~1e-10) from collapsing it, and reduces to a dYtol^2*Ysat test in dry gas
-         if (this%dYtol.gt.0.0_WP.and..not.nucleated.and.Ysat.gt.0.0_WP) then
-            skip_chem: block
-               real(WP) :: dmc,Yva,Yvb,Yscale
-               dmc=max(-Q(1),min(dm,Q(iVQ)))
-               Yva=Q(iVQ)/Q(2)
-               Yvb=(Q(iVQ)-dmc)/(Q(2)-dmc)
-               Yscale=min(Ysat,max(Yva,this%Yv_ref,this%dYtol*Ysat))
-               if (dbg_cell) print*,'rule 5: Yv before=',Yva,' after=',Yvb,' Ysat=',Ysat,' Yv_ref=',this%Yv_ref,' |dYv|/Yscale=',abs(Yvb-Yva)/Yscale ! debug
-               if (abs(Yvb-Yva)/Yscale.gt.this%dYtol) then
-                  this%nchem_skip=this%nchem_skip+1.0_WP ! debug
-                  skiplog: block ! debug: one row per skipped chemical step, per-rank file
-                     use parallel, only: rank
-                     logical, parameter :: skiplog_on=.false.
-                     integer, save :: sunit
-                     logical, save :: sopen=.false.
-                     character(len=32) :: sname
-                     if (.not.skiplog_on) exit skiplog
-                     if (.not.sopen) then
-                        sopen=.true.
-                        write(sname,'("chemskip_r",i0,".csv")') rank
-                        open(newunit=sunit,file=trim(sname),status='replace',action='write')
-                        write(sunit,'(a)') 'gasfrac,Q2,dm,Yva,Yvb,Yv_ref,Ysat'
-                     end if
-                     write(sunit,'(6(es14.6,","),es14.6)') 1.0_WP-VF,Q(2),dmc,Yva,Yvb,this%Yv_ref,Ysat
-                     flush(sunit)
-                  end block skiplog
-                  if (dbg_cell) print*,'chemical step skipped: |dYv|/Ysat=',abs(Yvb-Yva)/Ysat ! debug
-                  done=.true.
-                  return
-               end if
-            end block skip_chem
          end if
          ! A phase that runs out (mass or volume) transfers completely; no eq. 83 clamp
          ! Liquid that no longer fits its new volume (b*rhoL at the packing knee) has run out too

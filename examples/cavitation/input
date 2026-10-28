@@ -28,16 +28,9 @@ Max VF change factor               : 10
 Initial vapor mass fraction        : 0
 Surface tension                    : 0
 
-# Relaxation clustering
-Mechanical clustering : .true.
-Thermal clustering    : .true.
-Dissolve stranded gas : .true.
+# Wall liquid fold
 Wall liquid fold      : .true.
 Wall liquid band      : 15
-
-# Diagnostics
-Relax diagnostic : .false.
-Diag stride      : 1000000
 
 # Fluid properties
 Liquid viscosity      : 9e-4

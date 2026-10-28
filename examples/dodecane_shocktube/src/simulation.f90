@@ -44,9 +44,7 @@ module simulation
    !> Simulation monitoring
    type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
-   real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
-   real(WP) :: sliverL_n=0.0_WP,sliverLf_n=0.0_WP,chemskip_n=0.0_WP
 
    !> Materials
    type(nasg),  target :: liquid
@@ -432,13 +430,6 @@ contains
          write(message,'("[Saturation] psat(TL0)=",es12.5," Tsat(pV0)=",es12.5," p_cav=",es12.5)') psat0,Tsat0,relax_model%p_cav
          call log(message)
          relax_model%RHOGmin=0.0_WP
-         call param_read('Relax skip gas density',relax_model%rhoG_skip,default=0.0_WP)
-         call param_read('Relax sliver gas fraction',relax_model%sliver_aG,default=0.0_WP)
-         call param_read('Relax liquid thermal tolerance',relax_model%dTtol_L,default=0.0_WP)
-         call param_read('Relax vapor fraction tolerance',relax_model%dYtol,default=0.0_WP)
-         ! Pass A0: a sliver whose gas, and a neighbour whose gas, sit below this fraction of the sliver's PL are mixed isentropically (0: off)
-         call param_read('Relax vacuum pressure ratio',fs%vacmix_pratio,default=0.0_WP)
-         fs%vacmix_aG=relax_model%sliver_aG
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
          ! Floors in SI
@@ -450,14 +441,7 @@ contains
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
          ! Set relaxation model for the flow solver
          fs%relax=>relax_model
-         fs%cluster_on=.false.
-         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.false.) ! Pass A1
-         call param_read('Thermal clustering',fs%cluster_therm_on,default=.false.)   ! Pass A2
-         call param_read('Chemical clustering',fs%cluster_chem_on,default=.false.)  ! Pass A3
-         call param_read('Dissolve stranded gas',fs%dissolve_on,default=.false.)
-         fs%relax_diag_on=.false.
-         call param_read('Diag stride',fs%relax_diag_stride,default=20)
-         ! debug trace box: inclusive index range the relax/cluster prints trace (empty by default)
+         ! debug trace box: inclusive index range the relax prints trace (empty by default)
          call param_read('Debug ilo',dbg_ilo,default=100000000)
          call param_read('Debug ihi',dbg_ihi,default=-100000000)
          call param_read('Debug jlo',dbg_jlo,default=100000000)
@@ -621,17 +605,11 @@ contains
          call rescfile%add_column(fs%resc_ng,'GasResc n')
          call rescfile%add_column(fs%resc_mg,'GasResc dm')
          call rescfile%add_column(fs%resc_eg,'GasResc dE')
-         call rescfile%add_column(diss_n,'Diss n')
-         call rescfile%add_column(diss_m,'Diss dm')
          call rescfile%add_column(quad_n,'Quad n')
          call rescfile%add_column(swap_n,'Swap n')
          call rescfile%add_column(flr_n,'Floor n')
          call rescfile%add_column(flr_e,'Floor dE')
          call rescfile%add_column(stuck_n,'Stuck n')
-         call rescfile%add_column(fs%vacpair_n,'A0 pairs')
-         call rescfile%add_column(sliverL_n,'L sliver n')
-         call rescfile%add_column(sliverLf_n,'L sliver fail')
-         call rescfile%add_column(chemskip_n,'Chem skip n')
          call rescfile%write()
       end block create_monitors
 
@@ -723,18 +701,11 @@ contains
          relax_census: block
             use mpi_f08,  only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
             use parallel, only: MPI_REAL_WP
-            real(WP), dimension(7) :: tmp
+            real(WP), dimension(5) :: tmp
             integer :: ierr
             tmp=relax_model%acc
-            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
-            flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
-            sliverL_n=relax_model%nsliver_L
-            call MPI_ALLREDUCE(MPI_IN_PLACE,sliverL_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            sliverLf_n=relax_model%nsliver_Lf
-            call MPI_ALLREDUCE(MPI_IN_PLACE,sliverLf_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            chemskip_n=relax_model%nchem_skip
-            call MPI_ALLREDUCE(MPI_IN_PLACE,chemskip_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,5,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            quad_n=tmp(1); swap_n=tmp(2); flr_n=tmp(3); flr_e=tmp(4); stuck_n=tmp(5)
          end block relax_census
          call mfile%write()
          call consfile%write()

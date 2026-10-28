@@ -87,7 +87,7 @@ Each example provides two modules in its `src/` directory:
 ### Abstract Bases (`src/libraries/`)
 
 - **`material`** (`material_class.f90`): fields `name`, `ns` (=1 for pure substances), `species_names(:)`. Every method takes a trailing composition `y(:)` (ignored by pure substances). Methods follow `p, rho, T` argument precedence: `get_p/T/c/cv/gruneisen_from_rho_e(rho,e,y)`, `get_T/c/e/rhoe_from_p_rho(p,rho,y)`, `get_e/rho/h/s/g/rhoe_from_p_T(p,T,y)`, `get_hk_from_p_T(p,T,y,hk)` (subroutine), `get_p_from_rho_T`, `get_cv_from_rho_T`. Prefer `*_from_rho_e` in hot loops.
-- **`thermorelax`** (`thermorelax_class.f90`): fields `Yv_ref`, `Jr` (set by caller before `apply`); deferred `apply(dt,VF,Q,Pjump,ierr)`; default no-op `get_chem_transfer(...)`. Exports error codes `RELAX_OK=0` … `RELAX_VACUUM_VAPOR=8`.
+- **`thermorelax`** (`thermorelax_class.f90`): no fields; deferred `apply(dt,VF,Q,Pjump,ierr)`; default no-op `get_chem_transfer(...)`. Exports error codes `RELAX_OK=0` … `RELAX_VACUUM_VAPOR=8`.
 
 ### EOS Classes
 
@@ -119,7 +119,7 @@ All store EOS objects as `liq`/`gas` pointers (pass `target` objects) and share 
 | `relax_ig_nasg` | `thermorelax` | `(gas,liq)` | IG/NASG; adds `PThybrid=3` |
 | `relax_igmix_sg` | `thermorelax` | `(liq,gas,indV,indA)` | SG/NASG liquid + igmix gas; `model` = `Prelax=1`, `PTrelax=2`, `PTgrelax=3`, `PThybrid=4` |
 | `relax_igmix_nasg` | `relax_igmix_sg` | same | Pelanti 2022 instantaneous relaxation |
-| `relax_igmix_nasg_finite` | `relax_igmix_sg` | same | Pelanti 2022 finite-rate (Sec. 7.2.3, eqs. 51, 71–83); rates `lambda`, `theta`, `nu` (default `huge` = instantaneous), `nu_scale` |
+| `relax_igmix_nasg_finite` | `relax_igmix_sg` | same | Pelanti 2022 finite-rate (Sec. 7.2.3, eqs. 51, 71–83); rates `lambda`, `theta`, `nu` (default `huge` = instantaneous) |
 | `relax_igmix_max_ent` | `thermorelax` | `(liq,gas,indV,indA)` | Constrained entropy maximization, sequential M→T→C |
 | `relax_numerical` | `thermorelax` | `(liq,gas)` | Mechanical-only Newton, any `material` |
 
@@ -160,7 +160,7 @@ For a pure liquid and vapor+air gas (vapor=1, air=2): nQ=8, Q(8) = `(1−VF)·ρ
 
 ## Reference Case: `examples/amrcomp_impact/`
 
-Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_nasg_finite` relaxation. `Relaxation type` (p, pT, pThybrid, pTg) selects `relax_model%model`; finite rates are read from `Mechanical/Thermal/Chemical relaxation rate`. Only `src/simulation.f90` is in its `Make.package`.
+Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_nasg` relaxation applied through `fs%apply_relax_splitremix` (the `relax_igmix_nasg_finite` lines are kept commented out in `simulation.f90`). `Relaxation type` (p, pT, pThybrid, pTg) selects `relax_model%model`; `Merge Q` switches `merge_Q`. Only `src/simulation.f90` is in its `Make.package`.
 
 ---
 
@@ -169,7 +169,6 @@ Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_n
 | Directory | Build | Tests |
 |---|---|---|
 | `examples/eos_relax/` | `make` (targets `run`, `verify`, `residuals`, `bench`, `compare`, `finite`, …) | single-cell relaxation, max-ent verification, equilibrium residuals, finite-rate tests, `test_pelanti_ref` (literal Pelanti transcription) |
-| `examples/amrcomp_impact/framework_checks/` | manual `gfortran`, see `clustering_framework.md` §6 | clustering starvation criteria |
 | `examples/amrcomp_venturi/eos_check/` | `make -f Makefile.test_eos run` | NASG water/vapor/air vs Liu et al. 2026 Table 4 |
 
 These link `src/libraries/{precision,material_class,thermorelax_class}.f90` and `src/thermo/*.f90` with local stubs (`messager_stub.f90`). Many of these files are untracked; check `git status` before assuming they exist.

@@ -28,7 +28,7 @@ module simulation
    type(amrdata) :: dQdt,Umag,Mach
    
    !> Visualization
-   type(event) :: viz_evt
+   type(event)  :: viz_evt
    type(amrviz) :: viz
 
    ! Regrid parameters
@@ -38,16 +38,14 @@ module simulation
    type(amrio) :: io
    type(event) :: save_evt
    character(len=str_medium) :: restart_dir
-   logical :: restarted
+   logical  :: restarted
    real(WP) :: restart_time
    integer  :: restart_step
    
    !> Simulation monitoring
    type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
-   real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
-   real(WP) :: sliverL_n=0.0_WP,sliverLf_n=0.0_WP,chemskip_n=0.0_WP ! debug
    
    !> Materials
    type(nasg),  target :: water
@@ -57,7 +55,7 @@ module simulation
    ! type(relax_igmix_nasg_finite), target :: relax_model
    type(relax_igmix_nasg), target :: relax_model
    character(len=str_medium) :: relaxation_type,case_name
-   integer :: nsteps_diag                            !< diag run: bounded number of steps (-1 = unlimited)
+   integer  :: nsteps_diag                            !< diag run: bounded number of steps (-1 = unlimited)
    real(WP) :: p_cav_cof
 
    !> Flow parameters
@@ -201,7 +199,7 @@ contains
       integer :: lvl,it,di,dj,i,j
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pStr,pCid,pU,pV,pW
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCurv,pU,pV,pW
       real(WP) :: VFc,RHOL,RHOG,PL,PG,TL,TG,eL,eG,Yv,divU
       integer, save :: iunit
       logical, save :: opened=.false.
@@ -220,7 +218,6 @@ contains
       call amr%mfiter_build(lvl,mfi)
       do while (mfi%next())
          pVF=>fs%VF%mf(lvl)%dataptr(mfi); pQ=>fs%Q%mf(lvl)%dataptr(mfi); pCurv=>fs%curv%dataptr(mfi)
-         pStr=>fs%stranded%mf(lvl)%dataptr(mfi); pCid=>fs%cluster_idx%mf(lvl)%dataptr(mfi)
          pU=>fs%U%mf(lvl)%dataptr(mfi); pV=>fs%V%mf(lvl)%dataptr(mfi); pW=>fs%W%mf(lvl)%dataptr(mfi)
          bx=mfi%tilebox()
          if (bx%lo(3).gt.0.or.bx%hi(3).lt.0) cycle
@@ -241,9 +238,9 @@ contains
                TG=fs%gas%get_T_from_rho_e(rho=RHOG,e=eG,y=[Yv,1.0_WP-Yv])
             end if
             divU=(pU(i+1,j,0,1)-pU(i,j,0,1))/amr%dx(lvl)+(pV(i,j+1,0,1)-pV(i,j,0,1))/amr%dy(lvl)+(pW(i,j,1,1)-pW(i,j,0,1))/amr%dz(lvl)
-            write(iunit,'("PROBE,",a,",",i0,",",es16.8,5(",",i0),25(",",es16.8))') trim(label),time%n,time%t,it,di,dj,i,j, &
+            write(iunit,'("PROBE,",a,",",i0,",",es16.8,5(",",i0),23(",",es16.8))') trim(label),time%n,time%t,it,di,dj,i,j, &
             &  VFc,pQ(i,j,0,1),pQ(i,j,0,2),pQ(i,j,0,3),pQ(i,j,0,4),pQ(i,j,0,8),RHOL,eL,PL,TL,RHOG,eG,PG,TG,Yv, &
-            &  pStr(i,j,0,1),pCid(i,j,0,1),pCurv(i,j,0,1),pQ(i,j,0,5)/(pQ(i,j,0,1)+pQ(i,j,0,2)),pQ(i,j,0,6)/(pQ(i,j,0,1)+pQ(i,j,0,2)), &
+            &  pCurv(i,j,0,1),pQ(i,j,0,5)/(pQ(i,j,0,1)+pQ(i,j,0,2)),pQ(i,j,0,6)/(pQ(i,j,0,1)+pQ(i,j,0,2)), &
             &  pU(i,j,0,1),pU(i+1,j,0,1),divU,pV(i,j,0,1),pV(i,j+1,0,1) ! debug: y-face velocities
          end do; end do
       end do
@@ -691,21 +688,9 @@ contains
          ! write(message,'("[Relaxation rates] lambda=",es12.5," theta=",es12.5," nu=",es12.5)') relax_model%lambda,relax_model%theta,relax_model%nu
          ! call log(message)
          relax_model%RHOGmin=0.0_WP
-         ! call param_read('Relax skip gas density',relax_model%rhoG_skip,default=0.0_WP)
-         ! call param_read('Relax sliver gas fraction',relax_model%sliver_aG,default=0.0_WP)
-         ! call param_read('Relax liquid thermal tolerance',relax_model%dTtol_L,default=0.0_WP)
-         ! call param_read('Relax vapor fraction tolerance',relax_model%dYtol,default=0.0_WP)
-         ! Pass A0: a sliver whose gas, and a neighbour whose gas, sit below this fraction of the sliver's PL are mixed isentropically (0: off)
-         call param_read('Relax vacuum pressure ratio',fs%vacmix_pratio,default=0.0_WP)
-         ! fs%vacmix_aG=relax_model%sliver_aG
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
-         call param_read('Merge Q',fs%merge_on,default=.true.)
-         ! Split-remix: gas sliver whose gas sits below this fraction of its liquid's pressure is not relaxed (0: off)
-         call param_read('Relax sliver skip ratio',fs%sskip_r,default=0.0_WP)
-         call param_read('Relax sliver gas fraction',fs%sskip_aG,default=0.01_WP)
-         ! relax_model%diss_P=200.0_WP
-         ! relax_model%diss_RHO=200.0_WP
+         call param_read('VF relaxation band',fs%VFrb,default=0.0_WP)
          ! relax_model%Tratmax=5.0_WP
          fs%Pmin_liq=-0.98_WP*water%pinf
          fs%Tmin_liq=0.1_WP
@@ -715,14 +700,7 @@ contains
          relax_model%Pmin_gas=fs%Pmin_gas; relax_model%Tmin_gas=fs%Tmin_gas
          ! Set relaxation model for the flow solver
          fs%relax=>relax_model
-         fs%cluster_on=.false.         ! diag run: clustering ON (set .false. to relax every cell alone)
-         call param_read('Mechanical clustering',fs%cluster_mech_on,default=.true.) ! Pass A1
-         call param_read('Thermal clustering',fs%cluster_therm_on,default=.true.)   ! Pass A2
-         call param_read('Chemical clustering',fs%cluster_chem_on,default=.false.)  ! Pass A3
-         call param_read('Dissolve stranded gas',fs%dissolve_on,default=.true.)
-         fs%relax_diag_on=.true.      ! diag run: write solo-vs-clustered CSV
-         call param_read('Diag stride',fs%relax_diag_stride,default=20)
-         ! debug trace box: inclusive index range the relax/cluster prints trace (empty by default)
+         ! debug trace box: inclusive index range the relax prints trace (empty by default)
          call param_read('Debug ilo',dbg_ilo,default=100000000)
          call param_read('Debug ihi',dbg_ihi,default=-100000000)
          call param_read('Debug jlo',dbg_jlo,default=100000000)
@@ -846,8 +824,6 @@ contains
          call viz%add_scalar(Umag,1,'Umag')
          call viz%add_scalar(Mach,1,'Mach')
          call viz%add_scalar(fs%Yg,1,'Yv')
-         call viz%add_scalar(fs%cluster_idx,1,'cluster_idx')
-         call viz%add_scalar(fs%stranded,1,'stranded')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -961,22 +937,12 @@ contains
          call rescfile%add_column(fs%resc_ng,'GasResc n')
          call rescfile%add_column(fs%resc_mg,'GasResc dm')
          call rescfile%add_column(fs%resc_eg,'GasResc dE')
-         call rescfile%add_column(diss_n,'Diss n')
-         call rescfile%add_column(diss_m,'Diss dm')
          call rescfile%add_column(quad_n,'Quad n')
          call rescfile%add_column(swap_n,'Swap n')
          call rescfile%add_column(flr_n,'Floor n')
          call rescfile%add_column(flr_e,'Floor dE')
          call rescfile%add_column(stuck_n,'Stuck n')
          call rescfile%add_column(fs%pool_n,'Pool n')
-         call rescfile%add_column(fs%sskip_n,'SSkip n')
-         call rescfile%add_column(fs%strand_n,'Strand n')
-         call rescfile%add_column(fs%vacsl_n,'A0 slivers')
-         call rescfile%add_column(fs%vaccand_n,'A0 cand')
-         call rescfile%add_column(fs%vacpair_n,'A0 pairs')
-         call rescfile%add_column(sliverL_n,'L sliver n') ! debug
-         call rescfile%add_column(sliverLf_n,'L sliver fail') ! debug
-         call rescfile%add_column(chemskip_n,'Chem skip n') ! debug
          call rescfile%write()
       end block create_monitors
 
@@ -998,7 +964,7 @@ contains
             call time%adjust_dt()
          end if
          call time%increment()
-         fs%relax_diag_step=time%n   ! diag: drives relax_diag_stride
+         fs%relax_diag_step=time%n   ! debug: step label for the solver's debug prints
 
          ! Remember old state
          call fs%store_old()
@@ -1118,18 +1084,11 @@ contains
          relax_census: block
             use mpi_f08,  only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
             use parallel, only: MPI_REAL_WP
-            real(WP), dimension(7) :: tmp
+            real(WP), dimension(5) :: tmp
             integer :: ierr
             tmp=relax_model%acc
-            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
-            flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
-            ! sliverL_n=relax_model%nsliver_L ! debug
-            ! call MPI_ALLREDUCE(MPI_IN_PLACE,sliverL_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr) ! debug
-            ! sliverLf_n=relax_model%nsliver_Lf ! debug
-            ! call MPI_ALLREDUCE(MPI_IN_PLACE,sliverLf_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr) ! debug
-            ! chemskip_n=relax_model%nchem_skip ! debug
-            ! call MPI_ALLREDUCE(MPI_IN_PLACE,chemskip_n,1,MPI_REAL_WP,MPI_SUM,amr%comm,ierr) ! debug
+            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,5,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            quad_n=tmp(1); swap_n=tmp(2); flr_n=tmp(3); flr_e=tmp(4); stuck_n=tmp(5)
          end block relax_census
          call mfile%write()
          call consfile%write()

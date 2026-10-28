@@ -17,29 +17,14 @@ Shock location : 9.4
 Domain length  : 20
 Wall BC        : slip
 
-# Relaxation (p, pT, pThybrid, pTg)
+# Relaxation
 Relaxation type                           : pTg
+VF relaxation band                        : 0
 Cavitation pressure threshold coefficient : 0.8
 Condensation temperature tolerance        : 0.1
-# Finite relaxation rates (Pelanti 2022); omit a line for instantaneous
-# Mechanical relaxation rate              : 1.0
-# Thermal relaxation rate                 : 1.0
+! Mechanical relaxation rate              : 1.0
+! Thermal relaxation rate                 : 1.0
 Chemical relaxation rate                : 0.001
-# Skip all relaxation below this gas density; isentropic gas-only compression for slivers with 1-VF below this (0: off)
-Relax skip gas density    : 0.01
-Relax liquid thermal tolerance : 0.01
-Relax sliver gas fraction : 0.01
-# Skip the chemical step where it would move Yv by more than this fraction of max(Yv, neighbours' Yv) (0: off)
-Relax vapor fraction tolerance : 0.1
-# Sliver whose gas, and a neighbour whose gas, sit below this fraction of the sliver's liquid pressure: isentropic two-cell mix (0: off)
-# Also pairs a liquid-full cell whose liquid sits below this fraction of a gas-bearing neighbour's gas pressure
-Relax vacuum pressure ratio : 0.8
-# Small-cell merge (merge_Q) ahead of relaxation
-Merge Q : .true.
-# Split-remix: gas sliver (gas fraction below Relax sliver gas fraction) whose gas sits below this fraction of PL-Pjump is not relaxed (0: off)
-Relax sliver skip ratio : 0.2
-
-Initial vapor mass fraction: 0
 
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####
@@ -94,25 +79,18 @@ Sutherland temperature : 0.073
 #Sutherland temperature: 0.2925
 ###########################################
 
+Initial vapor mass fraction: 0
+
 # Time integration
 Max dt     : 1e-3
 Initial dt : 1e-3
 Max CFL    : 0.75
-Max time   : 11
+Max time   : 12
 
 # Output
 Output period     : 0.1
-Checkpoint period : 0.1
-Restart from      : 1.00000E+01
-
-# Relaxation clustering
-Mechanical clustering : .false.
-Thermal clustering    : .false.
-Chemical clustering   : .false.
-Dissolve stranded gas : .false.
-
-# Diagnostics
-Diag stride : 100000
+Checkpoint period : 1
+Restart from      : 
 
 # Debug trace box
 Debug ilo : !59

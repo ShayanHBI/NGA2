@@ -55,7 +55,6 @@ module simulation
    !> Simulation monitoring
    type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
-   real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
 
    !> Materials
@@ -585,7 +584,6 @@ contains
          relax_model%RHOGmin=0.0_WP
          relax_model%vol=amr%cell_vol(amr%maxlvl)
          fs%merge_sick=100.0_WP
-         relax_model%diss_P=1.0e30_WP
          fs%Pmin_liq=-0.98_WP*water%pinf
          fs%Tmin_liq=250.0_WP
          fs%Pmin_gas=1.0e-4_WP
@@ -836,8 +834,6 @@ contains
          call rescfile%add_column(fs%resc_ng,'GasResc n')
          call rescfile%add_column(fs%resc_mg,'GasResc dm')
          call rescfile%add_column(fs%resc_eg,'GasResc dE')
-         call rescfile%add_column(diss_n,'Diss n')
-         call rescfile%add_column(diss_m,'Diss dm')
          call rescfile%add_column(quad_n,'Quad n')
          call rescfile%add_column(swap_n,'Swap n')
          call rescfile%add_column(flr_n,'Floor n')
@@ -1000,12 +996,11 @@ contains
          relax_census: block
             use mpi_f08,  only: MPI_ALLREDUCE,MPI_IN_PLACE,MPI_SUM
             use parallel, only: MPI_REAL_WP
-            real(WP), dimension(7) :: tmp
+            real(WP), dimension(5) :: tmp
             integer :: ierr
             tmp=relax_model%acc
-            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,7,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
-            diss_n=tmp(1); diss_m=tmp(2); quad_n=tmp(3); swap_n=tmp(4)
-            flr_n=tmp(5); flr_e=tmp(6); stuck_n=tmp(7)
+            call MPI_ALLREDUCE(MPI_IN_PLACE,tmp,5,MPI_REAL_WP,MPI_SUM,amr%comm,ierr)
+            quad_n=tmp(1); swap_n=tmp(2); flr_n=tmp(3); flr_e=tmp(4); stuck_n=tmp(5)
          end block relax_census
          call get_mdot(mdot_throat)
          call mfile%write()
