@@ -76,6 +76,8 @@ module relax_igmix_sg_class
       real(WP) :: RHOGmin=1.0e-2_WP   !< Skip mechanical relax when gas density falls below this
       real(WP) :: phist  =1.0_WP      !< Temporal weighting on equilibrium pressure
       real(WP) :: phi0   =0.0_WP      !< Temporal weighting on interface pressure
+      real(WP) :: CRR_loc=0.0_WP      !< Diagnostic: chemical rate used by the last apply (0 if no chemical step)
+      real(WP) :: tauC_loc=0.0_WP     !< Diagnostic: chemical relaxation time 1/(nu*K) of the last apply (0 if no chemical step)
       !> Case-owned stability guards (defaults are no-ops; a case opts in by setting these)
       real(WP) :: Pmin_liq=-1.0e30_WP   !< Liquid pressure floor (e.g. max sustainable tension); off by default
       real(WP) :: Tmin_liq=-1.0_WP      !< Liquid temperature floor; off by default

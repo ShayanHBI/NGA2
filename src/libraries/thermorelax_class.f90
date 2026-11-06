@@ -37,7 +37,7 @@ contains
    !> VFeq, saturation vapor mass fraction Ysat. Default: no prediction (ok=.false.); finite-rate models override.
    subroutine get_chem_transfer(this,dt,VF,Q,Pjump,dm,VFeq,Ysat,ok)
       implicit none
-      class(thermorelax),     intent(in)  :: this
+      class(thermorelax),     intent(inout) :: this
       real(WP),               intent(in)  :: dt
       real(WP),               intent(in)  :: VF
       real(WP), dimension(:), intent(in)  :: Q

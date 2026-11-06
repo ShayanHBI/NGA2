@@ -13,6 +13,7 @@ module relax_igmix_nasg_finite_class
    private
 
    public :: relax_igmix_nasg_finite
+   public :: log_E1,inv_log_E1
 
    type, extends(relax_igmix_sg) :: relax_igmix_nasg_finite
       !> Typed pointer for direct b access (avoids select type in hot path)
@@ -22,6 +23,7 @@ module relax_igmix_nasg_finite_class
       real(WP) :: MRR   =huge(1.0_WP) !< Mechanical rate [1/(Pa s)] (Pelanti mu); huge = instantaneous
       real(WP) :: TRR   =huge(1.0_WP) !< Thermal rate [W/(m^3 K)] (Pelanti vartheta); huge = instantaneous
       real(WP) :: CRR   =huge(1.0_WP) !< Chemical rate [kg s/m^5] (Pelanti nu); huge = instantaneous
+      real(WP) :: tauC  =-1.0_WP      !< Chemical relaxation time; >0 overrides CRR by nu=1/(K*tauC) per cell
    contains
       procedure :: initialize
       procedure :: apply
@@ -70,6 +72,8 @@ contains
       integer :: ier
       real(WP) :: VF0                   ! debug
       real(WP), dimension(size(Q)) :: Q0 ! debug
+      this%CRR_loc=0.0_WP
+      this%tauC_loc=0.0_WP
       ! Each step is posed on the previous step's equilibrium manifold: pT needs instantaneous p, pTg also instantaneous T
       if (this%model.ne.Prelax.and.this%MRR.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pT, pTg and pThybrid require MRR=huge')
       if (this%model.eq.PTgrelax.and.this%TRR.lt.huge(1.0_WP)) call die('[relax_igmix_nasg_finite apply] pTg requires TRR=huge')
@@ -472,7 +476,7 @@ contains
          logical  :: conv
          integer  :: it
          ! Instantaneous-equilibrium shortcut: skipped at finite CRR
-         if (this%CRR.lt.huge(1.0_WP)) exit pure_phase_stability
+         if (this%CRR.lt.huge(1.0_WP).or.this%tauC.gt.0.0_WP) exit pure_phase_stability
          if (VF.lt.pure_VFlo) then
             if (dbg_cell) print*,'attempting pure gas'
             ! Transfer all liquid mass and energy to vapor
@@ -559,7 +563,7 @@ contains
       ! Nucleation: seed a tiny opposite phase in metastable pure-ish cells so pTg starts well-conditioned.
       ! Gated by do_nucleate -- off defers cavitation/condensation of pure cells (first phase-change pass).
       ! No nucleation at CRR=0: the seed is itself a phase change
-      if (this%do_nucleate.and.near_pure.and.this%CRR.gt.0.0_WP) then
+      if (this%do_nucleate.and.near_pure.and.(this%CRR.gt.0.0_WP.or.this%tauC.gt.0.0_WP)) then
          nucleation: block
             real(WP), parameter :: dT_nuc_max=0.05_WP ! max self-heating (relative to TL_nuc/TG_nuc) a nucleation seed may cause
             real(WP) :: rhoL_nuc,pL_nuc,TL_nuc,pv_sat,rhoV_nuc,eV_nuc
@@ -981,7 +985,7 @@ contains
    !> (Pelanti eqs. 71-77, or the exact dry-gas step), linearized VFeq (eq. 78) and saturation Ysat at the cell p,T.
    subroutine get_chem_transfer(this,dt,VF,Q,Pjump,dm,VFeq,Ysat,ok)
       implicit none
-      class(relax_igmix_nasg_finite), intent(in)  :: this
+      class(relax_igmix_nasg_finite), intent(inout) :: this
       real(WP),                       intent(in)  :: dt
       real(WP),                       intent(in)  :: VF
       real(WP), dimension(:),         intent(in)  :: Q
@@ -1002,7 +1006,7 @@ contains
       Ysat=0.0_WP
       ok=.false.
       iVQ=7+this%liq%ns+this%indV-1
-      if (this%CRR.le.0.0_WP) then; ok=.true.; return; end if
+      if (this%CRR.le.0.0_WP.and.this%tauC.le.0.0_WP) then; ok=.true.; return; end if
       ! Phasic state at ** (each phase at its own p and T); EL, EG are internal energies per unit volume
       RHOL=Q(1)/(       VF); EL=Q(3)/(       VF)
       RHOG=Q(2)/(1.0_WP-VF); EG=Q(4)/(1.0_WP-VF)
@@ -1070,11 +1074,18 @@ contains
             ok=.true.
             return
          end if
+         ! Prescribed tauC: the dry branch's own rate scale Rv*T/m_s sets nu=m_s/(Rv*T*tauC)
+         if (this%tauC.gt.0.0_WP) then
+            this%CRR_loc=ms/(RV*TG*this%tauC)
+         else
+            this%CRR_loc=this%CRR
+         end if
+         if (this%CRR_loc.lt.huge(1.0_WP)) this%tauC_loc=ms/(this%CRR_loc*RV*TG)
          ! u1 from E1(ln(1/u1))=E1(ln(1/u0))+tau, tau=CRR*Rv*T*dt/m_s; u1=1 when tau exceeds E1(1e-300)~690
-         if (this%CRR.ge.huge(1.0_WP).or.log(this%CRR)+log(RV*TG*dt/ms).gt.log(690.0_WP)) then
+         if (this%CRR_loc.ge.huge(1.0_WP).or.log(this%CRR_loc)+log(RV*TG*dt/ms).gt.log(690.0_WP)) then
             u1=1.0_WP
          else
-            tgt=this%CRR*RV*TG*dt/ms
+            tgt=this%CRR_loc*RV*TG*dt/ms
             if (u0.gt.0.0_WP) tgt=tgt+exp(log_E1(-log(u0)))
             if (tgt.gt.690.0_WP) then
                u1=1.0_WP
@@ -1094,18 +1105,26 @@ contains
          ! Inverse chemical capacities (eq. 72, corrected); 1/rho_2 -> Rv*T/p_g and s_2 -> s_v(p_v,T), plus composition term K_CC
          KCC=RV*TG*(1.0_WP-xv)/Q(iVQ)
          xi1inv= Sp/RHOL-sL*ST
+         ! ?Check the following line?
          xi2inv=-(Sp*RV*TG/PG-sV*ST)+KCC
          if (xi1inv+xi2inv.le.0.0_WP) return
+         ! Prescribed tauC: nu=1/(K*tauC), so Kg*dt=dt/tauC
+         if (this%tauC.gt.0.0_WP) then
+            this%CRR_loc=1.0_WP/((xi1inv+xi2inv)*this%tauC)
+         else
+            this%CRR_loc=this%CRR
+         end if
+         if (this%CRR_loc.lt.huge(1.0_WP)) this%tauC_loc=1.0_WP/(this%CRR_loc*(xi1inv+xi2inv))
          ! Fraction 1-exp(-Kg*dt) with Kg=CRR*(1/xi_1+1/xi_2) (eq. 76); instantaneous when CRR=huge or CRR*Kdt>=50
          Kdt=(xi1inv+xi2inv)*dt
          frac=1.0_WP
-         if (this%CRR.lt.huge(1.0_WP).and.log(this%CRR)+log(Kdt).lt.log(50.0_WP)) frac=1.0_WP-exp(-this%CRR*Kdt)
+         if (this%CRR_loc.lt.huge(1.0_WP).and.log(this%CRR_loc)+log(Kdt).lt.log(50.0_WP)) frac=1.0_WP-exp(-this%CRR_loc*Kdt)
          ! Partial density (eq. 77), Delta g=g_2-g_1
          dg=g2-g1
          dm=dg/(xi1inv+xi2inv)*frac
          lnpvs=(g1-g2)/(RV*TG)+log(pv)
          if (dbg_cell) print*,'[get_chem_transfer] g_liq=',g1,' g_vap=',g2,' dg=g_vap-g_liq=',dg,' (>0 condenses)' ! debug
-         if (dbg_cell) print*,'[get_chem_transfer] sL=',sL,' sV=',sV,' KCC=',KCC,' 1/xi1=',xi1inv,' 1/xi2=',xi2inv,' CRR*Kdt=',this%CRR*Kdt,' frac=',frac ! debug
+         if (dbg_cell) print*,'[get_chem_transfer] sL=',sL,' sV=',sV,' KCC=',KCC,' 1/xi1=',xi1inv,' 1/xi2=',xi2inv,' CRR*Kdt=',this%CRR_loc*Kdt,' frac=',frac ! debug
          if (dbg_cell) print*,'[get_chem_transfer] dm=dg/(1/xi1+1/xi2)*frac=',dm,' psat(T)~',exp(lnpvs),' vs pv=',pv ! debug
       end if
       ! Volume fraction (eq. 78)

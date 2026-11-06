@@ -2850,7 +2850,7 @@ contains
 
    !> Split-remix relaxation: the minor phase and an equal volume of the dominant phase relax as a
    !> VF=0.5 sub-cell reactor, then the rest of the dominant phase is remixed into the result
-   subroutine apply_relax_splitremix(this,dt,time)
+   subroutine apply_relax_splitremix(this,dt,time,CRR,tauC)
       use mpi_f08,                only: MPI_Wtime
       use messager,               only: die
       use amrvof_geometry,        only: get_plane_dist,cut_hex_vol
@@ -2863,15 +2863,17 @@ contains
       class(amrmpcomp), intent(inout) :: this
       real(WP), intent(in) :: dt
       real(WP), intent(in) :: time
+      type(amrdata), intent(inout), optional :: CRR  !< Diagnostic: chemical rate used per cell
+      type(amrdata), intent(inout), optional :: tauC !< Diagnostic: chemical relaxation time per cell
       real(WP), parameter :: VF_nuc=0.01_WP      !< Near-pure band where nucleation is attempted first (pTg_relax's VF_nuc)
-      integer,  parameter :: remix_rigid=1       !< Additive remix of the relaxed part b and the inert part a
+      integer,  parameter :: remix_rigid=1       !< Additive remix of the relaxed part b and the inert part i
       integer,  parameter :: remix_rigidM=2      !< Additive remix, then whole-cell mechanical relaxation
       integer,  parameter :: remix_mode=remix_rigid
       integer :: lvl,i,j,k,n,ierr,model0
       real(WP) :: t0
       type(amrex_mfiter) :: mfi
       type(amrex_box) :: bx
-      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pVF,pQ,pCL,pCG,pCurv,pPLIC,pCRR,ptauC
       logical :: oldmix,newmix,nucleated,pstab0
       real(WP) :: dx,dy,dz,cell_vol,vol_liq,vol_gas
       real(WP), dimension(3) :: lo,hi,bary_liq,bary_gas,rand_dir
@@ -2879,8 +2881,8 @@ contains
       real(WP), dimension(4) :: plane
       class(relax_igmix_sg), pointer :: rlx
       integer, dimension(:), allocatable :: iL,iG
-      real(WP) :: Pjump,VFn,VFr,Vr,vol0
-      real(WP), dimension(this%nQ) :: Qn,Qa,Qr,Qr0
+      real(WP) :: Pjump,VFn,VFr,vr,vol0
+      real(WP), dimension(this%nQ) :: Qn,Qi,Qr,Qr0
       real(WP), parameter :: dbg_jump=10.0_WP     ! debug: flag a relaxation that multiplies energy density or the hottest phase T by more than this
       real(WP), parameter :: dbg_Tabs=1.0e4_WP    ! debug: flag a cell entering relaxation with a phase T above this
       integer,  parameter :: dbg_nmax=50          ! debug: max flagged cells printed per rank per call
@@ -2909,6 +2911,8 @@ contains
       iL=[1,3,(n,n=this%Yl_lo,this%Yl_hi)]
       iG=[2,4,(n,n=this%Yg_lo,this%Yg_hi)]
       dbg_n=0 ! debug
+      if (present(CRR)) call CRR%setval(val=0.0_WP)
+      if (present(tauC)) call tauC%setval(val=0.0_WP)
       ! Apply relaxation on finest level only (mixture cells are always at finest)
       lvl=this%amr%maxlvl
       dx=this%amr%dx(lvl); dy=this%amr%dy(lvl); dz=this%amr%dz(lvl)
@@ -2922,22 +2926,24 @@ contains
          pCG  =>this%CG%dataptr(mfi)
          pCurv=>this%curv%dataptr(mfi)
          pPLIC=>this%plic%dataptr(mfi)
+         if (present(CRR)) pCRR=>CRR%mf(lvl)%dataptr(mfi)
+         if (present(tauC)) ptauC=>tauC%mf(lvl)%dataptr(mfi)
          ! Loop over valid cells
          bx=mfi%tilebox()
          do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
-
             ! Check if mixture cell prior to relaxation
             oldmix=(pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi)
             Pjump=this%sigma*pCurv(i,j,k,1)
             dbg_VF0=pVF(i,j,k,1); dbg_Q0=pQ(i,j,k,:); dbg_T0=phase_T(dbg_VF0,dbg_Q0); dbg_flr0=rlx%acc(5) ! debug
             dbg_cell=(i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) ! debug
             if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug
+            ! Regular relaxation branch
             if (.not.oldmix.or.abs(pVF(i,j,k,1)-0.5_WP).lt.this%VFrb.or.any(pQ(i,j,k,1:4).le.0.0_WP)) then
-               ! Pure cells, cells inside the band and cells with a non-positive phase quantity: regular relaxation
+               ! Pure cells, cells inside the band and cells with a non-positive phase quantity
                dbg_branch=1 ! debug
                call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=Pjump)
             else
-               ! Near-pure cells: attempt nucleation on the whole cell, keep it only if a seed survived
+               ! Attempt nucleation, keep it only if a seed survived
                nucleated=.false.
                if (rlx%do_nucleate.and.(pVF(i,j,k,1).lt.VF_nuc.or.pVF(i,j,k,1).gt.1.0_WP-VF_nuc)) then
                   VFn=pVF(i,j,k,1); Qn=pQ(i,j,k,:)
@@ -2948,19 +2954,19 @@ contains
                      dbg_branch=2 ! debug
                   end if
                end if
+               ! Split-remix relaxation branch
                if (.not.nucleated) then
-                  ! Split, relax the sub-cell reactor, remix
                   dbg_branch=3; dbg_flr0=rlx%acc(5) ! debug
-                  call split(pVF(i,j,k,1),pQ(i,j,k,:),Qa,Qr,Vr)
+                  call split(pVF(i,j,k,1),pQ(i,j,k,:),Qi,Qr,vr)
                   Qr0=Qr; VFr=0.5_WP
-                  ! Ledger in physical units: the reactor holds Vr of the cell
-                  vol0=rlx%vol; rlx%vol=Vr*vol0
+                  ! Ledger in physical units: the reactor holds vr of the cell
+                  vol0=rlx%vol; rlx%vol=vr*vol0
                   call relax_noguard(VFr,Qr,Pjump,ierr)
                   rlx%vol=vol0
                   ! No vapor can exist at the reactor state: consistent pT state, not a failure
                   if (ierr.eq.RELAX_VACUUM_VAPOR) ierr=RELAX_OK
                   if (ierr.ne.RELAX_OK) call fail('reactor relaxation',pVF(i,j,k,1),pQ(i,j,k,:),Qr0)
-                  call remix(pVF(i,j,k,1),pQ(i,j,k,:),Qa,Qr,VFr,Vr)
+                  call remix(pVF(i,j,k,1),pQ(i,j,k,:),Qi,Qr,VFr,vr)
                   if (remix_mode.eq.remix_rigidM.and.pVF(i,j,k,1).ge.VFlo.and.pVF(i,j,k,1).le.VFhi) then
                      VFn=pVF(i,j,k,1); Qn=pQ(i,j,k,:)
                      dbg_branch=4 ! debug
@@ -2971,6 +2977,9 @@ contains
                   end if
                end if
             end if
+            ! Chemical rate of the call that set this cell (the reactor's for split-remix)
+            if (present(CRR)) pCRR(i,j,k,1)=rlx%CRR_loc
+            if (present(tauC)) ptauC(i,j,k,1)=rlx%tauC_loc
             ! debug: report cells entering hot, or whose energy density or hottest phase T jumped across relaxation
             dbg_flr=(rlx%acc(5).gt.dbg_flr0) ! debug
             dbg_T1=phase_T(pVF(i,j,k,1),pQ(i,j,k,:)) ! debug
@@ -2980,7 +2989,7 @@ contains
                print '(a,3(1x,i0),a,i0,a,es16.8,a,i0,a,l2,a,es12.4)','[splitremix dbg] cell',i,j,k,' n=',this%relax_diag_step,' t=',time,' branch=',dbg_branch,' floor=',dbg_flr,' Pjump=',Pjump ! debug
                print '(a,es24.16,a,2es12.4,a,*(es24.16))','   pre  VF=',dbg_VF0,' TL,TG=',dbg_T0,' Q=',dbg_Q0 ! debug
                print '(a,es24.16,a,2es12.4,a,*(es24.16))','   post VF=',pVF(i,j,k,1),' TL,TG=',dbg_T1,' Q=',pQ(i,j,k,:) ! debug
-               if (dbg_branch.eq.3.or.dbg_branch.eq.4) print '(a,es12.4,a,*(es24.16))','   reactor Vr=',Vr,' in Q=',Qr0 ! debug
+               if (dbg_branch.eq.3.or.dbg_branch.eq.4) print '(a,es12.4,a,*(es24.16))','   reactor vr=',vr,' in Q=',Qr0 ! debug
                if (dbg_branch.eq.3.or.dbg_branch.eq.4) print '(a,es24.16,a,*(es24.16))','   reactor out VF=',VFr,' Q=',Qr ! debug
             end if ! debug
             ! Check if mixture cell after relaxation
@@ -3046,40 +3055,40 @@ contains
       ! End timer
       this%wt_relax=this%wt_relax+(MPI_Wtime()-t0)
    contains
-      !> Split a cell into the inert part a of the dominant phase (per cell volume) and the reactor
-      !> (per reactor volume Vr_, VF=0.5): the whole minor phase and an equal volume of the dominant one
-      subroutine split(VF_,Q_,Qa_,Qr_,Vr_)
+      !> Split a cell into the inert part i of the dominant phase (per cell volume) and the reactor
+      !> (per reactor volume vr_, VF=0.5): the whole minor phase and an equal volume of the dominant one
+      subroutine split(VF_,Q_,Qi_,Qr_,vr_)
          real(WP), intent(in) :: VF_
          real(WP), dimension(:), intent(in) :: Q_
-         real(WP), dimension(:), intent(out) :: Qa_,Qr_
-         real(WP), intent(out) :: Vr_
-         real(WP) :: Vm,Vd
-         Vm=min(VF_,1.0_WP-VF_); Vd=1.0_WP-Vm; Vr_=2.0_WP*Vm
-         Qa_=0.0_WP; Qr_=0.0_WP
+         real(WP), dimension(:), intent(out) :: Qi_,Qr_
+         real(WP), intent(out) :: vr_
+         real(WP) :: vm,vd
+         vm=min(VF_,1.0_WP-VF_); vd=1.0_WP-vm; vr_=2.0_WP*vm
+         Qi_=0.0_WP; Qr_=0.0_WP
          if (VF_.lt.0.5_WP) then
             ! Liquid minor, gas dominant
-            Qr_(iL)=Q_(iL)/Vr_
-            Qr_(iG)=Q_(iG)/(2.0_WP*Vd)
-            Qa_(iG)=(1.0_WP-Vm/Vd)*Q_(iG)
+            Qr_(iL)=Q_(iL)/vr_
+            Qr_(iG)=Q_(iG)/(2.0_WP*vd)
+            Qi_(iG)=(1.0_WP-vm/vd)*Q_(iG)
          else
             ! Gas minor, liquid dominant
-            Qr_(iG)=Q_(iG)/Vr_
-            Qr_(iL)=Q_(iL)/(2.0_WP*Vd)
-            Qa_(iL)=(1.0_WP-Vm/Vd)*Q_(iL)
+            Qr_(iG)=Q_(iG)/vr_
+            Qr_(iL)=Q_(iL)/(2.0_WP*vd)
+            Qi_(iL)=(1.0_WP-vm/vd)*Q_(iL)
          end if
       end subroutine split
-      !> Rigid remix: phasic mass, species, internal energy and volume of parts a and b add up
-      subroutine remix(VF_,Q_,Qa_,Qr_,VFr_,Vr_)
+      !> Rigid remix: phasic mass, species, internal energy and volume of parts i and r add up
+      subroutine remix(VF_,Q_,Qi_,Qr_,VFr_,vr_)
          real(WP), intent(inout) :: VF_
          real(WP), dimension(:), intent(inout) :: Q_
-         real(WP), dimension(:), intent(in) :: Qa_,Qr_
-         real(WP), intent(in) :: VFr_,Vr_
-         Q_(iL)=Qa_(iL)+Vr_*Qr_(iL)
-         Q_(iG)=Qa_(iG)+Vr_*Qr_(iG)
+         real(WP), dimension(:), intent(in) :: Qi_,Qr_
+         real(WP), intent(in) :: VFr_,vr_
+         Q_(iL)=Qi_(iL)+vr_*Qr_(iL)
+         Q_(iG)=Qi_(iG)+vr_*Qr_(iG)
          if (VF_.lt.0.5_WP) then
-            VF_=Vr_*VFr_
+            VF_=vr_*VFr_
          else
-            VF_=Vr_*VFr_+1.0_WP-Vr_
+            VF_=vr_*VFr_+1.0_WP-vr_
          end if
       end subroutine remix
       !> Relaxation call with the model's reducing-phase guard turned off

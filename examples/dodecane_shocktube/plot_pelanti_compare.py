@@ -167,7 +167,7 @@ q["T"] = mixture_T(q["a2"], q["TL"], q["TG"])
 panels = [("rho", r"$\rho\;\left(\mathrm{kg\,m^{-3}}\right)$", "log", (1.0, 1.0e3)),
           ("u",   r"$u\;\left(\mathrm{m\,s^{-1}}\right)$", "linear", (0.0, 340.0)),
           ("Y2",  r"$Y_v$", "linear", (-0.02, 1.05)),
-          ("p",   r"$p\;\left(\mathrm{Pa}\right)$", "log", (5.0e4, 2.0e8)),
+          ("p",   r"$p\;\left(\mathrm{Pa}\right)$", "linear", (-5.0e6, 1.05e8)),
           ("a2",  r"$\alpha_v$", "linear", (-0.02, 1.05)),
           ("T",   r"$T\;\left(\mathrm{K}\right)$", "linear", (500.0, 1150.0))]
 fig, axes = plt.subplots(3, 2, figsize=(9.0, 10.0), sharex=True)
@@ -184,7 +184,17 @@ for ax, (k, ylabel, scale, ylim) in zip(axes, panels):
     ax.set_ylabel(ylabel)
     ax.tick_params(which="both", top=True, right=True, pad=2.5)
     ax.xaxis.set_major_formatter(FuncFormatter(tick_formatter))
-    if scale == "linear": ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
+    if scale == "linear" and k != "p": ax.yaxis.set_major_formatter(FuncFormatter(tick_formatter))
+# Zoomed inset on the low-pressure side to show oscillations and undershoots
+ax = axes[3]; axin = ax.inset_axes([0.53, 0.3, 0.44, 0.62])
+for line in ax.get_lines():
+    axin.plot(line.get_xdata(), line.get_ydata(), ls=line.get_linestyle(), marker=line.get_marker(), color=line.get_color(),
+              lw=0.6*line.get_linewidth(), ms=0.7*line.get_markersize(), mew=0, zorder=line.get_zorder())
+axin.set_xlim(0.42, 0.7); axin.set_ylim(-5.0e5, 5.0e5)
+axin.tick_params(which="both", top=True, right=True, labelsize=0.75*NUMBER_FONTSIZE, pad=1.5)
+axin.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+axin.yaxis.get_offset_text().set_fontsize(0.75*NUMBER_FONTSIZE)
+ax.indicate_inset_zoom(axin, edgecolor="0.5")
 for ax in axes[-2:]:
     ax.set_xlabel(r"$x\;\left(\mathrm{m}\right)$", labelpad=2.5)
 axes[0].legend(fontsize=LEGEND_FONTSIZE, frameon=False, loc="lower left")

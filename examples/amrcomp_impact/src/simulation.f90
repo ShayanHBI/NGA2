@@ -27,7 +27,9 @@ module simulation
    type(timetracker) :: time
    type(amrmpcomp), target :: fs
    type(amrdata) :: dQdt,Umag,Mach
-   
+   type(amrdata) :: CRRloc,tauCloc    !< Local chemical rate and chemical relaxation time
+   type(amrdata) :: Da_a,Da_f         !< Acoustic and convective Damkohler numbers
+
    !> Visualization
    type(event)  :: viz_evt
    type(amrviz) :: viz
@@ -57,6 +59,7 @@ module simulation
    type(relax_igmix_nasg_finite), target :: relax_finite
    class(relax_igmix_sg), pointer :: relax_model
    character(len=str_medium) :: relaxation_type,case_name
+   logical  :: tauC_is_dt=.false.                     !< Chemical relaxation time set to the flow time step
    integer  :: nsteps_diag                            !< diag run: bounded number of steps (-1 = unlimited)
    real(WP) :: p_cav_cof
 
@@ -502,6 +505,35 @@ contains
       call solver%amr%mfiter_destroy(mfi)
    end subroutine my_tagger
 
+   !> Acoustic and convective Damkohler numbers Da_a=(dx/c)/tauC and Da_f=(dx/|u|)/tauC per cell; zero where tauC=0
+   subroutine get_damkohler()
+      use amrex_amr_module, only: amrex_mfiter,amrex_box
+      integer :: lvl,i,j,k
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pC,pUmag,ptauC,pDa_a,pDa_f
+      real(WP), parameter :: myeps=1.0e-15_WP
+      call Da_a%setval(val=0.0_WP)
+      call Da_f%setval(val=0.0_WP)
+      do lvl=0,amr%clvl()
+         call amr%mfiter_build(lvl,mfi)
+         do while (mfi%next())
+            pC=>fs%C%mf(lvl)%dataptr(mfi)
+            pUmag=>Umag%mf(lvl)%dataptr(mfi)
+            ptauC=>tauCloc%mf(lvl)%dataptr(mfi)
+            pDa_a=>Da_a%mf(lvl)%dataptr(mfi)
+            pDa_f=>Da_f%mf(lvl)%dataptr(mfi)
+            bx=mfi%tilebox()
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               if (ptauC(i,j,k,1).le.0.0_WP) cycle
+               pDa_a(i,j,k,1)=amr%dx(lvl)/(max(pC(i,j,k,1),myeps)*ptauC(i,j,k,1))
+               pDa_f(i,j,k,1)=amr%dx(lvl)/(max(pUmag(i,j,k,1),myeps)*ptauC(i,j,k,1))
+            end do; end do; end do
+         end do
+         call amr%mfiter_destroy(mfi)
+      end do
+   end subroutine get_damkohler
+
    !> Read a relaxation rate: a number or the word huge (instantaneous); absent key = huge
    subroutine read_rate(tag,rate)
       use param, only: param_read
@@ -527,11 +559,14 @@ contains
       case_name='impact_relax_'//trim(relaxation_type)//'_inst'
 
       ! Select relaxation model: any rate key present -> finite-rate class (all huge = its instantaneous mode), none -> relax_igmix_nasg
+      ! A chemical relaxation time key also selects the finite-rate class and overrides the chemical rate
       select_relax_model: block
          use param,    only: param_exists
          use messager, only: log
          use string,   only: str_long
          character(len=str_long) :: message
+         character(len=str_medium) :: val
+         relax_model=>relax_inst
          if (param_exists('Mechanical relaxation rate').or.param_exists('Thermal relaxation rate').or.param_exists('Chemical relaxation rate')) then
             ! Finite relaxation rates (Pelanti 2022: lambda=mu, theta=vartheta, nu); omitted = instantaneous
             call read_rate('Mechanical relaxation rate',relax_finite%MRR)
@@ -541,8 +576,18 @@ contains
             call log(message)
             if (min(relax_finite%MRR,relax_finite%TRR,relax_finite%CRR).lt.huge(1.0_WP)) case_name='impact_relax_'//trim(relaxation_type)//'_finite'
             relax_model=>relax_finite
-         else
-            relax_model=>relax_inst
+         end if
+         if (param_exists('Chemical relaxation time')) then
+            ! The word dt sets tauC to the flow time step every step
+            call param_read('Chemical relaxation time',val)
+            if (trim(val).eq.'dt') then
+               tauC_is_dt=.true.
+            else
+               read(val,*) relax_finite%tauC
+            end if
+            call log('[Chemical relaxation time] tauC='//trim(val)//' (overrides the chemical rate)')
+            case_name='impact_relax_'//trim(relaxation_type)//'_tauC'//trim(val)
+            relax_model=>relax_finite
          end if
       end block select_relax_model
 
@@ -780,10 +825,14 @@ contains
 
       ! Initialize workspaces
       create_workspace: block
-         use amrdata_class, only: interp_none
+         use amrdata_class, only: interp_none,interp_const
          call dQdt%initialize(amr,name='dQdt',ncomp=fs%nQ,ng=0,interp=interp_none); call dQdt%register()
          call Umag%initialize(amr,name='Umag',ncomp=1    ,ng=0,interp=interp_none); call Umag%register()
          call Mach%initialize(amr,name='Mach',ncomp=1    ,ng=0,interp=interp_none); call Mach%register()
+         call CRRloc%initialize(amr,name='CRR',ncomp=1  ,ng=0,interp=interp_const); call CRRloc%register()
+         call tauCloc%initialize(amr,name='tauC',ncomp=1,ng=0,interp=interp_const); call tauCloc%register()
+         call Da_a%initialize(amr,name='Da_a',ncomp=1   ,ng=0,interp=interp_none); call Da_a%register()
+         call Da_f%initialize(amr,name='Da_f',ncomp=1   ,ng=0,interp=interp_none); call Da_f%register()
       end block create_workspace
 
       ! Initialize regridding
@@ -825,6 +874,11 @@ contains
          ! Compute Umag and Mach number
          call Umag%get_magnitude(srcX=fs%UVW,srcY=fs%UVW,srcZ=fs%UVW,compX=1,compY=2,compZ=3)
          call Mach%copy(src=Umag); call Mach%divide(src=fs%C)
+         ! Chemical rate is set by the relaxation; Damkohler numbers from the current dt
+         call CRRloc%setval(val=0.0_WP)
+         call tauCloc%setval(val=0.0_WP)
+         if (tauC_is_dt) relax_finite%tauC=time%dt
+         call get_damkohler()
       end block init_regridding
 
       ! Initialize checkpoint save event
@@ -855,6 +909,10 @@ contains
          call viz%add_scalar(Umag,1,'Umag')
          call viz%add_scalar(Mach,1,'Mach')
          call viz%add_scalar(fs%Yg,1,'Yv')
+         call viz%add_scalar(CRRloc,1,'CRR')
+         call viz%add_scalar(tauCloc,1,'tauC')
+         call viz%add_scalar(Da_a,1,'Da_a')
+         call viz%add_scalar(Da_f,1,'Da_f')
          call viz%add_surfmesh(fs%smesh,'plic')
          ! Create visualization output event
          viz_evt=event(time=time,name='Visualization output')
@@ -996,6 +1054,7 @@ contains
          end if
          call time%increment()
          fs%relax_diag_step=time%n   ! debug: step label for the solver's debug prints
+         if (tauC_is_dt) relax_finite%tauC=time%dt
 
          ! Remember old state
          call fs%store_old()
@@ -1054,7 +1113,7 @@ contains
          call probe_boxes('S2b_plic') ! debug
          ! Get most up-to-date pressure
          ! call fs%apply_relax(dt=time%dt,time=time%t)
-         call fs%apply_relax_splitremix(dt=time%dt,time=time%t)
+         call fs%apply_relax_splitremix(dt=time%dt,time=time%t,CRR=CRRloc,tauC=tauCloc)
          ! call debug_probe('14-post-apply_relax-stage2') ! debug
          call probe_boxes('S2c_relax') ! debug
          call fs%get_primitive(Q=fs%Q)
@@ -1096,6 +1155,9 @@ contains
          ! Compute Umag and Mach number
          call Umag%get_magnitude(srcX=fs%UVW,srcY=fs%UVW,srcZ=fs%UVW,compX=1,compY=2,compZ=3)
          call Mach%copy(src=Umag); call Mach%divide(src=fs%C)
+
+         ! Compute acoustic and convective Damkohler numbers
+         call get_damkohler()
 
          ! Visualization output
          if (viz_evt%occurs()) call viz%write(time=time%t)
@@ -1150,6 +1212,10 @@ contains
       call dQdt%finalize()
       call Umag%finalize()
       call Mach%finalize()
+      call CRRloc%finalize()
+      call tauCloc%finalize()
+      call Da_a%finalize()
+      call Da_f%finalize()
       ! Finalize materials
       call water%finalize()
       call gas%finalize()

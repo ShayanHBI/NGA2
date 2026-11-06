@@ -25,6 +25,7 @@ Condensation temperature tolerance        : 0.1
 Mechanical relaxation rate                : huge
 Thermal relaxation rate                   : huge
 Chemical relaxation rate                  : 3.6e-5
+#Chemical relaxation time                  : dt
 
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####

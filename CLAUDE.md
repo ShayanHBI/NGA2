@@ -120,7 +120,8 @@ All store EOS objects as `liq`/`gas` pointers (pass `target` objects) and share 
 | `relax_igmix_sg` | `thermorelax` | `(liq,gas,indV,indA)` | SG/NASG liquid + igmix gas; `model` = `Prelax=1`, `PTrelax=2`, `PTgrelax=3`, `PThybrid=4` |
 | `relax_igmix_nasg` | `relax_igmix_sg` | same | Pelanti 2022 instantaneous relaxation |
 | `relax_igmix_nasg_finite` | `relax_igmix_sg` | same | Pelanti 2022 finite-rate (Sec. 7.2.3, eqs. 51, 71–83); rates `lambda`, `theta`, `nu` (default `huge` = instantaneous) |
-| `relax_igmix_max_ent` | `thermorelax` | `(liq,gas,indV,indA)` | Constrained entropy maximization, sequential M→T→C |
+| `relax_igmix_max_ent` | `relax_igmix_sg` | `(liq,gas,indV,indA)` | `~/Downloads/relaxation_ent_max.tex`: Newton on F̂ in transfer coordinates, stages M→T→C iterated with D held per stage; nucleation; works with `apply_relax_splitremix` |
+| `relax_igmix_max_ent_finite` | `relax_igmix_max_ent` | same | Finite rate `MRR`/`TRR`/`CRR` (or `tauC`); faster stages instantaneous; `closure` = `closure_restore` (tex) or `closure_pelanti` (Pelanti eqs. 59/70/82) |
 | `relax_numerical` | `thermorelax` | `(liq,gas)` | Mechanical-only Newton, any `material` |
 
 `indV`/`indA` are the vapor/air species indices in the `igmix` gas. Model constants (`Prelax`, …) are exported by `relax_igmix_sg_class`.
@@ -168,7 +169,7 @@ Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_n
 
 | Directory | Build | Tests |
 |---|---|---|
-| `examples/eos_relax/` | `make` (targets `run`, `verify`, `residuals`, `bench`, `compare`, `finite`, …) | single-cell relaxation, max-ent verification, equilibrium residuals, finite-rate tests, `test_pelanti_ref` (literal Pelanti transcription) |
+| `examples/eos_relax/` | `make` (targets `run`, `maxent`, `finite`, …) | single-cell relaxation, `test_max_ent` (max-ent classes vs tex closed forms, Pelanti, relax_igmix_nasg), finite-rate tests, `test_pelanti_ref` (literal Pelanti transcription) |
 | `examples/amrcomp_venturi/eos_check/` | `make -f Makefile.test_eos run` | NASG water/vapor/air vs Liu et al. 2026 Table 4 |
 
 These link `src/libraries/{precision,material_class,thermorelax_class}.f90` and `src/thermo/*.f90` with local stubs (`messager_stub.f90`). Many of these files are untracked; check `git status` before assuming they exist.

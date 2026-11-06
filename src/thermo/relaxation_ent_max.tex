@@ -1,0 +1,1063 @@
+\subsection{Relaxation as entropy maximization}
+
+Per unit mass of a substance, the first law of thermodynamics states that
+\begin{equation}\label{first_thermo_law}
+d e=T\, d s-p\,d v .
+\end{equation}
+Specific enthalpy and specific Gibbs energy are defined by
+\begin{equation}\label{hg}
+h\equiv e+pv,\qquad g\equiv h-Ts .
+\end{equation}
+Differentiating the definitions with the product rule and using \eqref{first_thermo_law},
+\begin{equation}\label{dh}
+d h=d e+p\,d v+v\,d p=T\,d s+v\,d p,
+\end{equation}
+\begin{equation}\label{dg}
+d g=d h-T\,d s-s\,d T=v\,d p-s\,d T .
+\end{equation}
+
+With the extensive variables $E=me$, $S=ms$,
+$V=mv$,
+\begin{equation}
+d E=m\,d e+e\,d m,\qquad d S=m\,d s+s\,d m,\qquad d V=m\,d v+v\,d m .
+\end{equation}
+Therefore
+\begin{align}
+T\,d S-p\,d V&=m\,(T\,d s-p\,d v)+(Ts-pv)\,d m=m\,d e+(Ts-pv)\,d m\nonumber\\
+&=d E-(e+pv-Ts)\,d m=d E-g\,d m,
+\end{align}
+that is,
+\begin{equation}
+d E=T\,d S-p\,d V+g\,d m.
+\end{equation}
+Note that the above equation holds for single phase single species. For a multi-species mixture of single phase, where the species are at thermo-mechanical equilibrium we have
+\begin{equation}\label{dE}
+d E=T\,d S-p\,d V+\sum_{i=1}^{n} \mu_i \, d N_i,
+\end{equation}
+where $\mu_i = \frac{\partial E}{\partial N_i}$ is defined as the chemical potential of $i_{th}$ component in the mixture (the energy required to add one mole of species $i$ to the mixture). Differentiating $G=E+pV-TS$ and using equation \eqref{dE} we find that 
+\begin{equation}
+\frac{\partial G}{\partial N_i} = \mu_i.
+\end{equation}
+Assuming that in the mixture, species are molecularly mixed, the entropy of the mixture is modeled as
+\begin{equation}
+    S = \sum_{i=1}^{n} m_i s_i - R \sum_{i=1}^{n} N_i \ln{x_i},
+\end{equation}
+where the first term is individual species entropy and the second term models the entropy of mixing. Correspondingly, the mixture Gibbs energy would be
+\begin{equation}
+    G = \sum_{i=1}^{n} m_i g_i + R T \sum_{i=1}^{n} N_i \ln{x_i},
+\end{equation}
+where $g_i$ is the gibbs energy of the component $i$ per unit mass. Therefore we have
+\begin{equation}
+   \left( \frac{\partial G}{\partial m_i} \right)_{p,T,m_{j \ne i}} = g_i + R_i T \ln{x_i},
+\end{equation}
+which allows us to re-write equation \eqref{dE} as
+\begin{equation}
+    d E=T\,d S-p\,d V+\sum_{i=1}^{n} \left( g_i + R_i T \ln{x_i} \right) \, d m_i,
+\end{equation}
+which can be rearranged for $S$ as
+\begin{equation}\label{dS}
+d S = \frac pT\,d V + \frac1T\,d E - \sum_{i=1}^{n} \left( \frac{g_i(p,T)}{T} + R_i \ln{x_i} \right) \,d m_i.
+\end{equation}
+Defining the mass specific chemical potential $\hat{\mu}_i = \frac{\mu_i}{M_i}$, the above equation takes the following compact form
+\begin{equation}
+d S = \frac pT\,d V + \frac1T\,d E - \sum_{i=1}^{n} \frac{\hat{\mu}_i(p,T)}{T} \,d m_i,
+\end{equation}
+where $\hat{\mu}_i = g_i + R_i T \ln{x_i}$. For the single species liquid phase we have
+\begin{equation}\label{dS_l}
+d S_l = \frac{p_l}{T_l}\,d V_l + \frac1{T_l}\,d E_l - \frac{g_l(p_l,T_l)}{T_l} \,d m_l.
+\end{equation}
+For the gas mixture, using ideal gas EOS, we can simplify the entropy differential relation. For pure vapor, at any given $p$ and $T$, equation \eqref{dg} reads
+\begin{equation}
+\left( \frac{\partial g_v}{\partial p} \right)_T = v_v = \frac{R_v T}{p},
+\end{equation}
+where the ideal gas EOS has been used to express $v_v$ in terms of $p$, $T$, and $R_v$. Integrating the above equation at constant $T$ gives
+\begin{equation}
+\int_{p_g}^{p_v} \left( \frac{\partial g_v}{\partial p} \right)_T \,dp = \int_{p_g}^{p_v} \frac{R_v T}{p} \,dp = R_v T \ln{\left(\frac{p_v}{p_g}\right)},
+\end{equation}
+which leads to the following relation
+\begin{equation}
+g_v\left(p_v,T_g\right) - g_v\left(p_g,T_g\right) = R_v T \ln{x_v}.
+\end{equation}
+The above relation can be plugged into equation \eqref{dS} for the ideal gas mixture to get a simplified relation for $dS_g$
+\begin{equation}\label{dS_g}
+d S_g = \frac{p_g}{T_g}\,d V_g + \frac1{T_g}\,d E_g - \frac{g_v(p_v,T_g)}{T_g} \,d m_v.
+\end{equation}
+The extensive thermodynamic state for phase $k$ is defined as
+\begin{equation}\label{extensive_state}
+\boldsymbol{x_k}=[V_k,\;E_k,\;m_k]^T,
+\end{equation}
+where in general, $m_k$ is a vector of transferable species masses. Here, since liquid is assumed to be single species and gas is a mixture of vapor and air only, $m_k$ would be a scalar quantity taking $m_l$ for the liquid and $m_v$ for the gas phase. Corresponding to the state vector for phase $k$, potentials are the partial derivatives of the entropy,
+\begin{equation}\label{potentials}
+\boldsymbol{y_k}\equiv\frac{\partial S_k}{\partial \boldsymbol{x_k}}=\left[\frac{p_k}{T_k},\;\frac{1}{T_k},\;-\frac{\hat{\mu_k}}{T_k}\right]^T,
+\end{equation}
+where the same argument for $m_k$ applies to $\mu_k$.\\
+Relaxation to thermodynamic equilibrium is a process in which, due to the potential ($\boldsymbol{y}$) mismatch between liquid and gas phases, the extensive state ($\boldsymbol{x}$) is exchanged between the two phases until the potentials equilibrate. Volume (together with the work it carries), heat, and mass are transferred during mechanical, thermal, and chemical relaxation processes, respectively.
+During a cell local relaxation process, the total extensive thermodynamic quantities $\boldsymbol{x}$ are conserved via
+\begin{equation}\label{x_conservation}
+\sum_{k=1}^{n_p} d \boldsymbol{x}_k = 0.
+\end{equation}
+For a two-phase system of liquid and gas, define $\boldsymbol{\xi} \equiv \delta \boldsymbol{x}_l$ being the change in $x_l$ that takes the initial state to equilibrium state and therefore, $\delta \boldsymbol{x}_g = -\boldsymbol{\xi}$. Plugging equations \eqref{extensive_state} and \eqref{potentials} into equation \eqref{dS}, the entropy gain corresponding to relaxation would be
+\begin{equation}\label{dS_F_dx}
+d S = \boldsymbol{F} \cdot d\boldsymbol{x}_l,
+\end{equation}
+where $\boldsymbol{F} \equiv \boldsymbol{y}_l - \boldsymbol{y}_g$ is the thermodynamic driving force. Instantaneous relaxation to equilibrium jumps entropy to its maximum value over the exchanges allowed by \eqref{x_conservation}. Therefore, the maximum is where the derivative of total entropy with respect to its free parameter is zero. We choose $\boldsymbol{x}_l$ to be the free parameter, over which we are maximizing $S$. Differentiating $S$ with respect to $\boldsymbol{x}_l$ we get
+\begin{equation}\label{equilibrium_condition}
+\frac{\partial S}{\partial \boldsymbol{x}_l} = \frac{\partial S_l}{\partial \boldsymbol{x}_l} + \frac{\partial S_g}{\partial \boldsymbol{x}_g} \frac{\partial \boldsymbol{x}_g}{\partial \boldsymbol{x}_l} = \boldsymbol{y}_l - \boldsymbol{y}_g = \boldsymbol{F}
+\end{equation}
+where equations \eqref{potentials} and \eqref{x_conservation} are used to apply chain rule. The above relation restates the equilibrium condition being equivalent to equilibration of phase potentials or zero remaining thermodynamic force. Note that if $S$ is strictly concave, $\boldsymbol{\xi} = \boldsymbol{x}_l^{eq} - \boldsymbol{x}_l^{0}$ is the only solution that maximizes $S$.
+
+\subsubsection{Surface tension}
+Let the interface have area $A$ and tension $\sigma$, independent of temperature, so that it carries energy $\sigma A$ and no entropy. When the liquid volume changes, $d A=\kappa_c\,d V_l$, where $\kappa_c$ is the interface curvature. The conserved energy is therefore $E_l+E_g+\sigma A$, so
+\begin{equation}
+d E_g=-d E_l-\sigma\kappa_c\,d V_l,\qquad d V_g=-d V_l,\qquad d m_v=-d m_l .
+\end{equation}
+Substituting into $d S=\boldsymbol{y}_l\cdot d\boldsymbol{x}_l+\boldsymbol{y}_g\cdot d\boldsymbol{x}_g$,
+\begin{equation}\label{dS_sigma}
+d S=\Bigl(\frac{p_l}{T_l}-\frac{p_g}{T_g}-\frac{p_{j}}{T_g}\Bigr)d V_l
++\Bigl(\frac1{T_l}-\frac1{T_g}\Bigr)d E_l-\Bigl(\frac{g_l}{T_l}-\frac{g_v}{T_g}\Bigr)d m_l,
+\end{equation}
+where the interface pressure jump is $p_{j} = \sigma\kappa_c$. In matrix form the constraints read $d\boldsymbol{x}_g=-\boldsymbol{A}\,d\boldsymbol{x}_l$ with
+\begin{equation}\label{A_sigma}
+\boldsymbol{A}=\begin{bmatrix}1&0&0\\p_{j}&1&0\\0&0&1\end{bmatrix},
+\end{equation}
+so that $dS=\boldsymbol{y}_l\cdot d\boldsymbol{x}_l-\boldsymbol{y}_g\cdot\boldsymbol{A}\,d\boldsymbol{x}_l=(\boldsymbol{y}_l-\boldsymbol{A}^T\boldsymbol{y}_g)\cdot d\boldsymbol{x}_l$, which is \eqref{dS_sigma}. With surface tension the force in \eqref{dS_F_dx} is therefore
+\begin{equation}\label{F_sigma}
+\boldsymbol{F}=\boldsymbol{y}_l-\boldsymbol{A}^T\boldsymbol{y}_g,
+\end{equation}
+which reduces to $\boldsymbol{y}_l-\boldsymbol{y}_g$ for $p_{j}=0$; below, $\boldsymbol{F}$ denotes \eqref{F_sigma}. Equilibrium then requires
+\begin{equation}
+p_l-p_g=p_{j},\qquad T_l=T_g,\qquad g_l(p_l,T)=g_v(p_v,T).
+\end{equation}
+The first condition is the Laplace law. The third one keeps its form, but the liquid chemical potential is evaluated at the raised liquid pressure (Kelvin effect).
+
+
+\subsubsection{Solution to equilibrium}
+Define stiffness matrix for phase $k$ as the Hessian of $-S_k$
+\begin{equation}\label{stiffness}
+\boldsymbol{K}_k = -\frac{ \partial \boldsymbol{y}_k } { \partial \boldsymbol{x}_k},
+\end{equation}
+which is symmetric by definition and positive-semi definite given $S_k$ being concave. Note that the entities of stiffness matrix are the reciprocal capacities of various types. Taylor series expansion of $y_k$:
+\begin{equation}
+\delta{\boldsymbol{y}}_k^{n} = \left. \frac{ \partial \boldsymbol{y}_k } { \partial \boldsymbol{x}_k}\right|_{\boldsymbol{x}_k=\boldsymbol{x}_k^n} \delta{\boldsymbol{x}}_k^{n} + \mathcal{O}\left(\lVert\delta{\boldsymbol{x}}_k^{n}\rVert ^2\right),
+\end{equation}
+where $\delta{\boldsymbol{y}}_k^{n} = \boldsymbol{y}_k^{n+1} - \boldsymbol{y}_k^{n}$ and $\delta{\boldsymbol{x}}_k^{n} = \boldsymbol{x}_k^{n+1} - \boldsymbol{x}_k^{n}$. Subtracting $\boldsymbol{A}^T$ times the above equation written for gas from that written for liquid, and using the conservation constraint $\delta\boldsymbol{x}_g^n=-\boldsymbol{A}\,\delta\boldsymbol{x}_l^n$ with $\boldsymbol{A}$ constant,
+\begin{equation}\label{F_taylor}
+\boldsymbol{F}^{n+1} - \boldsymbol{F}^{n} = - \left. \left(\boldsymbol{K}_l+\boldsymbol{A}^T\boldsymbol{K}_g\boldsymbol{A} \right)\right|_{\boldsymbol{x}_k=\boldsymbol{x}_k^n} \cdot \delta{\boldsymbol{x}}_l^{n} + \mathcal{O}\left(\lVert\delta{\boldsymbol{x}}_k^{n}\rVert ^2\right),
+\end{equation}
+Equilibrium requires $\boldsymbol{F}^{n+1} = 0$. Therefore, solution to equilibrium is obtained from iteratively solving the following equation
+\begin{equation}\label{newton_x}
+\boldsymbol{J}^n \cdot \delta{\boldsymbol{x}}_l^{n} = - \boldsymbol{F}^{n},
+\end{equation}
+where Jacobian of the $n_{th}$ iteration is $\boldsymbol{J}^n = -\boldsymbol{K}^n$, with $\boldsymbol{K}\equiv\boldsymbol{K}_l+\boldsymbol{A}^T\boldsymbol{K}_g\boldsymbol{A}$ evaluated at $\boldsymbol{x}_k=\boldsymbol{x}_k^n$; $\boldsymbol{K}=\boldsymbol{K}_l+\boldsymbol{K}_g$ for $p_{j}=0$. At each iteration, the intermediate solution is
+\begin{equation}
+\boldsymbol{x}_l^{n+1} = \boldsymbol{x}_l^{n} + \delta{\boldsymbol{x}}_l^{n},\qquad \boldsymbol{x}_g^{n+1} = \boldsymbol{x}_g^{n} - \boldsymbol{A}\,\delta{\boldsymbol{x}}_l^{n},
+\end{equation}
+\begin{equation}
+\delta{\boldsymbol{y}}_l^{n} = - \boldsymbol{\Phi}_l^n \cdot \boldsymbol{F}^n, \quad \boldsymbol{A}^T\delta{\boldsymbol{y}}_g^{n} = + \boldsymbol{\Phi}_g^n \cdot \boldsymbol{F}^n,
+\end{equation}
+\begin{equation}
+\boldsymbol{\Phi}^n_l\equiv \boldsymbol{K}^n_l(\boldsymbol{K}^n)^{-1},\qquad \boldsymbol{\Phi}^n_g\equiv \boldsymbol{A}^T\boldsymbol{K}^n_g\boldsymbol{A}(\boldsymbol{K}^n)^{-1};\qquad \boldsymbol{\Phi}^n_l+\boldsymbol{\Phi}^n_g=\boldsymbol{I}.
+\end{equation}
+\paragraph{Definiteness of the stiffness matrices.}
+The entropy of the liquid is extensive, $S_l(\lambda\boldsymbol{x}_l)=\lambda S_l(\boldsymbol{x}_l)$ for $\lambda>0$. Differentiating with respect to $\boldsymbol{x}_l$ gives $\boldsymbol{y}_l(\lambda\boldsymbol{x}_l)=\boldsymbol{y}_l(\boldsymbol{x}_l)$, and differentiating this with respect to $\lambda$ at $\lambda=1$ gives $\boldsymbol{K}_l\boldsymbol{x}_l=0$: $\boldsymbol{K}_l$ is singular, with null vector $\boldsymbol{x}_l$. For a stable equation of state ($c_v>0$, $K_T>0$) the specific entropy $s_l(v_l,e_l)$ is strictly concave, and $\boldsymbol{x}_l$ is the only null direction, so $\boldsymbol{K}_l$ is positive semi-definite of rank two. The gas entropy is extensive in $[V_g,E_g,m_v,m_a]$, and its $4\times4$ Hessian has the single null vector $[V_g,E_g,m_v,m_a]^T$. $\boldsymbol{K}_g$ is the leading $3\times3$ block of this Hessian, since the air is not exchanged. If $m_a>0$ it is positive definite: a vector $\boldsymbol{z}\neq0$ with $\boldsymbol{z}^T\boldsymbol{K}_g\boldsymbol{z}=0$, extended by a zero $m_a$ entry, would be a null direction of the full Hessian that is not parallel to $[V_g,E_g,m_v,m_a]^T$. Since $\boldsymbol{A}$ is invertible, for $\boldsymbol{z}\neq0$
+\begin{equation}
+\boldsymbol{z}^T\boldsymbol{K}\boldsymbol{z}=\boldsymbol{z}^T\boldsymbol{K}_l\boldsymbol{z}+(\boldsymbol{A}\boldsymbol{z})^T\boldsymbol{K}_g(\boldsymbol{A}\boldsymbol{z})>0 ,
+\end{equation}
+so $\boldsymbol{K}$ is positive definite at every state: \eqref{newton_x} has a unique solution at every iterate, $S$ is strictly concave in $\boldsymbol{x}_l$, and $\boldsymbol{F}=0$ has at most one solution. For a gas of pure vapor ($m_a=0$) $\boldsymbol{K}_g$ is singular with null vector $\boldsymbol{x}_g$, and $\boldsymbol{K}$ remains positive definite unless $\boldsymbol{x}_l$ is parallel to $\boldsymbol{A}^{-1}\boldsymbol{x}_g$, i.e.\ unless the two phases have the same specific state.
+
+\subsubsection{Matrix decomposition}
+Define the direction vectors:
+\begin{align}
+\boldsymbol{d}_M &= [1,\; -p_I,\; 0]^T&, \quad \delta{\boldsymbol{x}}_l^M &= \delta\tilde{V}_l\, \boldsymbol{d}_M\\
+\boldsymbol{d}_T &= [0,\; -1,\; 0]^T&, \quad \delta{\boldsymbol{x}}_l^T &= \delta\tilde{E}_l\, \boldsymbol{d}_T\\
+\boldsymbol{d}_C &= [-v_l,\; -e_l,\; -1]^T&, \quad \delta{\boldsymbol{x}}_l^C &= \delta\tilde{m}_l\, \boldsymbol{d}_C
+\end{align}
+\begin{equation}
+\delta{\boldsymbol{x}}_l = \delta{\boldsymbol{x}}_l^M + \delta{\boldsymbol{x}}_l^T + \delta{\boldsymbol{x}}_l^C
+\end{equation}
+\begin{equation}
+\delta V_l = \delta\tilde{V}_l - v_l \, \delta\tilde{m}_l, \quad \delta E_l = -p_I\,\delta\tilde{V}_l-\delta\tilde{E}_l-e_l\,\delta\tilde{m}_l, \quad \delta m_l = -\delta\tilde{m}_l.
+\end{equation}
+\begin{equation}
+\boldsymbol{D} = \left[\boldsymbol{d}_M,\; \boldsymbol{d}_T,\; \boldsymbol{d}_C\right]
+\end{equation}
+\begin{equation}
+\delta{\boldsymbol{x}}_l = \boldsymbol{D} \, \delta\tilde{\boldsymbol{x}}_l, \quad \delta\tilde{\boldsymbol{x}}_l=\left[\delta\tilde{V}_l,\;\delta\tilde{E}_l,\;\delta\tilde{m}_l\right]^T
+\end{equation}
+\begin{equation}\label{newton_D}
+\boldsymbol{J}^n \cdot \boldsymbol{D}^n \, \delta\tilde{\boldsymbol{x}}_l^n = - \boldsymbol{F}^n,
+\end{equation}
+\paragraph{Choice of directions.}
+The three columns of $\boldsymbol{D}$ are the three transfers: volume received by the liquid with its work at $p_I$, heat given by the liquid, and mass given by the liquid. Each transfer is counted positive in the direction in which its liquid-minus-gas force drives it: the liquid expands when its pressure is higher, and gives heat and mass when its temperature and chemical potential are higher. $\det\boldsymbol{D}=1$, so every $\delta\boldsymbol{x}_l$ has a unique decomposition. In the sequential relaxation below, each step holds the equilibria of the faster ones, so the steps move within the nested sets $\mathrm{span}\{\boldsymbol{d}_M\}\subset\mathrm{span}\{\boldsymbol{d}_M,\boldsymbol{d}_T\}\subset\mathbb{R}^3$, not along $\boldsymbol{d}_T$ and $\boldsymbol{d}_C$ themselves. $\mathrm{span}\{\boldsymbol{d}_M,\boldsymbol{d}_T\}=\{\delta m_l=0\}$ does not depend on the choice of $\boldsymbol{d}_T$. Replacing $\boldsymbol{d}_C$ by $\boldsymbol{d}_C+a\,\boldsymbol{d}_M+b\,\boldsymbol{d}_T$ does not change the chemical step either, because its $\delta V_l$ and $\delta E_l$ follow from the held equilibria. The one choice that changes a sequential result is $p_I$ in $\boldsymbol{d}_M$, which sets the mechanical end state.
+
+\paragraph{Newton step in the transfer coordinates.}
+The directions are evaluated at a reference state $\boldsymbol{x}^r$, $\boldsymbol{D}=\boldsymbol{D}(\boldsymbol{x}^r)$, through $p_I$, $v_l$ and $e_l$. The transfer coordinates $\tilde{\boldsymbol{x}}_l=[\tilde{V}_l,\tilde{E}_l,\tilde{m}_l]^T$ are defined by the linear change of variables
+\begin{equation}\label{x_rot}
+\boldsymbol{x}_l=\boldsymbol{x}_l^r+\boldsymbol{D}\,\tilde{\boldsymbol{x}}_l,
+\end{equation}
+with $\boldsymbol{D}$ held constant, so that $\tilde{\boldsymbol{x}}_l=0$ at $\boldsymbol{x}^r$. $\tilde{V}_l$ is the volume (with its work) received by the liquid, and $\tilde{E}_l$ and $\tilde{m}_l$ are the heat and the mass given by the liquid to the gas. Differentiating \eqref{x_rot},
+\begin{equation}\label{dx_rot}
+d\boldsymbol{x}_l=\boldsymbol{D}\,d\tilde{\boldsymbol{x}}_l .
+\end{equation}
+
+\emph{Entropy.} Substituting \eqref{dx_rot} into \eqref{dS_F_dx} and exchanging the order of summation,
+\begin{equation}\label{dS_f}
+dS=\sum_iF_i\,dx_{l,i}=\sum_iF_i\sum_jD_{ij}\,d\tilde{x}_{l,j}=\sum_j\Bigl(\sum_iD_{ij}F_i\Bigr)d\tilde{x}_{l,j}=\bigl(\boldsymbol{D}^T\boldsymbol{F}\bigr)\cdot d\tilde{\boldsymbol{x}}_l=\tilde{\boldsymbol{F}}\cdot d\tilde{\boldsymbol{x}}_l,
+\end{equation}
+where $\tilde{\boldsymbol{F}}\equiv\boldsymbol{D}^T\boldsymbol{F}=\partial S/\partial\tilde{\boldsymbol{x}}_l$. $\tilde{\boldsymbol{F}}=[\tilde{F}_M,\tilde{F}_T,\tilde{F}_C]^T$ is therefore the entropy gained per unit of volume, heat and mass transferred: the forces conjugate to the three transfers.
+
+\emph{Force.} By \eqref{stiffness}, $d\boldsymbol{y}_l=-\boldsymbol{K}_l\,d\boldsymbol{x}_l$ and $d\boldsymbol{y}_g=-\boldsymbol{K}_g\,d\boldsymbol{x}_g=\boldsymbol{K}_g\boldsymbol{A}\,d\boldsymbol{x}_l$, since $d\boldsymbol{x}_g=-\boldsymbol{A}\,d\boldsymbol{x}_l$ with $\boldsymbol{A}$ constant. Differentiating $\boldsymbol{F}=\boldsymbol{y}_l-\boldsymbol{A}^T\boldsymbol{y}_g$,
+\begin{equation}\label{dF_dx}
+d\boldsymbol{F}=d\boldsymbol{y}_l-\boldsymbol{A}^Td\boldsymbol{y}_g=-(\boldsymbol{K}_l+\boldsymbol{A}^T\boldsymbol{K}_g\boldsymbol{A})\,d\boldsymbol{x}_l=-\boldsymbol{K}\,d\boldsymbol{x}_l .
+\end{equation}
+Multiplying \eqref{dF_dx} by the constant $\boldsymbol{D}^T$ and substituting \eqref{dx_rot},
+\begin{equation}\label{df_rot}
+d\tilde{\boldsymbol{F}}=\boldsymbol{D}^Td\boldsymbol{F}=-\boldsymbol{D}^T\boldsymbol{K}\boldsymbol{D}\,d\tilde{\boldsymbol{x}}_l=-\tilde{\boldsymbol{K}}\,d\tilde{\boldsymbol{x}}_l,\qquad \tilde{\boldsymbol{K}}\equiv\boldsymbol{D}^T\boldsymbol{K}\boldsymbol{D} .
+\end{equation}
+$\tilde{\boldsymbol{K}}=-\partial\tilde{\boldsymbol{F}}/\partial\tilde{\boldsymbol{x}}_l=-\partial^2S/\partial\tilde{\boldsymbol{x}}_l^2$ is the stiffness matrix in the transfer coordinates. It is symmetric, $\tilde{\boldsymbol{K}}^T=\boldsymbol{D}^T\boldsymbol{K}^T\boldsymbol{D}=\tilde{\boldsymbol{K}}$, because $\boldsymbol{K}$ is. It is positive definite when $\boldsymbol{K}$ is: for $\boldsymbol{z}\neq0$, $\boldsymbol{D}\boldsymbol{z}\neq0$ and $\boldsymbol{z}^T\tilde{\boldsymbol{K}}\boldsymbol{z}=(\boldsymbol{D}\boldsymbol{z})^T\boldsymbol{K}(\boldsymbol{D}\boldsymbol{z})>0$.
+
+\emph{Newton--Raphson.} Let $\delta\tilde{\boldsymbol{x}}_l^n=[\delta\tilde{V}_l^n,\delta\tilde{E}_l^n,\delta\tilde{m}_l^n]^T$ be the transfer of iteration $n$, which takes $\boldsymbol{x}^n$ to $\boldsymbol{x}^{n+1}$. Taking the reference state at the current iterate, $\boldsymbol{x}^r=\boldsymbol{x}^n$ and $\boldsymbol{D}^n\equiv\boldsymbol{D}(\boldsymbol{x}^n)$, and Taylor expanding $\tilde{\boldsymbol{F}}$ about $\boldsymbol{x}^n$ with \eqref{df_rot},
+\begin{equation}\label{f_taylor}
+\tilde{\boldsymbol{F}}^{n+1}=\tilde{\boldsymbol{F}}^n-\tilde{\boldsymbol{K}}^n\,\delta\tilde{\boldsymbol{x}}_l^n+\mathcal{O}\bigl(\lVert\delta\tilde{\boldsymbol{x}}_l^n\rVert^2\bigr),
+\end{equation}
+with $\tilde{\boldsymbol{F}}^{n}=(\boldsymbol{D}^n)^T\boldsymbol{F}^{n}$, $\tilde{\boldsymbol{F}}^{n+1}=(\boldsymbol{D}^n)^T\boldsymbol{F}^{n+1}$, and $\tilde{\boldsymbol{K}}^n$ evaluated at $\boldsymbol{x}^n$. $\boldsymbol{D}^n$ is invertible ($\det\boldsymbol{D}^n=1$), so $\boldsymbol{F}^{n+1}=0$ if and only if $\tilde{\boldsymbol{F}}^{n+1}=0$. Setting $\tilde{\boldsymbol{F}}^{n+1}=0$ in \eqref{f_taylor} and dropping the second-order term, the solution to equilibrium is obtained from iteratively solving
+\begin{equation}\label{newton_X}
+\tilde{\boldsymbol{J}}^n\cdot\delta\tilde{\boldsymbol{x}}_l^n=-\tilde{\boldsymbol{F}}^n,\qquad \tilde{\boldsymbol{J}}^n\equiv-\tilde{\boldsymbol{K}}^n=(\boldsymbol{D}^n)^T\boldsymbol{J}^n\boldsymbol{D}^n,
+\end{equation}
+and at each iteration the intermediate solution is
+\begin{equation}\label{update_X}
+\boldsymbol{x}_l^{n+1}=\boldsymbol{x}_l^n+\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n,\qquad \boldsymbol{x}_g^{n+1}=\boldsymbol{x}_g^n-\boldsymbol{A}\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n .
+\end{equation}
+\eqref{newton_X} is \eqref{newton_D} written in the transfer coordinates.
+
+\emph{Shorter route.} The same system follows directly from \eqref{F_taylor}. Setting $\boldsymbol{F}^{n+1}=0$ in \eqref{F_taylor} and dropping the second-order term,
+\begin{equation}
+-\boldsymbol{F}^n=-\boldsymbol{K}^n\,\delta\boldsymbol{x}_l^n .
+\end{equation}
+Substituting $\delta\boldsymbol{x}_l^n=\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n$ and multiplying from the left by $(\boldsymbol{D}^n)^T$,
+\begin{equation}
+-(\boldsymbol{D}^n)^T\boldsymbol{F}^n=-(\boldsymbol{D}^n)^T\boldsymbol{K}^n\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n
+\quad\Longrightarrow\quad
+\tilde{\boldsymbol{J}}^n\cdot\delta\tilde{\boldsymbol{x}}_l^n=-\tilde{\boldsymbol{F}}^n,
+\end{equation}
+by the definitions of $\tilde{\boldsymbol{F}}$ in \eqref{dS_f} and of $\tilde{\boldsymbol{K}}$ in \eqref{df_rot}. This is \eqref{newton_X}. The derivation from the differentials above shows in addition that $\tilde{\boldsymbol{F}}=\partial S/\partial\tilde{\boldsymbol{x}}_l$ and $\tilde{\boldsymbol{K}}=-\partial^2S/\partial\tilde{\boldsymbol{x}}_l^2$, which the shorter route does not.
+
+In the Newton systems below, the superscript $n$ marks quantities evaluated at the current iterate $\boldsymbol{x}^n$; the differential relations hold at any state and carry no superscript.
+
+\paragraph{Derivation of the conjugate forces.}
+The components of $\boldsymbol{F}$ are the coefficients of $dV_l$, $dE_l$ and $dm_l$ in \eqref{dS_sigma},
+\begin{equation}\label{F_comp}
+F_1=\frac{p_l}{T_l}-\frac{p_g+p_{j}}{T_g},\qquad
+F_2=\frac1{T_l}-\frac1{T_g},\qquad
+F_3=-\frac{g_l}{T_l}+\frac{g_v}{T_g},
+\end{equation}
+with $g_l=g_l(p_l,T_l)$ and $g_v=g_v(p_v,T_g)$. The rows of $\boldsymbol{D}^T$ are $\boldsymbol{d}_M^T$, $\boldsymbol{d}_T^T$, $\boldsymbol{d}_C^T$,
+\begin{equation}\label{DT}
+\boldsymbol{D}^T=\begin{bmatrix}1&-p_I&0\\0&-1&0\\-v_l&-e_l&-1\end{bmatrix},
+\end{equation}
+where $v_l=V_l/m_l$ and $e_l=E_l/m_l$ are the specific volume and specific internal energy of the liquid. The product $\tilde{\boldsymbol{F}}=\boldsymbol{D}^T\boldsymbol{F}$ is therefore
+\begin{equation}\label{f_rows}
+\tilde{F}_M=F_1-p_IF_2,\qquad \tilde{F}_T=-F_2,\qquad \tilde{F}_C=-(v_lF_1+e_lF_2+F_3) .
+\end{equation}
+
+\emph{Mechanical.} Substituting $F_1$ and $F_2$ from \eqref{F_comp},
+\begin{equation}
+\tilde{F}_M=\frac{p_l}{T_l}-\frac{p_g+p_{j}}{T_g}-\frac{p_I}{T_l}+\frac{p_I}{T_g},
+\end{equation}
+and grouping the terms over $T_l$ and over $T_g$,
+\begin{equation}
+\tilde{F}_M=\frac{p_l-p_I}{T_l}+\frac{p_I-p_g-p_{j}}{T_g}.
+\end{equation}
+
+\emph{Thermal.} $\tilde{F}_T=-F_2=1/T_g-1/T_l$ directly.
+
+\emph{Chemical.} Substituting $F_1$, $F_2$ and $F_3$ from \eqref{F_comp},
+\begin{equation}
+\tilde{F}_C=-v_l\Bigl(\frac{p_l}{T_l}-\frac{p_g+p_{j}}{T_g}\Bigr)-e_l\Bigl(\frac1{T_l}-\frac1{T_g}\Bigr)+\frac{g_l}{T_l}-\frac{g_v}{T_g},
+\end{equation}
+and grouping the terms over $T_l$ and over $T_g$,
+\begin{equation}\label{fC_grouped}
+\tilde{F}_C=-\frac{e_l+p_lv_l-g_l}{T_l}+\frac{e_l+(p_g+p_{j})v_l-g_v}{T_g}.
+\end{equation}
+By \eqref{hg}, $h_l=e_l+p_lv_l$ and $g_l=h_l-T_ls_l$, so the numerator of the first term is
+\begin{equation}
+e_l+p_lv_l-g_l=h_l-g_l=T_ls_l,
+\end{equation}
+and the first term of \eqref{fC_grouped} is $-s_l$. The second term does not simplify the same way, because $v_l$ is multiplied by $p_g+p_{j}$ rather than by $p_l$, and $g_v$ is evaluated at $T_g$.
+
+Collecting the three results,
+\begin{equation}\label{f_conj}
+\tilde{F}_M=\frac{p_l-p_I}{T_l}+\frac{p_I-p_g-p_{j}}{T_g},\qquad
+\tilde{F}_T=\frac1{T_g}-\frac1{T_l},\qquad
+\tilde{F}_C=\frac{e_l+(p_g+p_{j})v_l-g_v}{T_g}-s_l.
+\end{equation}
+
+\paragraph{Forces of the sequential steps.}
+The literature, e.g.~\cite{Pelanti2022}, writes the three steps in the differences of pressure, temperature and chemical potential,
+\begin{equation}\label{F_seq}
+\hat{F}_M\equiv p_l-p_g-p_{j},\qquad \hat{F}_T\equiv T_l-T_g,\qquad \hat{F}_C\equiv g_l-g_v,
+\end{equation}
+collected in $\hat{\boldsymbol{F}}\equiv[\hat{F}_M,\hat{F}_T,\hat{F}_C]^T$. With the intensive variables of each phase, $\boldsymbol{z}_l=[p_l,T_l,g_l]^T$ and $\boldsymbol{z}_g=[p_g,T_g,g_v]^T$, $g_v=g_v(p_v,T_g)$,
+\begin{equation}\label{Fhat_def}
+\hat{\boldsymbol{F}}=\boldsymbol{z}_l-\boldsymbol{z}_g-[p_{j},\,0,\,0]^T .
+\end{equation}
+$\hat{\boldsymbol{F}}$ is not $\tilde{\boldsymbol{F}}$: $\tilde{\boldsymbol{F}}$ holds derivatives of the entropy, $\hat{\boldsymbol{F}}$ differences of intensive variables. Below, the Newton iteration is derived with $\hat{\boldsymbol{F}}$ as the residual, following the steps of \eqref{dF_dx}--\eqref{newton_X}, and the two residuals are then related.
+
+\paragraph{Newton step in $\hat{\boldsymbol{F}}$.}
+\emph{Intensive variables from the potentials.} By \eqref{potentials}, the potentials of phase $k$ are $\boldsymbol{y}_k=[p_k/T_k,\,1/T_k,\,-g_k/T_k]^T$, with $g_g\equiv g_v$ as in \eqref{F_comp}. Inverting these relations,
+\begin{equation}
+p_k=\frac{y_{k,1}}{y_{k,2}},\qquad T_k=\frac1{y_{k,2}},\qquad g_k=-\frac{y_{k,3}}{y_{k,2}} .
+\end{equation}
+Differentiating, and using $1/y_{k,2}=T_k$, $y_{k,1}/y_{k,2}^2=p_kT_k$ and $y_{k,3}/y_{k,2}^2=-g_kT_k$,
+\begin{equation}
+\begin{aligned}
+dp_k&=\frac{dy_{k,1}}{y_{k,2}}-\frac{y_{k,1}}{y_{k,2}^2}\,dy_{k,2}=T_k\,dy_{k,1}-p_kT_k\,dy_{k,2},\\
+dT_k&=-\frac{dy_{k,2}}{y_{k,2}^2}=-T_k^2\,dy_{k,2},\\
+dg_k&=-\frac{dy_{k,3}}{y_{k,2}}+\frac{y_{k,3}}{y_{k,2}^2}\,dy_{k,2}=-g_kT_k\,dy_{k,2}-T_k\,dy_{k,3},
+\end{aligned}
+\end{equation}
+or, in matrix form,
+\begin{equation}\label{dz_dy}
+d\boldsymbol{z}_k=\boldsymbol{G}_k\,d\boldsymbol{y}_k,\qquad
+\boldsymbol{G}_k\equiv\frac{\partial\boldsymbol{z}_k}{\partial\boldsymbol{y}_k}=T_k\begin{bmatrix}1&-p_k&0\\0&-T_k&0\\0&-g_k&-1\end{bmatrix}.
+\end{equation}
+
+\emph{Force.} As in \eqref{dF_dx}, $d\boldsymbol{y}_l=-\boldsymbol{K}_l\,d\boldsymbol{x}_l$ and $d\boldsymbol{y}_g=\boldsymbol{K}_g\boldsymbol{A}\,d\boldsymbol{x}_l$, and $p_{j}$ is constant, like $\boldsymbol{A}$. Differentiating \eqref{Fhat_def} and substituting \eqref{dz_dy} and \eqref{dx_rot},
+\begin{equation}\label{dFhat}
+d\hat{\boldsymbol{F}}=\boldsymbol{G}_l\,d\boldsymbol{y}_l-\boldsymbol{G}_g\,d\boldsymbol{y}_g=-(\boldsymbol{G}_l\boldsymbol{K}_l+\boldsymbol{G}_g\boldsymbol{K}_g\boldsymbol{A})\,d\boldsymbol{x}_l=\hat{\boldsymbol{J}}\,d\tilde{\boldsymbol{x}}_l,\qquad
+\hat{\boldsymbol{J}}\equiv-(\boldsymbol{G}_l\boldsymbol{K}_l+\boldsymbol{G}_g\boldsymbol{K}_g\boldsymbol{A})\boldsymbol{D} .
+\end{equation}
+$\hat{\boldsymbol{J}}=\partial\hat{\boldsymbol{F}}/\partial\tilde{\boldsymbol{x}}_l$ is the Jacobian of $\hat{\boldsymbol{F}}$ in the transfer coordinates. Unlike $\tilde{\boldsymbol{J}}$ it is not symmetric, because $\boldsymbol{G}_k\neq\boldsymbol{I}$.
+
+\emph{Newton--Raphson.} With $\boldsymbol{x}^r=\boldsymbol{x}^n$ as in \eqref{f_taylor}, so that $\boldsymbol{D}=\boldsymbol{D}^n$ in $\hat{\boldsymbol{J}}^n$, and Taylor expanding $\hat{\boldsymbol{F}}$ about $\boldsymbol{x}^n$ with \eqref{dFhat},
+\begin{equation}\label{Fhat_taylor}
+\hat{\boldsymbol{F}}^{n+1}=\hat{\boldsymbol{F}}^n+\hat{\boldsymbol{J}}^n\,\delta\tilde{\boldsymbol{x}}_l^n+\mathcal{O}\bigl(\lVert\delta\tilde{\boldsymbol{x}}_l^n\rVert^2\bigr).
+\end{equation}
+By \eqref{C_def} below, $\hat{\boldsymbol{F}}=0$ if and only if $\tilde{\boldsymbol{F}}=0$, i.e.\ $\boldsymbol{F}=0$. Setting $\hat{\boldsymbol{F}}^{n+1}=0$ in \eqref{Fhat_taylor} and dropping the second-order term, the solution to equilibrium is obtained from iteratively solving
+\begin{equation}\label{newton_hat}
+\hat{\boldsymbol{J}}^n\cdot\delta\tilde{\boldsymbol{x}}_l^n=-\hat{\boldsymbol{F}}^n,
+\end{equation}
+with the update \eqref{update_X}. The unknowns are the transfers of \eqref{newton_X}; only the residual is different.
+
+\paragraph{Relation between $\tilde{\boldsymbol{F}}$ and $\hat{\boldsymbol{F}}$.}
+Each component of \eqref{f_conj} is rewritten in $\hat{F}_M$, $\hat{F}_T$ and $\hat{F}_C$.
+
+\emph{Thermal.} Over the common denominator, $\tilde{F}_T=(T_l-T_g)/(T_lT_g)=\hat{F}_T/(T_lT_g)$.
+
+\emph{Mechanical.} Substituting $p_I-p_g-p_{j}=\hat{F}_M-(p_l-p_I)$ in \eqref{f_conj},
+\begin{equation}
+\tilde{F}_M=\frac{p_l-p_I}{T_l}+\frac{\hat{F}_M-(p_l-p_I)}{T_g}=\frac{\hat{F}_M}{T_g}+(p_l-p_I)\Bigl(\frac1{T_l}-\frac1{T_g}\Bigr)=\frac{\hat{F}_M}{T_g}-\frac{p_l-p_I}{T_lT_g}\,\hat{F}_T .
+\end{equation}
+
+\emph{Chemical.} Substituting $p_g+p_{j}=p_l-\hat{F}_M$ and $g_v=g_l-\hat{F}_C$, and $e_l+p_lv_l-g_l=T_ls_l$ by \eqref{hg}, the numerator of the first term of $\tilde{F}_C$ in \eqref{f_conj} is
+\begin{equation}
+e_l+(p_g+p_{j})v_l-g_v=e_l+p_lv_l-g_l-v_l\hat{F}_M+\hat{F}_C=T_ls_l-v_l\hat{F}_M+\hat{F}_C,
+\end{equation}
+so
+\begin{equation}
+\tilde{F}_C=\frac{T_ls_l-v_l\hat{F}_M+\hat{F}_C}{T_g}-s_l=s_l\,\frac{T_l-T_g}{T_g}+\frac{\hat{F}_C-v_l\hat{F}_M}{T_g}=-\frac{v_l}{T_g}\hat{F}_M+\frac{s_l}{T_g}\hat{F}_T+\frac1{T_g}\hat{F}_C .
+\end{equation}
+Collecting the three results,
+\begin{equation}\label{C_def}
+\tilde{\boldsymbol{F}}=\boldsymbol{C}\,\hat{\boldsymbol{F}},\qquad
+\boldsymbol{C}=\frac1{T_g}\begin{bmatrix}1&-(p_l-p_I)/T_l&0\\0&1/T_l&0\\-v_l&s_l&1\end{bmatrix},
+\end{equation}
+which holds at any state. $\det\boldsymbol{C}=1/(T_lT_g^3)>0$, so $\tilde{\boldsymbol{F}}=0$ if and only if $\hat{\boldsymbol{F}}=0$: \eqref{newton_X} and \eqref{newton_hat} have the same root.
+
+\emph{Forces of the steps.} The interface pressure lies between $p_g+p_{j}$ and $p_l$; write it as
+\begin{equation}\label{pI_w}
+p_l-p_I=w_M\hat{F}_M,\qquad p_I-p_g-p_{j}=(1-w_M)\hat{F}_M,\qquad w_M\in[0,1].
+\end{equation}
+The first row of \eqref{C_def} is then $\tilde{F}_M=\hat{F}_M/T_g-w_M\hat{F}_M(T_l-T_g)/(T_lT_g)=\hat{F}_M\,[w_M/T_l+(1-w_M)/T_g]$, and the third row at $\hat{F}_M=\hat{F}_T=0$ with $T_l=T_g=T$ is $\hat{F}_C/T$:
+\begin{equation}\label{f_F}
+\begin{gathered}
+\tilde{F}_M=\frac{\hat{F}_M}{T_M},\quad \frac1{T_M}\equiv\frac{w_M}{T_l}+\frac{1-w_M}{T_g};\qquad
+\tilde{F}_T=\frac{\hat{F}_T}{T_lT_g};\\
+\tilde{F}_C=\frac{\hat{F}_C}{T}\quad\text{where } p_l=p_g+p_{j},\ T_l=T_g=T.
+\end{gathered}
+\end{equation}
+At the start of each sequential step the faster forces vanish, so there the row of the step in \eqref{C_def} reduces to $\tilde{F}_M=c_M\hat{F}_M$, $\tilde{F}_T=c_T\hat{F}_T$ or $\tilde{F}_C=c_C\hat{F}_C$, with $c_M=1/T_M$, $c_T=1/(T_lT_g)$, $c_C=1/T$, all positive. The equilibrium of each step is therefore the vanishing of its component of $\hat{\boldsymbol{F}}$: the Laplace pressure equilibrium, the temperature equilibrium, and the equality of chemical potentials.
+
+\emph{Jacobians.} $\tilde{\boldsymbol{J}}=\partial\tilde{\boldsymbol{F}}/\partial\tilde{\boldsymbol{x}}_l$ by \eqref{df_rot} and \eqref{newton_X}. Differentiating \eqref{C_def} with the product rule,
+\begin{equation}\label{J_rel}
+\tilde{J}_{ab}=\sum_cC_{ac}\,\hat{J}_{cb}+\sum_c\frac{\partial C_{ac}}{\partial\tilde{x}_{l,b}}\,\hat{F}_c .
+\end{equation}
+At equilibrium $\hat{\boldsymbol{F}}=0$ and $\tilde{\boldsymbol{J}}=\boldsymbol{C}\hat{\boldsymbol{J}}$. Away from it the two iterations take different steps toward the same root; the steps differ at second order in the residual.
+
+\paragraph{Sequential solution.}
+In components, \eqref{newton_hat} reads
+\begin{equation}\label{newton_rows}
+\begin{aligned}
+\hat{J}^n_{MM}\,\delta\tilde{V}_l^n+\hat{J}^n_{MT}\,\delta\tilde{E}_l^n+\hat{J}^n_{MC}\,\delta\tilde{m}_l^n&=-\hat{F}_M^n,\\
+\hat{J}^n_{TM}\,\delta\tilde{V}_l^n+\hat{J}^n_{TT}\,\delta\tilde{E}_l^n+\hat{J}^n_{TC}\,\delta\tilde{m}_l^n&=-\hat{F}_T^n,\\
+\hat{J}^n_{CM}\,\delta\tilde{V}_l^n+\hat{J}^n_{CT}\,\delta\tilde{E}_l^n+\hat{J}^n_{CC}\,\delta\tilde{m}_l^n&=-\hat{F}_C^n.
+\end{aligned}
+\end{equation}
+\emph{First elimination ($M$).} The first row gives
+\begin{equation}\label{elim_V}
+\delta\tilde{V}_l^n=-\frac{\hat{F}_M^n+\hat{J}^n_{MT}\,\delta\tilde{E}_l^n+\hat{J}^n_{MC}\,\delta\tilde{m}_l^n}{\hat{J}^n_{MM}}.
+\end{equation}
+Substituting \eqref{elim_V} into the second and third rows,
+\begin{equation}\label{rows_TC}
+\hat{J}^{\prime n}_{TT}\,\delta\tilde{E}_l^n+\hat{J}^{\prime n}_{TC}\,\delta\tilde{m}_l^n=-\hat{F}^{\prime n}_T,\qquad
+\hat{J}^{\prime n}_{CT}\,\delta\tilde{E}_l^n+\hat{J}^{\prime n}_{CC}\,\delta\tilde{m}_l^n=-\hat{F}^{\prime n}_C,
+\end{equation}
+with, for $a,b\in\{T,C\}$,
+\begin{equation}\label{schur_1}
+\hat{J}^{\prime n}_{ab}\equiv\hat{J}^n_{ab}-\frac{\hat{J}^n_{aM}\hat{J}^n_{Mb}}{\hat{J}^n_{MM}},\qquad \hat{F}^{\prime n}_a\equiv \hat{F}^n_a-\frac{\hat{J}^n_{aM}}{\hat{J}^n_{MM}}\,\hat{F}^n_M .
+\end{equation}
+\emph{Second elimination ($T$).} The first equation of \eqref{rows_TC} gives
+\begin{equation}\label{elim_Q}
+\delta\tilde{E}_l^n=-\frac{\hat{F}^{\prime n}_T+\hat{J}^{\prime n}_{TC}\,\delta\tilde{m}_l^n}{\hat{J}^{\prime n}_{TT}},
+\end{equation}
+and substituting \eqref{elim_Q} into the second,
+\begin{equation}\label{row_C}
+\hat{J}^{\prime\prime n}_{CC}\,\delta\tilde{m}_l^n=-\hat{F}^{\prime\prime n}_C,\qquad
+\hat{J}^{\prime\prime n}_{CC}\equiv\hat{J}^{\prime n}_{CC}-\frac{\hat{J}^{\prime n}_{CT}\hat{J}^{\prime n}_{TC}}{\hat{J}^{\prime n}_{TT}},\qquad
+\hat{F}^{\prime\prime n}_C\equiv \hat{F}^{\prime n}_C-\frac{\hat{J}^{\prime n}_{CT}}{\hat{J}^{\prime n}_{TT}}\,\hat{F}^{\prime n}_T .
+\end{equation}
+\emph{Solution and back substitution.} \eqref{row_C} is a single equation, $\delta\tilde{m}_l^n=-\hat{F}^{\prime\prime n}_C/\hat{J}^{\prime\prime n}_{CC}$; $\delta\tilde{E}_l^n$ then follows from \eqref{elim_Q} and $\delta\tilde{V}_l^n$ from \eqref{elim_V}. For the leading $2\times2$ block, $\delta\tilde{m}_l^n=0$ and the solve is $\delta\tilde{E}_l^n=-\hat{F}^{\prime n}_T/\hat{J}^{\prime n}_{TT}$, followed by \eqref{elim_V}; for the $1\times1$ block it is $\delta\tilde{V}_l^n=-\hat{F}^n_M/\hat{J}^n_{MM}$.
+
+\emph{Pivots.} The pivots are the coefficients that divide at each elimination: $\hat{J}^n_{MM}$ in \eqref{elim_V}, $\hat{J}^{\prime n}_{TT}$ in \eqref{elim_Q} and $\hat{J}^{\prime\prime n}_{CC}$ in \eqref{row_C}. They are the combinations $\hat{J}_{MM}$, $\hat{J}'_{TT}$, $\hat{J}''_{CC}$ of the entries of $\hat{\boldsymbol{J}}$, defined as in \eqref{schur_1} and \eqref{row_C} at any state and evaluated at $\boldsymbol{x}^n$. Each of them is the derivative of the force of one step with respect to the transfer of that step, taken under the constraints of the step. To show this, write the differential relation \eqref{dFhat} in components,
+\begin{equation}\label{dFhat_rows}
+\begin{aligned}
+d\hat{F}_M&=\hat{J}_{MM}\,d\tilde{V}_l+\hat{J}_{MT}\,d\tilde{E}_l+\hat{J}_{MC}\,d\tilde{m}_l,\\
+d\hat{F}_T&=\hat{J}_{TM}\,d\tilde{V}_l+\hat{J}_{TT}\,d\tilde{E}_l+\hat{J}_{TC}\,d\tilde{m}_l,\\
+d\hat{F}_C&=\hat{J}_{CM}\,d\tilde{V}_l+\hat{J}_{CT}\,d\tilde{E}_l+\hat{J}_{CC}\,d\tilde{m}_l .
+\end{aligned}
+\end{equation}
+At $\boldsymbol{x}^n$ this is the matrix of \eqref{newton_rows}. In \eqref{newton_rows} the change of the forces is prescribed, $-\hat{\boldsymbol{F}}^n$, and the transfers are solved for. Here the opposite question is asked: how each force responds to a given transfer when the other transfers either are inactive or adjust to hold some forces fixed.
+
+\emph{Mechanical step.} Only volume is transferred, with its work along $\boldsymbol{d}_M$, at fixed masses and with no heat: $d\tilde{E}_l=d\tilde{m}_l=0$. $\tilde{E}_l$ is the heat, not the energy: the work is carried by $\boldsymbol{d}_M=[1,-p_I,0]^T$, so the energies still change, $dE_l=-p_I\,d\tilde{V}_l$ and $dE_g=(p_I-p_{j})\,d\tilde{V}_l$ by $d\boldsymbol{x}_g=-\boldsymbol{A}\,d\boldsymbol{x}_l$, which is \eqref{work_M}. The first row of \eqref{dFhat_rows} reduces to
+\begin{equation}
+d\hat{F}_M=\hat{J}_{MM}\,d\tilde{V}_l
+\quad\Longrightarrow\quad
+\left(\frac{\partial \hat{F}_M}{\partial\tilde{V}_l}\right)_{\tilde{E}_l,\tilde{m}_l}=\hat{J}_{MM}.
+\end{equation}
+Physically, expanding the liquid lowers $p_l$ and raises $p_g$, so $\hat{J}_{MM}<0$ is expected; the sign is proven at equilibrium below.
+
+\emph{Thermal step.} Heat $d\tilde{E}_l$ is transferred at fixed masses, $d\tilde{m}_l=0$, and the pressure equilibrium reached by the mechanical step is held, $d\hat{F}_M=0$. Given $d\tilde{E}_l$, the unknowns are $d\tilde{V}_l$ and $d\hat{F}_T$. The first row of \eqref{dFhat_rows} with $d\hat{F}_M=0$ and $d\tilde{m}_l=0$ is
+\begin{equation}
+0=\hat{J}_{MM}\,d\tilde{V}_l+\hat{J}_{MT}\,d\tilde{E}_l
+\quad\Longrightarrow\quad
+d\tilde{V}_l=-\frac{\hat{J}_{MT}}{\hat{J}_{MM}}\,d\tilde{E}_l,
+\end{equation}
+the volume the phases must exchange to keep their pressures in equilibrium while the heat is transferred. The second row with $d\tilde{m}_l=0$ is $d\hat{F}_T=\hat{J}_{TM}\,d\tilde{V}_l+\hat{J}_{TT}\,d\tilde{E}_l$. Substituting $d\tilde{V}_l$,
+\begin{equation}
+d\hat{F}_T=-\frac{\hat{J}_{TM}\hat{J}_{MT}}{\hat{J}_{MM}}\,d\tilde{E}_l+\hat{J}_{TT}\,d\tilde{E}_l=\Bigl(\hat{J}_{TT}-\frac{\hat{J}_{TM}\hat{J}_{MT}}{\hat{J}_{MM}}\Bigr)d\tilde{E}_l=\hat{J}'_{TT}\,d\tilde{E}_l,
+\end{equation}
+where the bracket is the combination $\hat{J}'_{TT}$ of \eqref{schur_1} with $a=b=T$, at the current state. Therefore
+\begin{equation}
+\left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\hat{J}'_{TT}.
+\end{equation}
+Physically, heat given by the liquid lowers $T_l$ and raises $T_g$, so $\hat{J}'_{TT}<0$ is expected.
+
+\emph{Chemical step.} Mass $d\tilde{m}_l$ is transferred, and the pressure and temperature equilibria are held, $d\hat{F}_M=d\hat{F}_T=0$. Given $d\tilde{m}_l$, the unknowns are $d\tilde{V}_l$, $d\tilde{E}_l$ and $d\hat{F}_C$. The first row of \eqref{dFhat_rows} with $d\hat{F}_M=0$ gives
+\begin{equation}\label{dV_hold}
+d\tilde{V}_l=-\frac{\hat{J}_{MT}\,d\tilde{E}_l+\hat{J}_{MC}\,d\tilde{m}_l}{\hat{J}_{MM}},
+\end{equation}
+which is \eqref{elim_V} with $\hat{F}_M^n$ replaced by $d\hat{F}_M=0$. Substituting \eqref{dV_hold} into the second row and collecting the terms in $d\tilde{E}_l$ and in $d\tilde{m}_l$,
+\begin{equation}
+d\hat{F}_T=\Bigl(\hat{J}_{TT}-\frac{\hat{J}_{TM}\hat{J}_{MT}}{\hat{J}_{MM}}\Bigr)d\tilde{E}_l+\Bigl(\hat{J}_{TC}-\frac{\hat{J}_{TM}\hat{J}_{MC}}{\hat{J}_{MM}}\Bigr)d\tilde{m}_l=\hat{J}'_{TT}\,d\tilde{E}_l+\hat{J}'_{TC}\,d\tilde{m}_l,
+\end{equation}
+and likewise into the third row,
+\begin{equation}
+d\hat{F}_C=\Bigl(\hat{J}_{CT}-\frac{\hat{J}_{CM}\hat{J}_{MT}}{\hat{J}_{MM}}\Bigr)d\tilde{E}_l+\Bigl(\hat{J}_{CC}-\frac{\hat{J}_{CM}\hat{J}_{MC}}{\hat{J}_{MM}}\Bigr)d\tilde{m}_l=\hat{J}'_{CT}\,d\tilde{E}_l+\hat{J}'_{CC}\,d\tilde{m}_l,
+\end{equation}
+with the combinations of \eqref{schur_1} at the current state. These are the rows \eqref{rows_TC} with the increments $d\hat{F}_T$ and $d\hat{F}_C$ in place of $-\hat{F}^{\prime n}_T$ and $-\hat{F}^{\prime n}_C$. Holding $d\hat{F}_T=0$ in the first,
+\begin{equation}
+d\tilde{E}_l=-\frac{\hat{J}'_{TC}}{\hat{J}'_{TT}}\,d\tilde{m}_l,
+\end{equation}
+the heat that must accompany the mass to keep the temperatures in equilibrium, which is \eqref{elim_Q} with $\hat{F}^{\prime n}_T$ replaced by $d\hat{F}_T=0$. Substituting into the second,
+\begin{equation}
+d\hat{F}_C=-\frac{\hat{J}'_{CT}\hat{J}'_{TC}}{\hat{J}'_{TT}}\,d\tilde{m}_l+\hat{J}'_{CC}\,d\tilde{m}_l=\Bigl(\hat{J}'_{CC}-\frac{\hat{J}'_{CT}\hat{J}'_{TC}}{\hat{J}'_{TT}}\Bigr)d\tilde{m}_l=\hat{J}''_{CC}\,d\tilde{m}_l,
+\end{equation}
+where the bracket is the combination $\hat{J}''_{CC}$ of \eqref{row_C} at the current state. Therefore
+\begin{equation}
+\left(\frac{\partial \hat{F}_C}{\partial\tilde{m}_l}\right)_{\hat{F}_M,\hat{F}_T}=\hat{J}''_{CC}.
+\end{equation}
+Physically, mass given by the liquid lowers $g_l$ relative to $g_v$, so $\hat{J}''_{CC}<0$ is expected.
+
+\emph{Elimination and constraints.} The three derivations repeat the algebra of \eqref{elim_V}--\eqref{row_C}: eliminating $\delta\tilde{V}_l$ with the first row is what holding $\hat{F}_M$ does, and eliminating $\delta\tilde{E}_l$ with the reduced second row is what holding $\hat{F}_T$ does. The pivots are therefore the derivatives of the forces under exactly the constraints of the sequential steps. At the start state of each step, these are the derivatives that the sequential relaxation below computes from the equations of state: \eqref{K_M} for the mechanical step at any state, \eqref{K_T_step} for the thermal step at $\hat{F}_M=0$, and \eqref{K_C} for the chemical step at $\hat{F}_M=\hat{F}_T=0$. At $\hat{F}_M=0$ the interface pressure, which lies between $p_g+p_{j}$ and $p_l$, equals $p_l$, so the heat $d\tilde{E}_l=-(dE_l+p_I\,dV_l)$ is the heat of \eqref{heat_def}. With every transfer counted in the direction its force drives it, each force decreases along its own transfer, and the stiffnesses of the steps are defined as the magnitudes of the three derivatives (positivity is shown below),
+\begin{equation}\label{stiff_def}
+\left(\frac{\partial \hat{F}_M}{\partial\tilde{V}_l}\right)_{\tilde{E}_l,\tilde{m}_l}=\hat{J}_{MM}=-\mathcal{K}^M,\quad \left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\hat{J}'_{TT}=-\mathcal{K}^T,\quad \left(\frac{\partial \hat{F}_C}{\partial\tilde{m}_l}\right)_{\hat{F}_M,\hat{F}_T}=\hat{J}''_{CC}=-\mathcal{K}^C .
+\end{equation}
+
+\emph{Positivity.} At equilibrium $\hat{F}_M=0$, so $p_I$, which lies between $p_g+p_{j}$ and $p_l$, equals $p_l$, and $C_{MT}=0$ in \eqref{C_def}: $\boldsymbol{C}$ is lower triangular. By \eqref{J_rel}, $\tilde{\boldsymbol{J}}=\boldsymbol{C}\hat{\boldsymbol{J}}$, and for a lower-triangular $\boldsymbol{C}$ the leading $k\times k$ block of the product is the product of the leading blocks, $\tilde{\boldsymbol{J}}_k=\boldsymbol{C}_k\hat{\boldsymbol{J}}_k$. Taking determinants, $\det\tilde{\boldsymbol{J}}_k=\bigl(\prod_{i\le k}C_{ii}\bigr)\det\hat{\boldsymbol{J}}_k$. The elimination makes each leading determinant the product of the first $k$ pivots, so the ratio of consecutive leading determinants is the $k$-th pivot, and the pivots of $\tilde{\boldsymbol{J}}$ are $C_{ii}$ times those of $\hat{\boldsymbol{J}}$. $\tilde{\boldsymbol{J}}=-\tilde{\boldsymbol{K}}$ with $\tilde{\boldsymbol{K}}$ positive definite, so its leading determinants are positive and the pivots of $\tilde{\boldsymbol{J}}$ are $-s_i$ with
+\begin{equation}\label{pivots}
+s_M=\tilde{K}_{MM}>0,\qquad s_T=\frac{\det\tilde{\boldsymbol{K}}_{MT}}{\tilde{K}_{MM}}>0,\qquad s_C=\frac{\det\tilde{\boldsymbol{K}}}{\det\tilde{\boldsymbol{K}}_{MT}}>0,
+\end{equation}
+where $\tilde{\boldsymbol{K}}_{MT}$ is the leading $2\times2$ block. With $C_{MM}=1/T$, $C_{TT}=1/T^2$, $C_{CC}=1/T$ and the pivots $-\mathcal{K}^M$, $-\mathcal{K}^T$, $-\mathcal{K}^C$ of $\hat{\boldsymbol{J}}$,
+\begin{equation}\label{pivot_K}
+\begin{gathered}
+-s_M=C_{MM}(-\mathcal{K}^M),\qquad -s_T=C_{TT}(-\mathcal{K}^T),\qquad -s_C=C_{CC}(-\mathcal{K}^C)\\
+\Longrightarrow\quad\mathcal{K}^M=T\,s_M,\qquad \mathcal{K}^T=T^2s_T,\qquad \mathcal{K}^C=T\,s_C,
+\end{gathered}
+\end{equation}
+all positive at equilibrium, and by continuity near it. Away from equilibrium $\mathcal{K}^M=1/W_l^{eff}+1/W_g^{eff}$ of \eqref{K_M} depends on $p_I$. For the ideal gas, $V_g/W_g^{eff}=K_{s,g}+\Gamma_g(p_{I,g}-p_g)=p_g+(\gamma_g-1)\,p_{I,g}$, which is negative when $p_{I,g}<-p_g/(\gamma_g-1)$, i.e.\ when $p_I$ is taken close to the pressure of a liquid in tension; with a small gas volume $\mathcal{K}^M$ is then negative. The pivot of the entropy force, $\tilde K_{MM}=\boldsymbol{d}_M^T\boldsymbol{K}\boldsymbol{d}_M$, is positive at every state by the definiteness of $\boldsymbol{K}$; the two differ by the term $\hat{F}_M\,\partial(1/T_M)/\partial\tilde V_l$ of \eqref{J_rel}.
+
+\emph{Sequential steps.} Each elimination is one relaxation step:
+\begin{enumerate}
+\item mechanical: \eqref{elim_V} with $\delta\tilde{E}_l^n=\delta\tilde{m}_l^n=0$, after which $\hat{F}_M^{n+1}=0$ to first order;
+\item thermal, from a state with $\hat{F}_M^n=0$: there $\hat{F}^{\prime n}_T=\hat{F}^n_T$ by \eqref{schur_1}, and \eqref{elim_Q} with $\delta\tilde{m}_l^n=0$ gives $\delta\tilde{E}_l^n$, with $\delta\tilde{V}_l^n=-(\hat{J}^n_{MT}/\hat{J}^n_{MM})\,\delta\tilde{E}_l^n$ holding $\hat{F}_M=0$; after it $\hat{F}_M^{n+1}=\hat{F}_T^{n+1}=0$ to first order;
+\item chemical, from a state with $\hat{F}_M^n=\hat{F}_T^n=0$: there $\hat{F}^{\prime\prime n}_C=\hat{F}^n_C$, and \eqref{row_C} gives $\delta\tilde{m}_l^n$, with $\delta\tilde{V}_l^n$ and $\delta\tilde{E}_l^n$ from \eqref{elim_V} and \eqref{elim_Q} holding $\hat{F}_M=\hat{F}_T=0$; after it $\hat{\boldsymbol{F}}^{n+1}=0$ to first order.
+\end{enumerate}
+With \eqref{stiff_def} evaluated at the start state $\boldsymbol{x}^n$ of each step, the transfers of the three steps are
+\begin{equation}\label{step_F}
+\delta\tilde{V}_l^n=\frac{\hat{F}_M^n}{\mathcal{K}^{M,n}},\qquad \delta\tilde{E}_l^n=\frac{\hat{F}_T^n}{\mathcal{K}^{T,n}},\qquad \delta\tilde{m}_l^n=\frac{\hat{F}_C^n}{\mathcal{K}^{C,n}}.
+\end{equation}
+With $\hat{\boldsymbol{J}}$ frozen at $\boldsymbol{x}^n$, each step leaves the linearized faster forces at zero and after the third all three vanish, so the three steps add up to the Newton step \eqref{newton_hat}. In the sequential relaxation each step is instead evaluated at its own start state, where the faster forces vanish: its right-hand side is the component of $\hat{\boldsymbol{F}}$ of the step at that state, and its pivot is evaluated there. A step is then the Newton step of a constrained entropy maximum: over $\mathrm{span}\{\boldsymbol{d}_M\}$ (mechanical), over $\{\delta m_l=0\}$ (thermo-mechanical), and over all exchanges (full equilibrium). Iterating each stage, as described at the end of the sequential relaxation, reaches these maxima exactly and ends at $\boldsymbol{F}=0$.
+
+\subsubsection{Sequential relaxation}
+The steps below are the three eliminations of the Newton system \eqref{newton_hat}, each evaluated at its own start state and written in the forces \eqref{F_seq}. Pre-relaxation, post-mechanical, post thermo-mechanical, and post thermo-chemical relaxation states are shown by superscripts $0$, $*$, $**$, and $\otimes$, respectively. The start state of each step ($0$, $*$, $**$) is the state $\boldsymbol{x}^n$ of \eqref{step_F} for that step, and the forces of the step are the components of $\hat{\boldsymbol{F}}$ of \eqref{F_seq} evaluated there. Finite increments over a step are written with $\delta$, differential relations with $d$.
+In mechanical relaxation step, mass of phases remain unchanged and the only energy exchange is due to the volume change
+\begin{equation}\label{work_M}
+dm_k=0, \quad dE_k=-p_{I,k}\,dV_k,\qquad p_{I,l}=p_I,\quad p_{I,g}=p_I-p_{j},
+\end{equation}
+where the gas works against $p_I-p_{j}$ so that $E_l+E_g+\sigma A$ is conserved. This is the direction $\boldsymbol{d}_M$. Inserting the above conditions into equation \eqref{dS},
+\begin{equation}\label{dS_M}
+dS_k=\frac{(p_k-p_{I,k})}{T_k}\,dV_k.
+\end{equation}
+\paragraph{Mechanical equilibrium as a constrained entropy maximum.}
+Summing \eqref{dS_M} over the phases with $dV_g=-dV_l$,
+\begin{equation}\label{dS_M_sum}
+dS=dS_l+dS_g=\Bigl[\frac{p_l-p_I}{T_l}+\frac{p_I-p_{j}-p_g}{T_g}\Bigr]dV_l=\tilde{F}_M\,dV_l,
+\end{equation}
+with $\tilde{F}_M$ of \eqref{f_conj}. In this step $V_l$ is the only free variable: $E_l$ follows from the work and $m_l$ is fixed. Along the path $d\tilde{V}_l=dV_l$, and $S$ is therefore maximal where $(\partial S/\partial\tilde{V}_l)_{\tilde{E}_l,\tilde{m}_l}=\tilde{F}_M=0$.
+
+Each term of \eqref{dS_M_sum} is the entropy generated by one phase working against the interface. The liquid term is positive when the liquid expands ($dV_l>0$) against a lower interface pressure ($p_I<p_l$); the gas term is positive when the gas is compressed ($dV_g<0$) by a higher one ($p_I-p_{j}>p_g$). The temperatures only scale how much entropy each phase generates; the sign of each term is set by its own pressure difference. To see that the temperatures drop out of the condition $\tilde{F}_M=0$, insert the interface pressure written as in \eqref{pI_w}, $p_l-p_I=w_M\hat{F}_M$ and $p_I-p_g-p_{j}=(1-w_M)\hat{F}_M$ with $w_M\in[0,1]$:
+\begin{equation}\label{fM_steps}
+\tilde{F}_M=\frac{w_M\hat{F}_M}{T_l}+\frac{(1-w_M)\hat{F}_M}{T_g}=\hat{F}_M\Bigl(\frac{w_M}{T_l}+\frac{1-w_M}{T_g}\Bigr)=\frac{\hat{F}_M}{T_M}.
+\end{equation}
+Since $w_M$ and $1-w_M$ are non-negative and sum to one, and $T_l,T_g>0$, $1/T_M$ lies between $1/T_g$ and $1/T_l$ and is positive. Along the mechanical path $(\partial S/\partial\tilde{V}_l)_{\tilde{E}_l,\tilde{m}_l}=\hat{F}_M/T_M$: $S$ increases while the liquid expands at $\hat{F}_M>0$ or contracts at $\hat{F}_M<0$, and is stationary only at
+\begin{equation}
+\hat{F}_M=p_l-p_g-p_{j}=0 .
+\end{equation}
+The entropy maximum of mechanical relaxation is therefore the Laplace condition $p_l-p_g=p_{j}$, for any $T_l$ and $T_g$; the temperatures enter only the positive factor $1/T_M$. This uses that $p_I$ lies between $p_g+p_{j}$ and $p_l$~\cite[eq.~(3)]{Pelanti2022}. If $p_I$ were instead a fixed number, $\tilde{F}_M=0$ would give $(p_l-p_I)/T_l=(p_g+p_{j}-p_I)/T_g$, a state where $p_I$ is above both $p_l$ and $p_g+p_{j}$ or below both, which violates that condition unless $p_l=p_I=p_g+p_{j}$.
+
+The mechanical end state is not $\boldsymbol{F}=0$: the condition \eqref{equilibrium_condition} holds only when $V_l$, $E_l$ and $m_l$ can all change independently, i.e.\ at full equilibrium. In particular, the first component of $\boldsymbol{F}$, $F_1=p_l/T_l-(p_g+p_{j})/T_g$, is the force of a volume exchange at fixed $E_l$, along $[1,0,0]^T=\boldsymbol{d}_M-p_I\boldsymbol{d}_T$, which needs the heat $p_I\,dV_l$ received by the liquid ($d\tilde{E}_l=-p_I\,dV_l$) alongside the work: equal $p/T$ is the mechanical condition only when heat is exchanged as well. At the mechanical end state $F_1=p_I(1/T_l-1/T_g)\neq0$ is balanced by the energy component, $\tilde{F}_M=F_1-p_IF_2=0$. Pressure equilibrium is one condition for two unknowns, $V_l$ and the split of the energy, so the mechanical end state depends on $p_I$ along the path; the thermal and chemical end states have as many conditions as unknowns.
+
+Pressure as a function of entropy and volume is
+\begin{equation}
+dp_k=\left( \frac{\partial p_k}{\partial V_k} \right)_{S_k}\,dV_k + \left( \frac{\partial p_k}{\partial S_k} \right)_{V_k}\,dS_k,
+\end{equation}
+which using equation \eqref{dS_M}, can be rearranged to
+\begin{equation}\label{dp_M}
+dp_k=\left[ \left( \frac{\partial p_k}{\partial V_k} \right)_{S_k} + \left( \frac{\partial p_k}{\partial S_k} \right)_{V_k} \, \left( \frac{p_k-p_{I,k}}{T_k} \right) \right]\,dV_k.
+\end{equation}
+The isentropic bulk modulus is defined as
+\begin{equation}
+K_s=\rho\,\left(\frac{\partial p}{\partial \rho}\right)_s = -v\,\left(\frac{\partial p}{\partial v}\right)_s.
+\end{equation}
+At constant mass we have
+\begin{equation}
+\left( \frac{\partial p_k}{\partial V_k} \right)_{S_k} = \frac{-K_s}{V}
+\end{equation}
+The Gr\"uneisen coefficient is defined as
+\begin{equation}
+\Gamma = v\,\left( \frac{\partial p}{\partial e} \right)_{v}.
+\end{equation}
+Using equation \eqref{first_thermo_law} and by chain rule we obtain
+\begin{equation}\label{dp_ds_v}
+\left( \frac{\partial p}{\partial s} \right)_{v} = \left( \frac{\partial p}{\partial e} \right)_{v} \, \left( \frac{\partial e}{\partial s} \right)_{v} = \frac{\Gamma}{v}\,T,
+\end{equation}
+which leads to the following relation
+\begin{equation}
+\left( \frac{\partial p}{\partial S} \right)_{V} = \frac{\Gamma}{V}\,T.
+\end{equation}
+Plugging the obtained partial derivatives of pressure back into equation \eqref{dp_M} we get
+\begin{equation}\label{dp_M_Ks}
+dp_k=\left[ -\frac{K_{s,k}}{V_k} + \frac{\Gamma_k}{V_k} \, \left( p_k-p_{I,k} \right) \right]\,dV_k,
+\end{equation}
+which relates phasic pressure and phasic volume change for mechanical relaxation step. Compliance is defined as $W_k=V/K_s$. With this definition, the above equation can be turned into
+\begin{equation}\label{dp_W}
+dp_k=-\frac{dV_k}{W_k^{eff}},
+\end{equation}
+where
+\begin{equation}
+W_k^{eff} = \frac{W_k}{1-\Gamma_k \left( p_k-p_{I,k} \right)/K_{s,k}}.
+\end{equation}
+Mechanical relaxation requires that
+\begin{equation}
+\left(p_l^0+\delta p_l^M\right) - \left(p_g^0+\delta p_g^M\right) = p_{j}.
+\end{equation}
+Therefore,
+\begin{equation}
+\hat{F}_M^0 + \delta p_l^M - \delta p_g^M = 0,
+\end{equation}
+where
+\begin{equation}\label{F_M}
+\hat{F}_M^0 = p_l^0 - p_g^0 - p_{j}
+\end{equation}
+is the mechanical component of $\hat{\boldsymbol{F}}$ at the start state. Using equations \eqref{dp_M_Ks}, \eqref{F_M}, and volume conservation, solution to mechanical relaxation step is found
+\begin{equation}
+p_l^* = p_l^0 + \delta p_l^M,\qquad p_g^* = p_g^0 + \delta p_g^M,
+\end{equation}
+\begin{equation}
+\delta p_l^M=-\phi_l^M\,\hat{F}_M^0,\qquad \delta p_g^M=+\phi_g^M\,\hat{F}_M^0,
+\end{equation}
+\begin{equation}\label{phi_M}
+\phi_l^M\equiv \frac{W_g^{eff}}{W_l^{eff}+W_g^{eff}},\qquad \phi_g^M\equiv \frac{W_l^{eff}}{W_l^{eff}+W_g^{eff}}.
+\end{equation}
+In terms of the transferred volume $\delta\tilde{V}_l=\delta V_l=-\delta V_g$, \eqref{dp_W} gives $d\hat{F}_M=dp_l-dp_g=-(1/W_l^{eff}+1/W_g^{eff})\,d\tilde{V}_l$, so by \eqref{stiff_def} and \eqref{step_F}, with $W_k^{eff}$ at the start state $0$,
+\begin{equation}\label{K_M}
+\mathcal{K}^M=\frac1{W_l^{eff}}+\frac1{W_g^{eff}},\qquad \delta\tilde{V}_l=\frac{\hat{F}_M^0}{\mathcal{K}^M},\qquad \delta E_l=-p_{I,l}\,\delta\tilde{V}_l,\qquad \delta E_g=p_{I,g}\,\delta\tilde{V}_l,
+\end{equation}
+which gives $\delta p_l^M=-\delta\tilde{V}_l/W_l^{eff}=-\phi_l^M\hat{F}_M^0$. $1/W_k^{eff}=[\Gamma_k(p_{I,k}-p_k)+K_{s,k}]/V_k$ is Pelanti's $1/\xi_k^p$~\cite[eq.~(51)]{Pelanti2022}, where $p_{j}=0$.
+\noindent The corresponding temperature change would be
+\begin{equation}
+T_l^* = T_l^0 + \delta T_l^M,\qquad T_g^* = T_g^0 + \delta T_g^M,
+\end{equation}
+\begin{equation}
+\delta T_k^M = - W_k^{eff} \left[ \frac{p_k-p_{I,k}}{C_{v,k}} - \frac{\Gamma_k T_k}{V_k} \right] \delta p_k^M.
+\end{equation}
+The derivation of $\delta T_k$ is as follows. For each phase at frozen composition we have
+\begin{equation}
+dT = \left(\frac{\partial T}{\partial V}\right)_{S} dV + \left(\frac{\partial T}{\partial S}\right)_{V} dS.
+\end{equation}
+From equation \eqref{first_thermo_law} we get
+\begin{equation}
+c_v = \left(\frac{\partial e}{\partial T}\right)_{v} = T \left(\frac{\partial s}{\partial T}\right)_{v}.
+\end{equation}
+Therefore we have
+\begin{equation}
+\left(\frac{\partial T}{\partial S}\right)_{V} = \frac{T}{C_v}, \quad C_v=mc_v.
+\end{equation}
+From equation \eqref{first_thermo_law} we get
+\begin{equation}
+T = \left(\frac{\partial e}{\partial s}\right)_{v}, \quad p = - \left(\frac{\partial e}{\partial v}\right)_{s},
+\end{equation}
+and
+\begin{equation}
+\left(\frac{\partial T}{\partial v}\right)_{s} = - \left(\frac{\partial p}{\partial s}\right)_{v} = - \frac{\Gamma T}{v},
+\end{equation}
+where equation \eqref{dp_ds_v} is used. The temperature differential can then be written as
+\begin{equation}
+dT = - \frac{\Gamma T}{V} dV + \frac{T}{C_v} dS,
+\end{equation}
+which by using equation \eqref{dS_M} can be rearranged to
+\begin{equation}
+dT_k = \left( \frac{p_k-p_{I,k}}{C_{v,k}} - \frac{\Gamma_k T_k}{V_k} \right) dV_k,
+\end{equation}
+
+
+In thermal relaxation step, phasic masses remain unchanged while heat is exchanged between the phases. Phasic pressure are allowed to change such that at the end of the relaxation, Thermal and mechanical equilibria are achieved. The thermal component of $\hat{\boldsymbol{F}}$ at the start state is
+\begin{equation}
+\hat{F}_T^* = T_l^* - T_g^* .
+\end{equation}
+\paragraph{Thermal equilibrium as a constrained entropy maximum.}
+In this step the masses are fixed and the pressure equilibrium $p_l=p_g+p_{j}$ of the mechanical step is held. The free variable is the heat $\delta\tilde{E}_l$ given by the liquid; the volumes adjust to hold the pressure equilibrium. The liquid gives the heat and works at its own pressure, and the energy constraint $dE_g=-dE_l-p_{j}\,dV_l$ then gives the gas energy:
+\begin{equation}\label{heat_def}
+dE_l=-d\tilde{E}_l-p_l\,dV_l,\qquad dE_g=d\tilde{E}_l+(p_l-p_{j})\,dV_l=d\tilde{E}_l-p_g\,dV_g .
+\end{equation}
+This is the direction $\boldsymbol{d}_T$ plus the work along $\boldsymbol{d}_M$ with $p_I=p_l$, the only value between $p_g+p_{j}$ and $p_l$ at pressure equilibrium. With fixed masses, \eqref{dS} gives $dS_k=(dE_k+p_k\,dV_k)/T_k$ for each phase. Substituting \eqref{heat_def},
+\begin{equation}\label{dS_T_phases}
+dS_l=\frac{-d\tilde{E}_l-p_l\,dV_l+p_l\,dV_l}{T_l}=-\frac{d\tilde{E}_l}{T_l},\qquad
+dS_g=\frac{d\tilde{E}_l-p_g\,dV_g+p_g\,dV_g}{T_g}=\frac{d\tilde{E}_l}{T_g}.
+\end{equation}
+The work terms cancel because each phase works at its own pressure: at pressure equilibrium the volume exchange generates no entropy, and only the heat does. Summing,
+\begin{equation}\label{dS_T_sum}
+dS=dS_l+dS_g=\Bigl(\frac1{T_g}-\frac1{T_l}\Bigr)d\tilde{E}_l=\tilde{F}_T\,d\tilde{E}_l,
+\end{equation}
+with $\tilde{F}_T$ of \eqref{f_conj}. Over the common denominator,
+\begin{equation}\label{fT_steps}
+\tilde{F}_T=\frac{T_l-T_g}{T_lT_g}=\frac{\hat{F}_T}{T_lT_g}.
+\end{equation}
+$T_l,T_g>0$, so $1/(T_lT_g)$ is positive and $dS=\hat{F}_T\,d\tilde{E}_l/(T_lT_g)$: $S$ increases while heat flows from the hotter phase to the colder one ($d\tilde{E}_l>0$ at $\hat{F}_T>0$, $d\tilde{E}_l<0$ at $\hat{F}_T<0$), and is stationary only at
+\begin{equation}
+\hat{F}_T=T_l-T_g=0 .
+\end{equation}
+The entropy maximum of thermal relaxation is therefore the temperature equilibrium; the temperatures enter only the positive factor $1/(T_lT_g)$. Unlike \eqref{fM_steps}, this factorization needs no interface closure. With the pressure equilibrium held, the end state of the thermal step is the maximum of $S$ over all states with fixed masses: $p_l=p_g+p_{j}$ and $T_l=T_g$, two conditions for the two unknowns $V_l$ and $E_l$.
+
+
+Thermo-mechanical equilibrium requires that
+\begin{equation}
+p_l^{**} - p_g^{**} = p_{j}, \quad T_l^{**} = T_g^{**}
+\end{equation}
+Note that since mechanical relaxation leaves pressure equilibrium through $p_l^* - p_g^* = p_{j}$, pressure change during thermal relaxation step is identical for liquid and gas phases
+\begin{equation}
+\delta p_l^T = \delta p_g^T  = \delta p^T .
+\end{equation}
+Temperature change reads
+\begin{equation}\label{T_constraint}
+T_l^{**} = T_l^* + \delta T_l^T,\quad T_g^{**} = T_g^* + \delta T_g^T,\quad \hat{F}_T^* = \delta T_g^T - \delta T_l^T.
+\end{equation}
+Conservation requires that
+\begin{equation}
+dV_l+dV_g=0
+\end{equation}
+and
+\begin{align}
+d(E_l+E_g+\sigma A)=0 \\
+dH_l+dH_g - (p_l-p_g-p_{j})dV_l - (V_l+V_g)dp = 0 \\
+dH_l+dH_g - Vdp = 0
+\end{align}
+The differential form of volume can be written as
+\begin{equation}\label{dV_T}
+dV = \left( \frac{\partial V}{\partial T} \right)_p dT + \left( \frac{\partial V}{\partial p} \right)_T dp,
+\end{equation}
+by using thermal expansion coefficient
+\begin{equation}
+\alpha_p = \frac1v \left( \frac{\partial v}{\partial T} \right)_p,
+\end{equation}
+isothermal bulk modulus
+\begin{equation}
+K_T = \rho \left( \frac{\partial p}{\partial \rho} \right)_T = -v \left( \frac{\partial p}{\partial v} \right)_T,
+\end{equation}
+and phasic mass conservation can be reduced to the following form
+\begin{equation}
+dV = V \alpha_p dT - \frac{V}{K_T} dp.
+\end{equation}
+At constant pressure, equation \eqref{dh} gives $dh = T ds$. On the other hand,
+\begin{equation}
+ds = \left(\frac{\partial s}{\partial T}\right)_p dT + \left(\frac{\partial s}{\partial p}\right)_T dp.
+\end{equation}
+Combining the above relation with $dh = T ds$ at constant pressure we get
+\begin{equation}
+\left(\frac{\partial h}{\partial T}\right)_p = T \left(\frac{\partial s}{\partial T}\right)_p \Rightarrow \left(\frac{\partial s}{\partial T}\right)_p = \frac{c_p}{T}
+\end{equation}
+Equation \eqref{dg} gives
+\begin{equation}
+v=\left(\frac{\partial g}{\partial p}\right)_T \quad and \quad s=-\left(\frac{\partial g}{\partial T}\right)_p.
+\end{equation}
+As a result,
+\begin{equation}
+\left(\frac{\partial s}{\partial p}\right)_T = \frac{\partial}{\partial p}\left[ - \left(\frac{\partial g}{\partial T}\right)_p \right]_T = -\frac{\partial}{\partial T}\left[ \left(\frac{\partial g}{\partial p}\right)_T \right]_p = -\left(\frac{\partial v}{\partial T}\right)_p = -v \alpha_p.
+\end{equation}
+Therefore, the differential form of entropy would read
+\begin{equation}
+ds=\frac{c_p}{T} dT - v \alpha_p dp.
+\end{equation}
+Substituting the above equation into equation \eqref{dh}
+\begin{equation}
+dh = T \left( \frac{c_p}{T} dT - v \alpha_p dp \right) + vdp = c_p dT + v \left( 1 - T \alpha_p \right) dp,
+\end{equation}
+which can be transferred into extensive form given phasic mass conservation through thermal relaxation
+\begin{equation}\label{dH_T}
+dH = C_p dT + V \left( 1 - T \alpha_p \right) dp,
+\end{equation}
+where $C_p = m c_p$.
+Using equation \eqref{dV_T} and that the total volume does not change in thermal relaxation
+\begin{equation}
+\left( V_l \alpha_{p,l}\ dT_l - \frac{V_l}{K_{T,l}} dp \right)
++\left( V_g \alpha_{p,g}\ d T_g - \frac{V_g}{K_{T,g}} dp\right) = 0,
+\end{equation}
+which can be rearranged into
+\begin{equation}\label{sys_T_1}
+V_l \alpha_{p,l}\ dT_l + V_g \alpha_{p,g}\ d T_g - W_T dp = 0,
+\end{equation}
+where
+\begin{equation}
+W_T \equiv \frac{V_l}{K_{T,l}} + \frac{V_g}{K_{T,g}}.
+\end{equation}
+Now substitute equation \eqref{dH_T} into energy conservation
+\begin{equation}
+C_{p,l} dT_l + V_l \left( 1 - T_l \alpha_{p,l} \right) dp + C_{p,g} dT_g + V_g \left( 1 - T_g \alpha_{p,g} \right) dp - (V_l + V_g) dp = 0,
+\end{equation}
+which is simplified to
+\begin{equation}\label{sys_T_2}
+C_{p,l} dT_l + C_{p,g} dT_g - \mathcal{A}_p^T dp = 0,
+\end{equation}
+where
+\begin{equation}
+\mathcal{A}_p^T \equiv V_l T_l \alpha_{p,l} + V_g T_g \alpha_{p,g}.
+\end{equation}
+Applied to the increments $\delta T_l^T$, $\delta T_g^T$, $\delta p^T$ of the step, with the coefficients at the start state $*$, equations \eqref{T_constraint}, \eqref{sys_T_1}, and \eqref{sys_T_2} form a system of 3 equations and 3 unknowns, whose solution is
+\begin{equation}
+T_l^{**} = T_l^* + \delta T_l^T,\qquad T_g^{**} = T_g^* + \delta T_g^T,
+\end{equation}
+\begin{equation}
+\delta T_l^T = -\phi_l^T \hat{F}_T^*, \quad \delta T_g^T = +\phi_g^T \hat{F}_T^* 
+\end{equation}
+\begin{equation}\label{phi_T}
+\phi_l^T =\frac{W_TC_{p,g} - \mathcal{A}_p^TV_g\alpha_{p,g}}{D}, \quad \phi_g^T = \frac{W_TC_{p,l} - \mathcal{A}_p^TV_l\alpha_{p,l}}{D},
+\end{equation}
+and the corresponding pressure would be
+\begin{equation}
+p_l^{**} = p_l^*+\delta p^T, \quad p_g^{**} = p_g^*+\delta p^T, \quad \delta p^T = \frac{V_l\alpha_{p,l}\delta T_l^T+V_g\alpha_{p,g}\delta T_g^T}{W_T},
+\end{equation}
+where the coefficients used in the above equations are listed below
+\begin{equation}
+\mathcal{A}_p \equiv V_l \alpha_{p,l} + V_g \alpha_{p,g}, \quad C_p \equiv C_{p,l}+C_{p,g}, \quad D \equiv C_pW_T-\mathcal{A}_p\mathcal{A}_p^T.
+\end{equation}
+In terms of the heat $\delta\tilde{E}_l$ of \eqref{heat_def}, with $dH_k=dE_k+p_k\,dV_k+V_k\,dp$ and \eqref{dH_T},
+\begin{equation}\label{heat_split}
+-d\tilde{E}_l=C_{p,l}\,dT_l-a_l\,dp,\qquad d\tilde{E}_l=C_{p,g}\,dT_g-a_g\,dp,\qquad a_k\equiv V_kT_k\alpha_{p,k}.
+\end{equation}
+Their sum is \eqref{sys_T_2}, since $\mathcal{A}_p^T=a_l+a_g$. Write \eqref{sys_T_1} as $b_l\,dT_l+b_g\,dT_g=W_T\,dp$ with $b_k\equiv V_k\alpha_{p,k}$, so that $\mathcal{A}_p=b_l+b_g$. Substituting $dT_l$ and $dT_g$ from \eqref{heat_split},
+\begin{equation}\label{dp_dQ}
+\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=-\frac1{\hat W}\Bigl(\frac{b_l}{C_{p,l}}-\frac{b_g}{C_{p,g}}\Bigr),\qquad
+\hat W\equiv W_T-\frac{a_lb_l}{C_{p,l}}-\frac{a_gb_g}{C_{p,g}},
+\end{equation}
+\begin{equation}\label{dT_dQ}
+\left(\frac{\partial T_l}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\frac1{C_{p,l}}\Bigl[-1+a_l\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\Bigr],\qquad
+\left(\frac{\partial T_g}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\frac1{C_{p,g}}\Bigl[1+a_g\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\Bigr],
+\end{equation}
+and, by \eqref{stiff_def} and \eqref{step_F},
+\begin{equation}\label{K_T_step}
+\begin{split}
+\mathcal{K}^T&=-\left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\left(\frac{\partial T_g}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}-\left(\frac{\partial T_l}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\\
+&=\frac1{C_{p,l}}+\frac1{C_{p,g}}+\frac1{\hat W}\Bigl(\frac{a_l}{C_{p,l}}-\frac{a_g}{C_{p,g}}\Bigr)\Bigl(\frac{b_l}{C_{p,l}}-\frac{b_g}{C_{p,g}}\Bigr),\qquad
+\delta\tilde{E}_l=\frac{\hat{F}_T^*}{\mathcal{K}^T}.
+\end{split}
+\end{equation}
+This step reproduces the thermal solution above:
+\begin{equation}
+\phi_l^T=-\frac1{\mathcal{K}^T}\left(\frac{\partial T_l}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l},\qquad
+\phi_g^T=\frac1{\mathcal{K}^T}\left(\frac{\partial T_g}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l},\qquad
+\delta p^T=\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\delta\tilde{E}_l .
+\end{equation}
+
+In chemical relaxation step, liquid and gas exchange mass while forcing thermo-mechanical equilibrium and as a result, liquid and gas phases share the same $\delta T$ and $\delta p$.
+\begin{equation}
+p_l^{\otimes} = p_l^{**} + \delta p^C, \quad p_g^{\otimes} = p_g^{**} + \delta p^C, \quad p_l^{\otimes} - p_g^{\otimes} = p_{j}
+\end{equation}
+\begin{equation}
+T_l^{\otimes} = T_l^{**} + \delta T^C, \quad T_g^{\otimes} = T_g^{**} + \delta T^C, \quad T_l^{\otimes} = T_g^{\otimes}.
+\end{equation}
+The chemical component of $\hat{\boldsymbol{F}}$ at the start state and the chemical potential equilibrium are
+\begin{equation}\label{F_C}
+\hat{F}_C^{**} = g_l^{**} - g_v^{**}, \quad g_l^{\otimes} = g_v^{\otimes}.
+\end{equation}
+\paragraph{Chemical equilibrium as a constrained entropy maximum.}
+In this step the pressure and temperature equilibria $p_l=p_g+p_{j}$ and $T_l=T_g=T$ are held and mass crosses the interface. The free variable is the mass $\delta\tilde{m}_l=-\delta m_l$ given by the liquid to the gas, with $dm_v=d\tilde{m}_l$; $V_l$ and $E_l$ adjust to hold the two equilibria. Whatever these adjustments are, \eqref{dS_F_dx} with the components \eqref{F_comp} gives
+\begin{equation}\label{dS_C_full}
+dS=F_1\,dV_l+F_2\,dE_l-F_3\,d\tilde{m}_l.
+\end{equation}
+At the held equilibria the first two components vanish,
+\begin{equation}\label{F12_zero}
+F_1=\frac{p_l}{T}-\frac{p_g+p_{j}}{T}=\frac{p_l-p_g-p_{j}}{T}=0,\qquad F_2=\frac1T-\frac1T=0,\qquad F_3=-\frac{g_l-g_v}{T},
+\end{equation}
+so the volume and energy that accompany the mass generate no entropy, and
+\begin{equation}\label{dS_C_sum}
+dS=\frac{g_l-g_v}{T}\,d\tilde{m}_l=\tilde{F}_C\,d\tilde{m}_l,\qquad \tilde{F}_C=\frac{\hat{F}_C}{T}.
+\end{equation}
+The same follows from $\tilde{F}_C$ of \eqref{f_conj}: with $p_g+p_{j}=p_l$ and $T_g=T_l=T$, and by \eqref{hg} $h_l=e_l+p_lv_l$ and $g_l=h_l-Ts_l$,
+\begin{equation}\label{fC_steps}
+\tilde{F}_C=\frac{e_l+p_lv_l-g_v}{T}-s_l=\frac{h_l-Ts_l-g_v}{T}=\frac{g_l-g_v}{T}=\frac{\hat{F}_C}{T}.
+\end{equation}
+$T>0$, so $S$ increases while mass goes from the phase with the higher chemical potential to the one with the lower ($d\tilde{m}_l>0$, evaporation, at $\hat{F}_C>0$; $d\tilde{m}_l<0$, condensation, at $\hat{F}_C<0$), and is stationary only at
+\begin{equation}
+\hat{F}_C=g_l-g_v=0 .
+\end{equation}
+The entropy maximum of chemical relaxation is therefore the equality of chemical potentials, with $g_v$ at the vapor partial pressure; the temperature enters only the positive factor $1/T$. Because $F_1=F_2=0$, the result does not depend on the volume and energy that accompany the mass, i.e.\ on $\boldsymbol{d}_C$. With the held equilibria, the end state of the chemical step is the maximum of $S$ over all exchanges, $\boldsymbol{F}=0$.
+
+During chemical relaxation, total volume, energy, and mass stay unchanged.
+\begin{equation}
+dV_l+dV_g=0, \quad dE_l+dE_g+p_{j}dV_l=0, \quad dm_l+dm_v=0 
+\end{equation}
+With mass changing, the differential of volume and enthalpy would be
+\begin{equation}
+dV = d(mv) = mdv + vdm = V \alpha_p dT - \frac{V}{K_T} dp + vdm
+\end{equation}
+\begin{equation}
+dH = d(mh) = mdh + hdm = C_p dT + V \left( 1 - T \alpha_p \right) dp + hdm
+\end{equation}
+For liquid, which is assumed to be single species we have
+\begin{equation}
+dV_l = V_l \alpha_{p,l} dT_l - \frac{V_l}{K_{T,l}} dp_l + v_ldm_l
+\end{equation}
+and
+\begin{equation}
+dH_l = C_{p,l} dT_l + V_l \left( 1 - T_l \alpha_{p,l} \right) dp_l + h_ldm_l.
+\end{equation}
+However, for the gas mixture, which has two species the relations would read
+\begin{equation}
+dV_g = V_g \alpha_{p,g} dT_g - \frac{V_g}{K_{T,g}} dp_g + \left( \frac{\partial V_g}{\partial m_v} \right)_{p_g,T_g,m_a} dm_v
+\end{equation}
+and
+\begin{equation}
+dH_g = C_{p,g} dT_g + V_g \left( 1 - T_g \alpha_{p,g} \right) dp_g + \left( \frac{\partial H_g}{\partial m_v} \right)_{p_g,T_g,m_a} dm_v.
+\end{equation}
+Plugging the above $dV_k$ and $dH_k$ relations into volume and energy invariance equations, with the increments of the step $\delta p^C$, $\delta T^C$ and the mass given by the liquid $\delta\tilde{m}_l=-\delta m_l=\delta m_v$, we get
+\begin{equation}
+\mathcal{A}_p \,\delta T^C - W_T \,\delta p^C - \Delta v \,\delta\tilde{m}_l = 0
+\end{equation}
+and
+\begin{equation}
+C_p \,\delta T^C - \mathcal{A}_p^T \,\delta p^C - \Delta h \,\delta\tilde{m}_l = 0,
+\end{equation}
+where
+\begin{equation}
+\bar{v}_v = \left( \frac{\partial V_g}{\partial m_v} \right)_{p_g,T_g,m_a}, \quad \Delta v = v_l - \bar{v}_v,
+\end{equation}
+\begin{equation}
+\bar{h}_v = \left( \frac{\partial H_g}{\partial m_v} \right)_{p_g,T_g,m_a}, \quad and \quad \Delta h = h_l - \bar{h}_v.
+\end{equation}
+Using the ideal gas law
+\begin{equation}
+V_g = \frac{(m_vR_v+m_aR_a)T_g}{p_g} \rightarrow \bar{v}_v = \left( \frac{\partial V_g}{\partial m_v} \right)_{p_g,T_g,m_a} = \frac{R_vT_g}{p_g} = x_v v_v,
+\end{equation}
+\begin{equation}
+H_g = m_v h_v(T_g) + m_a h_a(T_g) \rightarrow \bar{h}_v = \left( \frac{\partial H_g}{\partial m_v} \right)_{p_g,T_g,m_a} = h_v
+\end{equation}
+Now expanding $dG_k$ as functions of $dp_k$, $dT_k$, and $dm_k$
+\begin{equation}
+dg_l = -s_l dT_l + v_l dp_l \quad and \quad dg_v = v_v dp_v - s_v dT_g,
+\end{equation}
+where $\mu_v = \left( \frac{\partial G_g}{\partial m_v} \right)_{p_g,T_g,m_a}$ and $p_v=x_vp_g$.
+The mol fraction of vapor in gas phase is
+\begin{equation}
+x_v = \frac{N_v}{N_v+N_a} = \frac{M_a m_v}{M_a m_v + M_v m_a},
+\end{equation}
+where $M_i$ is the molar mass of species $i$. Therefore
+\begin{equation}
+dx_v = \frac{M_a M_v m_a}{(M_a m_v + M_v m_a)^2} dm_v = \frac{x_v (1-x_v)}{m_v} dm_v.
+\end{equation}
+Hence,
+\begin{equation}
+dg_v = v_v x_v dp_g - s_v dT_g + v_v p_g \frac{x_v (1-x_v)}{m_v} dm_v.
+\end{equation}
+Finally, the $3 \times 3$ system is
+\begin{align}
+- W_T \,\delta p^C + \mathcal{A}_p \,\delta T^C - \Delta v \,\delta\tilde{m}_l &= 0,\\
+- \mathcal{A}_p^T \,\delta p^C + C_p \,\delta T^C - \Delta h \,\delta\tilde{m}_l &= 0,\\
+- \Delta v \,\delta p^C + \Delta s \,\delta T^C + \mathcal{K}_{CC} \,\delta\tilde{m}_l &= \hat{F}_C^{**},
+\end{align}
+where the third row is $\hat{F}_C^{**}+\delta \hat{F}_C=0$ with $d\hat{F}_C=dg_l-dg_v$, $\Delta s=s_l-\bar s_v$, $\bar s_v=s_v(T,p_v)$, and
+\begin{equation}
+\mathcal{K}_{CC} = v_v p_g \frac{x_v (1-x_v)}{m_v} = \frac{R_v T_g (1-x_v)}{m_v}.
+\end{equation}
+The solution of the above system is
+\begin{equation}
+m_l^{\otimes} = m_l^{**} - \delta\tilde{m}_l, \quad m_v^{\otimes} = m_v^{**} + \delta\tilde{m}_l,
+\end{equation}
+\begin{equation}\label{dm_C}
+\delta\tilde{m}_l = \phi_l^C \hat{F}_C^{**},
+\end{equation}
+\begin{equation}
+\phi_l^C = \frac{1}{\Delta v \Pi - \Delta s \Theta + \mathcal{K}_{CC}},
+\end{equation}
+\begin{equation}
+p_l^{\otimes} = p_l^{**} + \delta p^C, \quad p_g^{\otimes} = p_g^{**} + \delta p^C,
+\end{equation}
+\begin{equation}
+\delta p^C = -\Pi\, \delta\tilde{m}_l,
+\end{equation}
+\begin{equation}
+T_l^{\otimes} = T_g^{\otimes} = T^{**} + \delta T^C, \quad \delta T^C = -\Theta\, \delta\tilde{m}_l,
+\end{equation}
+where the coefficients, evaluated at the start state $**$, are the changes of $p$ and $T$ per unit mass received by the liquid,
+\begin{equation}
+\Pi = \frac{C_p \Delta v - \mathcal{A}_p \Delta h}{D}, \quad \Theta = \frac{\mathcal{A}_p^T \Delta v - W_T \Delta h}{D}.
+\end{equation}
+The last row of the $3\times3$ system, with $dp=-\Pi\,d\tilde{m}_l$ and $dT=-\Theta\,d\tilde{m}_l$ along the step, gives $d\hat{F}_C=dg_l-dg_v=-(\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC})\,d\tilde{m}_l$, i.e.\ $(\partial \hat{F}_C/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}=-(\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC})$, so by \eqref{stiff_def} and \eqref{step_F}
+\begin{equation}\label{K_C}
+\mathcal{K}^C=\frac1{\phi_l^C}=\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC},\qquad \delta\tilde{m}_l=\frac{\hat{F}_C^{**}}{\mathcal{K}^C}.
+\end{equation}
+The volume and energy that accompany $\delta\tilde{m}_l$ follow from the held equilibria, not from $\boldsymbol{d}_C$.
+
+\paragraph{Dilute vapor.}
+$\mathcal{K}_{CC}=R_vT_g(1-x_v)/m_v$ is singular as $m_v\to0$, and $\hat{F}_C$ contains $-R_vT_g\ln x_v$ through $g_v(p_v,T_g)$: in the dilute limit $\hat{F}_C$ is linear in $\ln m_v$, not in $m_v$. In the iteration of the chemical stage the mass transfer is therefore applied as an increment of $\ln m_v$: $\delta\tilde{m}_l$ from \eqref{row_C} is replaced by $m_v[\exp(\delta\tilde{m}_l/m_v)-1]$, which agrees with it to first order, and $\delta\tilde{E}_l$ and $\delta\tilde{V}_l$ follow from \eqref{elim_Q} and \eqref{elim_V} with this mass. The root is unchanged and $m_v$ stays positive. A dry gas ($m_v=0$, $\hat{F}_C=+\infty$) is first given a vapor mass of negligible mole fraction along $\boldsymbol{d}_C$.
+
+\paragraph{Summary.}
+From its own start state, each step transfers $\delta\tilde{V}_l=\hat{F}_M^0/\mathcal{K}^M$, $\delta\tilde{E}_l=\hat{F}_T^*/\mathcal{K}^T$, $\delta\tilde{m}_l=\hat{F}_C^{**}/\mathcal{K}^C$ with the faster equilibria held and each stiffness evaluated at the start state of its step. The stiffnesses $\mathcal{K}^M$, $\mathcal{K}^T$, $\mathcal{K}^C$ derived above from the equations of state are the pivots \eqref{stiff_def} of the Newton system \eqref{newton_hat} at the start state of each step, so each step is an elimination step of \eqref{newton_hat}. One pass of the three steps reaches the equilibria of the steps to first order; iterating the stages as below reaches them exactly, and the last stage ends at the full equilibrium $\boldsymbol{F}=0$ of \eqref{equilibrium_condition}.
+
+\paragraph{Update of pressure and temperature.}
+The transfers of a step give the new extensive state exactly, $\boldsymbol{x}_l^{n+1}=\boldsymbol{x}_l^n+\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n$ and $\boldsymbol{x}_g^{n+1}=\boldsymbol{x}_g^n-\boldsymbol{A}\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n$ by \eqref{update_X}. The intensive state ($p_k$, $T_k$, $g_k$) at the start of the next step can be obtained in two ways.
+\begin{enumerate}
+\item \emph{Linear update}, as in the steps above: $p_k$ and $T_k$ are advanced by the linear increments of the step ($\delta p_k^M$, $\delta T_k^M$, $\delta p^T$, $\delta T_k^T$, $\delta p^C$, $\delta T^C$). The equilibria of the step then hold exactly in the updated values, e.g.\ $p_l^*-p_g^*=p_{j}$, so the next step starts with its faster forces exactly zero, as its derivation assumes. The updated values are, however, not the equation-of-state values at $\boldsymbol{x}^{n+1}$; they differ from them by $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$, so the intensive and extensive states are consistent only to first order.
+\item \emph{Equation-of-state update}: $p_k$, $T_k$ and $g_k$ are evaluated from the equations of state at $\boldsymbol{x}^{n+1}$. The state is then consistent, but the equilibria of the step hold only to first order, and the next step starts with faster forces of order $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$ instead of zero. These residuals enter the elimination through the full right-hand sides $\hat{F}^{\prime n}_T$ and $\hat{F}^{\prime\prime n}_C$ of \eqref{schur_1} and \eqref{row_C}, and through the term $\hat{F}_M^n$ of \eqref{elim_V}; keeping them, instead of $\hat{F}_T^n$ and $\hat{F}_C^n$ alone, makes the next step a Newton step that also corrects the faster forces.
+\item \emph{Mixture-energy update}, Pelanti's closure~\cite[eqs.~(59), (70), (82)]{Pelanti2022}: $V_l$ and the masses are taken from $\boldsymbol{x}^{n+1}$, and the energy is split between the phases so that $\hat{F}_M=0$ exactly, with $E_l+E_g+p_{j}V_l$ unchanged. This adds to the transfer of the step a heat $\delta\tilde{E}_l^{c}$ along $\boldsymbol{d}_T$, the root of $\hat{F}_M(\boldsymbol{x}_l^{n+1}+\boldsymbol{d}_T\,\delta\tilde{E}_l^{c})=0$, which is of order $\lVert\hat{\boldsymbol{F}}^n\rVert^2$ and changes neither $V_l$ nor the masses. The state is consistent and in exact pressure equilibrium, but the temperature (and chemical) equilibria of the step hold only to first order. Because the correction is a heat exchanged at frozen volumes, the $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$ energy error of the linear step changes mostly the temperature of the phase with the smaller heat capacity.
+\end{enumerate}
+The three options give the same transfers to first order. Option 1 is a single linearized pass; option 2 is required for the iteration below; option 3 is Pelanti's one-pass procedure.
+
+\paragraph{Iteration of the stages.}
+A single pass takes one Newton step per stage. To reach the end state of each stage exactly, each stage is iterated with option 2, $n=0,1,\dots$ from its start state, with $\boldsymbol{D}$ held at the start state of the stage, so that $p_I$ and the path of the stage are fixed, and $\hat{\boldsymbol{J}}^n$ evaluated with $\boldsymbol{G}_k$ and $\boldsymbol{K}_k$ at $\boldsymbol{x}^n$:
+\begin{enumerate}
+\item mechanical stage: $\hat{J}^n_{MM}\,\delta\tilde{V}_l^n=-\hat{F}_M^n$ with $\delta\tilde{E}_l^n=\delta\tilde{m}_l^n=0$, until $\hat{F}_M=0$. The end state is the maximum of $S$ along $\boldsymbol{x}^0+\mathrm{span}\{\boldsymbol{d}_M\}$;
+\item thermal stage: the leading $2\times2$ block of \eqref{newton_rows} with $\delta\tilde{m}_l^n=0$, i.e.\ \eqref{elim_V} and \eqref{elim_Q} with $\hat{F}^{\prime n}_T$ including $\hat{F}_M^n$, until $\hat{F}_M=\hat{F}_T=0$. The end state is the maximum of $S$ at fixed masses, the $pT$-relaxed state;
+\item chemical stage: the full system \eqref{newton_rows}--\eqref{row_C}, until $\hat{\boldsymbol{F}}=0$. The end state is the maximum of $S$ over all exchanges, $\boldsymbol{F}=0$, the $pTg$-relaxed state.
+\end{enumerate}
+Each stage is a Newton--Raphson iteration on its own forces with the leading block of $\hat{\boldsymbol{J}}^n$ as Jacobian, so it converges quadratically near its end state. Its first iteration is the step of the single pass, since at the start of the stage the faster forces are zero (option 1) or $\mathcal{O}(\lVert\hat{\boldsymbol{F}}\rVert^2)$ (option 2). Because the end state $\boldsymbol{F}=0$ is unique for strictly concave $S$, the chemical stage alone, started close enough to it, reaches the same full equilibrium; the mechanical and thermal stages provide such a start.
+
+\paragraph{Relation to Pelanti's sequential relaxation.}
+Instantaneous relaxation needs only the state at which each force vanishes, not the size of the force. The entropy forces $\tilde{\boldsymbol{F}}$ and the forces $\hat{\boldsymbol{F}}$ are related by the invertible matrix $\boldsymbol{C}$ of \eqref{C_def}, so they vanish at the same states and give the same end states. The steps above are moreover computed in $\hat{\boldsymbol{F}}$, whose components are Pelanti's forces~\cite{Pelanti2022}: $p_1-p_2$, $T_1-T_2$, $g_1-g_2$ with phase 1 the liquid, $p_{j}=0$, and $g_2$ the pure vapor. Her stiffnesses are those of the steps above:
+\begin{itemize}
+\item mechanical: $K_p=\mu\,(1/\xi_1^p+1/\xi_2^p)$~\cite[eq.~(55)]{Pelanti2022}, where $1/\xi_k^p=[\Gamma_k(p_I-p_k)+\rho_kc_k^2]/\alpha_k$~\cite[eq.~(51)]{Pelanti2022} is $1/W_k^{eff}$, so $K_p=\mu\,\mathcal{K}^M$;
+\item thermal: per unit heat given by phase 1, $(\partial T_1/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}=-1/\xi_1^T$ and $(\partial T_2/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}=1/\xi_2^T$~\cite[eqs.~(62), (63)]{Pelanti2022}, so $K_T=\vartheta\,(1/\xi_1^T+1/\xi_2^T)$~\cite[eq.~(66)]{Pelanti2022} is $\vartheta\,\mathcal{K}^T$ of \eqref{K_T_step};
+\item chemical: her $S_p$ and $S_T$~\cite[eq.~(23)]{Pelanti2022} are the changes of $p$ and $T$ per unit mass received by phase 1 in the $pT$-relaxed model, $-(\partial p/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}$ and $-(\partial T/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}$, i.e.\ $\Pi$ and $\Theta$. By~\cite[eqs.~(71b), (71c), (73)]{Pelanti2022}, $1/\xi_1^g=S_p/\rho_1-s_1S_T$ and $1/\xi_2^g=-S_p/\rho_2+s_2S_T$, so $K_g=\nu\,(1/\xi_1^g+1/\xi_2^g)=\nu\,(\Delta v\,\Pi-\Delta s\,\Theta)$, which is $\nu\,\mathcal{K}^C$ with $\mathcal{K}_{CC}=0$ for a pure vapor. Her eq.~(72) prints $-s_2S_T$ for $k=2$; the sign used here follows from her eq.~(71c).
+\end{itemize}
+Her instantaneous limits~\cite[eqs.~(57), (68), (79), (80)]{Pelanti2022} are therefore the transfers \eqref{step_F}, with the heat and mass signs of footnote~\ref{fn_sign}. She takes the volume fraction and the partial density from these transfers and then closes the pressure with the mixture energy relation~\cite[eqs.~(59), (70), (82)]{Pelanti2022}, which is option 3 of the update of pressure and temperature, in one pass; the steps above as written use option 1. One pass of the steps \eqref{step_F} with option 3 is therefore her instantaneous procedure, step by step. Her one-pass states are first-order approximations of the exact relaxed states, which the iteration of the stages reaches: the $pT$- and $pTg$-relaxed states are unique, and the mechanical end state is the one of the path $\boldsymbol{d}_M$ with the chosen $p_I$.
+
+\paragraph{Relation to Pelanti and Shyue's instantaneous relaxation.}
+\cite{PelantiShyue2014} relax instantaneously, $\mu,\theta,\nu\to\infty$~\cite[eqs.~(34), (41), (44)]{PelantiShyue2014}, and solve for the end states exactly: pressure equilibrium at fixed masses with the interface work $E_k^*-E_k^0=\mp p_I(\alpha_1^*-\alpha_1^0)$, $p_I=(p_I^0+p^*)/2$~\cite[eqs.~(37), (38)]{PelantiShyue2014}; pressure and temperature equilibrium at fixed masses~\cite[eqs.~(42), (43)]{PelantiShyue2014}; pressure, temperature and Gibbs-energy equilibrium~\cite[eqs.~(46), (47)]{PelantiShyue2014}. The last two are the unique maxima of $S$ at fixed masses and over all exchanges, i.e.\ the end states of the thermal and chemical stages, for any $p_I$. Their mechanical end state moves $\boldsymbol{x}_l$ along the single direction $\boldsymbol{d}_M$ built on the constant $p_I=(p_I^0+p^*)/2$, with $p_I^0$ their impedance-weighted interface pressure, so it is the end state of the mechanical stage with that $p_I$, a value set implicitly by the end state. Their thermo-chemical step needs neither $\rho_I$ nor $e_I$~\cite[eq.~(44)]{PelantiShyue2014}, consistently with the independence of the chemical end state from $\boldsymbol{d}_C$ shown above.
+
+\subsubsection{Finite-rate relaxation}
+Starting from equation \eqref{dS_F_dx}, we have
+\begin{equation}\label{dSdt}
+\frac{dS}{dt} = \boldsymbol{F} \cdot \frac{d\boldsymbol{x}_l}{dt}
+\end{equation}
+Entropy maximization fixes the end state of each step, but not how fast it is approached. The rate requires a constitutive law for the transfers, which is additional physical input. As in the sequential relaxation, the mechanical, thermal and chemical processes are assumed to act on separated time scales, in this order from the fastest to the slowest~\cite[Sec.~5]{Pelanti2022}.
+
+\paragraph{Entropy production of each step.}
+With $d\boldsymbol{x}_l/dt=\boldsymbol{D}\,\dot{\tilde{\boldsymbol{x}}}_l$, \eqref{dSdt} becomes $dS/dt=\tilde{\boldsymbol{F}}\cdot\dot{\tilde{\boldsymbol{x}}}_l=\tilde{F}_M\dot{\tilde{V}}_l+\tilde{F}_T\dot{\tilde{E}}_l+\tilde{F}_C\dot{\tilde{m}}_l$ by the same steps as \eqref{dS_f}. During a step the faster forces are held at zero and the slower transfers are inactive, so only the term of the step remains. By \eqref{fM_steps}, \eqref{fT_steps} and \eqref{dS_C_sum},
+\begin{equation}\label{dSdt_steps}
+\frac{dS}{dt}=\frac{\hat{F}_M}{T_M}\,\dot{\tilde{V}}_l,\qquad
+\frac{dS}{dt}=\frac{\hat{F}_T}{T_lT_g}\,\dot{\tilde{E}}_l,\qquad
+\frac{dS}{dt}=\frac{\hat{F}_C}{T}\,\dot{\tilde{m}}_l,
+\end{equation}
+in the mechanical, thermal and chemical step, respectively. The second law, $dS/dt\ge0$, therefore requires that the liquid expands while $\hat{F}_M>0$, gives heat while $\hat{F}_T>0$, and gives mass while $\hat{F}_C>0$.
+
+\paragraph{Rate law.}
+The simplest law with these signs is linear in the force of the step, with a positive rate times the liquid-minus-gas difference,
+\begin{equation}\label{step_laws}
+\dot{\tilde{V}}_l=\lambda \hat{F}_M,\qquad \dot{\tilde{E}}_l=\vartheta \hat{F}_T,\qquad \dot{\tilde{m}}_l=\nu \hat{F}_C,
+\end{equation}
+with rates $\lambda,\vartheta,\nu\ge0$ that may depend on the state. Substituting \eqref{step_laws} into \eqref{dSdt_steps},
+\begin{equation}\label{dSdt_rates}
+\frac{dS}{dt}=\frac{\lambda \hat{F}_M^2}{T_M},\qquad \frac{dS}{dt}=\frac{\vartheta \hat{F}_T^2}{T_lT_g},\qquad \frac{dS}{dt}=\frac{\nu \hat{F}_C^2}{T},
+\end{equation}
+all non-negative. With $\hat{\boldsymbol{F}}$ of \eqref{Fhat_def}, \eqref{step_laws} reads
+\begin{equation}\label{rate_matrix}
+\dot{\tilde{\boldsymbol{x}}}_l=\boldsymbol{R}\,\hat{\boldsymbol{F}},\qquad \boldsymbol{R}=\mathrm{diag}(\lambda,\vartheta,\nu),
+\end{equation}
+each step using its own row. These are Pelanti's relaxation sources~\cite[eq.~(2)]{Pelanti2022} with phase 1 the liquid, up to the sign convention for heat and mass\footnote{\label{fn_sign}Pelanti~\cite[eq.~(2)]{Pelanti2022} counts all transfers as received by phase 1, so her heat and mass sources are $\vartheta(T_2-T_1)$ and $\nu(g_2-g_1)$, a positive rate times gas minus liquid. Here heat and mass are counted as given by the liquid, so her sources are $-\dot{\tilde{E}}_l=-\vartheta \hat{F}_T$ and $-\dot{\tilde{m}}_l=-\nu \hat{F}_C$ with the same rates; her directions are $-\boldsymbol{d}_T$ and $-\boldsymbol{d}_C$, and her transfers are $-\delta\tilde{E}_l$ and $-\delta\tilde{m}_l$.}, and her mechanical rate $\mu$ is renamed $\lambda$ to avoid a clash with the chemical potential. Departures from her model: $p_{j}$ in $\hat{F}_M$, and $g_v(p_v,T_g)$ in place of her pure-vapor $g_2$. Written in the entropy forces instead, by \eqref{f_F}, \eqref{step_laws} is $\dot{\tilde{\boldsymbol{x}}}_l=\boldsymbol{L}\,\tilde{\boldsymbol{F}}$ with $\boldsymbol{L}=\mathrm{diag}(\lambda T_M,\,\vartheta T_lT_g,\,\nu T)$: the temperatures move into the coefficients. Pelanti allows her rates to be functions of the state~\cite[after eq.~(2)]{Pelanti2022}, so both forms describe the same models; $\hat{\boldsymbol{F}}$ is used here so that the rates are hers.
+
+\paragraph{Relaxation equation of each step.}
+Along a step, with the faster forces held at zero, the force changes with the transferred amount through the stiffness \eqref{stiff_def}. By the chain rule and \eqref{step_laws},
+\begin{equation}
+\begin{aligned}
+\frac{d\hat{F}_M}{dt}&=\left(\frac{\partial \hat{F}_M}{\partial\tilde{V}_l}\right)_{\tilde{E}_l,\tilde{m}_l}\dot{\tilde{V}}_l=-\mathcal{K}^M\lambda \hat{F}_M,\\
+\frac{d\hat{F}_T}{dt}&=\left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\dot{\tilde{E}}_l=-\mathcal{K}^T\vartheta \hat{F}_T,\\
+\frac{d\hat{F}_C}{dt}&=\left(\frac{\partial \hat{F}_C}{\partial\tilde{m}_l}\right)_{\hat{F}_M,\hat{F}_T}\dot{\tilde{m}}_l=-\mathcal{K}^C\nu \hat{F}_C .
+\end{aligned}
+\end{equation}
+In vector form, \eqref{stiff_def} reads $d\hat{\boldsymbol{F}}=-\boldsymbol{\mathcal{K}}\,d\tilde{\boldsymbol{x}}_l$ row by row, with $\boldsymbol{\mathcal{K}}\equiv\mathrm{diag}(\mathcal{K}^M,\mathcal{K}^T,\mathcal{K}^C)$, and with \eqref{rate_matrix}, since diagonal matrices commute,
+\begin{equation}\label{force_ode}
+\frac{d\hat{\boldsymbol{F}}}{dt}=-\boldsymbol{\mathcal{K}}\boldsymbol{R}\,\hat{\boldsymbol{F}}=-\boldsymbol{R}\boldsymbol{\mathcal{K}}\,\hat{\boldsymbol{F}},
+\end{equation}
+each step using its own row.
+
+\paragraph{Solution with frozen coefficients.}
+Freezing $\boldsymbol{R}$ and $\boldsymbol{\mathcal{K}}$ at the start state of the step, where the force is $\hat{\boldsymbol{F}}^0$, \eqref{force_ode} has the exact solution
+\begin{equation}\label{force_exp}
+\hat{\boldsymbol{F}}(t)=e^{-\boldsymbol{R}\boldsymbol{\mathcal{K}}t}\,\hat{\boldsymbol{F}}^0,
+\end{equation}
+where the exponential of the diagonal matrix is taken entry by entry.
+Substituting \eqref{force_exp} into \eqref{step_laws} and integrating over $[0,\Delta t]$, for the mechanical step
+\begin{equation}
+\delta\tilde{V}_l=\int_0^{\Delta t}\lambda \hat{F}_M^0\,e^{-\lambda\mathcal{K}^Mt}\,dt=\frac{\hat{F}_M^0}{\mathcal{K}^M}\bigl(1-e^{-\lambda\mathcal{K}^M\Delta t}\bigr),
+\end{equation}
+and likewise for the thermal and chemical steps,
+\begin{equation}\label{finite_solution}
+\delta\tilde{\boldsymbol{x}}_l=\boldsymbol{\Omega}\,\delta\tilde{\boldsymbol{x}}_l^\infty,\qquad \boldsymbol{\Omega}\equiv\boldsymbol{I}-e^{-\boldsymbol{R}\boldsymbol{\mathcal{K}}\Delta t}=\mathrm{diag}(\omega_M,\omega_T,\omega_C),\qquad
+\delta\tilde{\boldsymbol{x}}_l^\infty=\boldsymbol{\mathcal{K}}^{-1}\hat{\boldsymbol{F}}^0,
+\end{equation}
+$\delta\tilde{\boldsymbol{x}}_l^\infty=[\hat{F}_M^0/\mathcal{K}^M,\,\hat{F}_T^0/\mathcal{K}^T,\,\hat{F}_C^0/\mathcal{K}^C]^T$ holds the instantaneous transfers \eqref{step_F} of the sequential relaxation. Every increment of a sequential step ($\delta p$, $\delta T$, $\delta V$, $\delta E$, $\delta m$) is linear in its transfer, so a finite-rate step is the instantaneous step with all of its increments multiplied by the entry of $\boldsymbol{\Omega}$ of the step, $\omega\in[0,1)$. $\omega\to1$ as the rate goes to infinity, which recovers the instantaneous sequential relaxation, i.e.\ the Newton step of the constrained entropy maximum of the step; $\omega=0$ for zero rate. Within the linearization the force keeps its sign and decays monotonically, so by \eqref{dSdt_rates} the entropy increases throughout the step and the state does not pass the end state of the step. The entries of $\boldsymbol{R}\boldsymbol{\mathcal{K}}$, $\lambda\mathcal{K}^M$, $\vartheta\mathcal{K}^T$, $\nu\mathcal{K}^C$, are Pelanti's exponents $K_p$, $K_T$, $K_g$~\cite[eqs.~(55), (66), (76)]{Pelanti2022}, and \eqref{finite_solution} is her solution~\cite[eqs.~(54), (56), (65), (67), (75), (77)]{Pelanti2022}, up to the closure noted in the relation to Pelanti's sequential relaxation.
+
+\paragraph{Activation.}
+In one relaxation call the transfers faster than the finite-rate one are instantaneous ($r\to\infty$) and the slower ones are not activated, as in Pelanti's steps 2(a)--2(c)~\cite[Sec.~5]{Pelanti2022}, where the mechanical step is always instantaneous. After a linearized finite step the faster equilibria hold only to first order; they can be restored by iterating the faster stages with option 2 of the update of pressure and temperature.
+
+\paragraph{Simultaneous transfers.}
+Without rate separation the three transfers act at once, and $dS/dt=\tilde{F}_M\dot{\tilde{V}}_l+\tilde{F}_T\dot{\tilde{E}}_l+\tilde{F}_C\dot{\tilde{m}}_l$. $\tilde{F}_M=\hat{F}_M/T_M$ and $\tilde{F}_T=\hat{F}_T/(T_lT_g)$ hold at any state, but $\tilde{F}_C=\hat{F}_C/T$ only at pressure and temperature equilibrium; in general $\tilde{F}_C=(\hat{F}_C-v_l\hat{F}_M+s_l\hat{F}_T)/T_g$ by \eqref{C_def}. Pelanti's model~\cite[eqs.~(1e), (1f)]{Pelanti2022} lets the transferred mass carry the energy $g_I$ and no volume; for mass given by the liquid this is the direction $\boldsymbol{d}_C^P=[0,\,-g_I,\,-1]^T$, which is related to $\boldsymbol{d}_C$ by
+\begin{equation}\label{dC_dCP}
+\boldsymbol{d}_C=\boldsymbol{d}_C^P-v_l\,\boldsymbol{d}_M+(e_l+p_Iv_l-g_I)\,\boldsymbol{d}_T .
+\end{equation}
+Its conjugate force is $\tilde{F}_C^P=\boldsymbol{d}_C^P\cdot\boldsymbol{F}=-g_IF_2-F_3=(g_l-g_I)/T_l+(g_I-g_v)/T_g$. The interface chemical potential lies between $g_l$ and $g_v$~\cite[eq.~(3)]{Pelanti2022}; with $g_l-g_I=w_C(g_l-g_v)$ and $g_I-g_v=(1-w_C)(g_l-g_v)$, $w_C\in[0,1]$, the same steps as \eqref{fM_steps} give, at any state,
+\begin{equation}\label{f_P}
+\tilde{F}_C^P=\frac{w_C\hat{F}_C}{T_l}+\frac{(1-w_C)\hat{F}_C}{T_g}=\frac{\hat{F}_C}{T_C},\qquad \frac1{T_C}\equiv\frac{w_C}{T_l}+\frac{1-w_C}{T_g}.
+\end{equation}
+With $\boldsymbol{d}_C^P$, \eqref{rate_matrix} therefore gives $dS/dt=\lambda \hat{F}_M^2/T_M+\vartheta \hat{F}_T^2/(T_lT_g)+\nu \hat{F}_C^2/T_C\ge0$ for simultaneous transfers as well. Under rate separation the choice between $\boldsymbol{d}_C$ and $\boldsymbol{d}_C^P$ does not matter, by \eqref{F12_zero}.
+
+\textcolor{red}{Open: (i) solution of simultaneous transfers; (ii) values of $\lambda$, $\vartheta$, $\nu$; (iii) dilute vapor: with $\mathcal{K}^C$ frozen, \eqref{finite_solution} gives $\delta\tilde{m}_l=\omega_C\hat{F}_C^0/\mathcal{K}^C\sim m_v\ln(1/x_v)\to0$ as $m_v\to0$, while the rate law \eqref{step_laws} evaporates at a finite rate, because $\mathcal{K}_{CC}$ varies by $\mathcal{O}(1)$ relative to itself over the step. Candidate: freeze $\mathcal{K}_{pT}=\Delta v\,\Pi-\Delta s\,\Theta$ and integrate the mixing term $-R_vT\ln x_v$ of $\hat{F}_C$ exactly.}
