@@ -37,6 +37,8 @@ module material_class
       procedure(get_T_from_rho_e_iface),  deferred :: get_T_from_rho_e
       procedure(get_c_from_rho_e_iface),  deferred :: get_c_from_rho_e
       procedure(get_cv_from_rho_e_iface), deferred :: get_cv_from_rho_e
+      !> Density above which the EOS has no state (1/b for NASG); huge by default
+      procedure :: get_rho_max
    end type material
 
    abstract interface
@@ -179,5 +181,14 @@ module material_class
          class(material), intent(inout) :: this
       end subroutine finalize_iface
    end interface
+
+contains
+
+   !> Default: a state exists at every density
+   real(WP) function get_rho_max(this,y) result(rho_max)
+      class(material), intent(in) :: this
+      real(WP), dimension(:), intent(in) :: y
+      rho_max=huge(1.0_WP)
+   end function get_rho_max
 
 end module material_class

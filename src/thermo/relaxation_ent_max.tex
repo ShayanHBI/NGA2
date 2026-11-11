@@ -428,7 +428,7 @@ d\hat{F}_C&=\hat{J}_{CM}\,d\tilde{V}_l+\hat{J}_{CT}\,d\tilde{E}_l+\hat{J}_{CC}\,
 \end{equation}
 At $\boldsymbol{x}^n$ this is the matrix of \eqref{newton_rows}. In \eqref{newton_rows} the change of the forces is prescribed, $-\hat{\boldsymbol{F}}^n$, and the transfers are solved for. Here the opposite question is asked: how each force responds to a given transfer when the other transfers either are inactive or adjust to hold some forces fixed.
 
-\emph{Mechanical step.} Only volume is transferred, with its work along $\boldsymbol{d}_M$, at fixed masses and with no heat: $d\tilde{E}_l=d\tilde{m}_l=0$. $\tilde{E}_l$ is the heat, not the energy: the work is carried by $\boldsymbol{d}_M=[1,-p_I,0]^T$, so the energies still change, $dE_l=-p_I\,d\tilde{V}_l$ and $dE_g=(p_I-p_{j})\,d\tilde{V}_l$ by $d\boldsymbol{x}_g=-\boldsymbol{A}\,d\boldsymbol{x}_l$, which is \eqref{work_M}. The first row of \eqref{dFhat_rows} reduces to
+\emph{Mechanical step.} Only volume is transferred, with its work along $\boldsymbol{d}_M$, at fixed masses and with no heat: $d\tilde{E}_l=d\tilde{m}_l=0$. $\tilde{E}_l$ is the heat, not the energy: the work is carried by $\boldsymbol{d}_M=[1,-p_I,0]^T$, so the energies still change, $dE_l=-p_I\,d\tilde{V}_l$ and $dE_g=(p_I-p_{j})\,d\tilde{V}_l$ by $d\boldsymbol{x}_g=-\boldsymbol{A}\,d\boldsymbol{x}_l$, as listed in \eqref{dirs_lg}. The first row of \eqref{dFhat_rows} reduces to
 \begin{equation}
 d\hat{F}_M=\hat{J}_{MM}\,d\tilde{V}_l
 \quad\Longrightarrow\quad
@@ -478,7 +478,7 @@ where the bracket is the combination $\hat{J}''_{CC}$ of \eqref{row_C} at the cu
 \end{equation}
 Physically, mass given by the liquid lowers $g_l$ relative to $g_v$, so $\hat{J}''_{CC}<0$ is expected.
 
-\emph{Elimination and constraints.} The three derivations repeat the algebra of \eqref{elim_V}--\eqref{row_C}: eliminating $\delta\tilde{V}_l$ with the first row is what holding $\hat{F}_M$ does, and eliminating $\delta\tilde{E}_l$ with the reduced second row is what holding $\hat{F}_T$ does. The pivots are therefore the derivatives of the forces under exactly the constraints of the sequential steps. At the start state of each step, these are the derivatives that the sequential relaxation below computes from the equations of state: \eqref{K_M} for the mechanical step at any state, \eqref{K_T_step} for the thermal step at $\hat{F}_M=0$, and \eqref{K_C} for the chemical step at $\hat{F}_M=\hat{F}_T=0$. At $\hat{F}_M=0$ the interface pressure, which lies between $p_g+p_{j}$ and $p_l$, equals $p_l$, so the heat $d\tilde{E}_l=-(dE_l+p_I\,dV_l)$ is the heat of \eqref{heat_def}. With every transfer counted in the direction its force drives it, each force decreases along its own transfer, and the stiffnesses of the steps are defined as the magnitudes of the three derivatives (positivity is shown below),
+\emph{Elimination and constraints.} The three derivations repeat the algebra of \eqref{elim_V}--\eqref{row_C}: eliminating $\delta\tilde{V}_l$ with the first row is what holding $\hat{F}_M$ does, and eliminating $\delta\tilde{E}_l$ with the reduced second row is what holding $\hat{F}_T$ does. The pivots are therefore the derivatives of the forces under exactly the constraints of the sequential steps. At the start state of each step, these are the derivatives that the sequential relaxation below computes from the entries of $\hat{\boldsymbol{J}}$: \eqref{K_M} for the mechanical step at any state, \eqref{K_T} for the thermal step at $\hat{F}_M=0$, and \eqref{K_C} for the chemical step at $\hat{F}_M=\hat{F}_T=0$. At $\hat{F}_M=0$ the interface pressure, which lies between $p_g+p_{j}$ and $p_l$, equals $p_l$, so the heat $d\tilde{E}_l=-(dE_l+p_I\,dV_l)$ is the heat given by the liquid when each phase works at its own pressure. With every transfer counted in the direction its force drives it, each force decreases along its own transfer, and the stiffnesses of the steps are defined as the magnitudes of the three derivatives (positivity is shown below),
 \begin{equation}\label{stiff_def}
 \left(\frac{\partial \hat{F}_M}{\partial\tilde{V}_l}\right)_{\tilde{E}_l,\tilde{m}_l}=\hat{J}_{MM}=-\mathcal{K}^M,\quad \left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\hat{J}'_{TT}=-\mathcal{K}^T,\quad \left(\frac{\partial \hat{F}_C}{\partial\tilde{m}_l}\right)_{\hat{F}_M,\hat{F}_T}=\hat{J}''_{CC}=-\mathcal{K}^C .
 \end{equation}
@@ -494,7 +494,7 @@ where $\tilde{\boldsymbol{K}}_{MT}$ is the leading $2\times2$ block. With $C_{MM
 \Longrightarrow\quad\mathcal{K}^M=T\,s_M,\qquad \mathcal{K}^T=T^2s_T,\qquad \mathcal{K}^C=T\,s_C,
 \end{gathered}
 \end{equation}
-all positive at equilibrium, and by continuity near it. Away from equilibrium $\mathcal{K}^M=1/W_l^{eff}+1/W_g^{eff}$ of \eqref{K_M} depends on $p_I$. For the ideal gas, $V_g/W_g^{eff}=K_{s,g}+\Gamma_g(p_{I,g}-p_g)=p_g+(\gamma_g-1)\,p_{I,g}$, which is negative when $p_{I,g}<-p_g/(\gamma_g-1)$, i.e.\ when $p_I$ is taken close to the pressure of a liquid in tension; with a small gas volume $\mathcal{K}^M$ is then negative. The pivot of the entropy force, $\tilde K_{MM}=\boldsymbol{d}_M^T\boldsymbol{K}\boldsymbol{d}_M$, is positive at every state by the definiteness of $\boldsymbol{K}$; the two differ by the term $\hat{F}_M\,\partial(1/T_M)/\partial\tilde V_l$ of \eqref{J_rel}.
+all positive at equilibrium, and by continuity near it. Away from equilibrium $\mathcal{K}^M$ of \eqref{K_M} depends on $p_I$. For the ideal gas, the numerator of its gas term is $K_{s,g}+\Gamma_g(p_I-p_{j}-p_g)=p_g+(\gamma_g-1)(p_I-p_{j})$, which is negative when $p_I-p_{j}<-p_g/(\gamma_g-1)$, i.e.\ when $p_I$ is taken close to the pressure of a liquid in tension; with a small gas volume $\mathcal{K}^M$ is then negative. The pivot of the entropy force, $\tilde K_{MM}=\boldsymbol{d}_M^T\boldsymbol{K}\boldsymbol{d}_M$, is positive at every state by the definiteness of $\boldsymbol{K}$; the two differ by the term $\hat{F}_M\,\partial(1/T_M)/\partial\tilde V_l$ of \eqref{J_rel}.
 
 \emph{Sequential steps.} Each elimination is one relaxation step:
 \begin{enumerate}
@@ -509,7 +509,527 @@ With \eqref{stiff_def} evaluated at the start state $\boldsymbol{x}^n$ of each s
 With $\hat{\boldsymbol{J}}$ frozen at $\boldsymbol{x}^n$, each step leaves the linearized faster forces at zero and after the third all three vanish, so the three steps add up to the Newton step \eqref{newton_hat}. In the sequential relaxation each step is instead evaluated at its own start state, where the faster forces vanish: its right-hand side is the component of $\hat{\boldsymbol{F}}$ of the step at that state, and its pivot is evaluated there. A step is then the Newton step of a constrained entropy maximum: over $\mathrm{span}\{\boldsymbol{d}_M\}$ (mechanical), over $\{\delta m_l=0\}$ (thermo-mechanical), and over all exchanges (full equilibrium). Iterating each stage, as described at the end of the sequential relaxation, reaches these maxima exactly and ends at $\boldsymbol{F}=0$.
 
 \subsubsection{Sequential relaxation}
-The steps below are the three eliminations of the Newton system \eqref{newton_hat}, each evaluated at its own start state and written in the forces \eqref{F_seq}. Pre-relaxation, post-mechanical, post thermo-mechanical, and post thermo-chemical relaxation states are shown by superscripts $0$, $*$, $**$, and $\otimes$, respectively. The start state of each step ($0$, $*$, $**$) is the state $\boldsymbol{x}^n$ of \eqref{step_F} for that step, and the forces of the step are the components of $\hat{\boldsymbol{F}}$ of \eqref{F_seq} evaluated there. Finite increments over a step are written with $\delta$, differential relations with $d$.
+The three steps are the eliminations \eqref{elim_V}--\eqref{row_C} of the Newton system \eqref{newton_hat}, each evaluated at its own start state. The pre-relaxation, post-mechanical, post-thermal and post-chemical states are marked by the superscripts $0$, $*$, $**$ and $\otimes$. The start state of each step ($0$, $*$, $**$) is the state $\boldsymbol{x}^n$ of \eqref{step_F} for that step, and the forces of the step are the components of $\hat{\boldsymbol{F}}$ evaluated there. Finite increments over a step are written with $\delta$, differential relations with $d$. The steps need the entries of $\hat{\boldsymbol{J}}$, which are derived first.
+
+\paragraph{Jacobian in the transfer coordinates.}
+By \eqref{dFhat}, the column $b\in\{M,T,C\}$ of $\hat{\boldsymbol{J}}$ is the change of $\hat{\boldsymbol{F}}$ per unit transfer along $\boldsymbol{d}_b$, for which the liquid changes by $d\boldsymbol{x}_l=\boldsymbol{d}_b$ and the gas by $d\boldsymbol{x}_g=-\boldsymbol{A}\boldsymbol{d}_b$:
+\begin{equation}\label{dirs_lg}
+\begin{array}{lll}
+ & d\boldsymbol{x}_l=[dV_l,\,dE_l,\,dm_l]^T & d\boldsymbol{x}_g=[dV_g,\,dE_g,\,dm_v]^T\\[2pt]
+b=M: & [1,\,-p_I,\,0]^T & [-1,\,p_I-p_{j},\,0]^T\\
+b=T: & [0,\,-1,\,0]^T & [0,\,1,\,0]^T\\
+b=C: & [-v_l,\,-e_l,\,-1]^T & [v_l,\,e_l+p_{j}v_l,\,1]^T
+\end{array}
+\end{equation}
+per unit $\delta\tilde{V}_l$, $\delta\tilde{E}_l$ and $\delta\tilde{m}_l$, respectively. Write $\partial_b$ for the derivative along $\boldsymbol{d}_b$ with the other two transfer coordinates fixed,
+\begin{equation}
+\partial_M\equiv\left(\frac{\partial}{\partial\tilde{V}_l}\right)_{\tilde{E}_l,\tilde{m}_l},\qquad
+\partial_T\equiv\left(\frac{\partial}{\partial\tilde{E}_l}\right)_{\tilde{V}_l,\tilde{m}_l},\qquad
+\partial_C\equiv\left(\frac{\partial}{\partial\tilde{m}_l}\right)_{\tilde{V}_l,\tilde{E}_l}.
+\end{equation}
+By \eqref{Fhat_def}, the entries of $\hat{\boldsymbol{J}}$ are the differences of the phase changes,
+\begin{equation}\label{J_cols}
+\hat{J}_{Mb}=\partial_bp_l-\partial_bp_g,\qquad \hat{J}_{Tb}=\partial_bT_l-\partial_bT_g,\qquad \hat{J}_{Cb}=\partial_bg_l-\partial_bg_v .
+\end{equation}
+
+\emph{Phase at fixed mass.} The Gr\"uneisen coefficient, the specific heat at constant volume and the isentropic bulk modulus are
+\begin{equation}
+\Gamma\equiv v\left(\frac{\partial p}{\partial e}\right)_v,\qquad c_v\equiv\left(\frac{\partial e}{\partial T}\right)_v,\qquad K_s\equiv-v\left(\frac{\partial p}{\partial v}\right)_s .
+\end{equation}
+By \eqref{first_thermo_law},
+\begin{equation}
+\left(\frac{\partial e}{\partial s}\right)_v=T,\qquad \left(\frac{\partial s}{\partial v}\right)_e=\frac{p}{T},\qquad \left(\frac{\partial T}{\partial v}\right)_s=-\left(\frac{\partial p}{\partial s}\right)_v,
+\end{equation}
+the last being a Maxwell relation. Hence $(\partial p/\partial s)_v=(\partial p/\partial e)_v(\partial e/\partial s)_v=\Gamma T/v$ and $(\partial T/\partial s)_v=T/c_v$, and
+\begin{equation}
+\begin{gathered}
+\left(\frac{\partial p}{\partial v}\right)_e=\left(\frac{\partial p}{\partial v}\right)_s+\left(\frac{\partial p}{\partial s}\right)_v\left(\frac{\partial s}{\partial v}\right)_e=\frac{\Gamma p-K_s}{v},\\
+\left(\frac{\partial T}{\partial v}\right)_e=\left(\frac{\partial T}{\partial v}\right)_s+\left(\frac{\partial T}{\partial s}\right)_v\left(\frac{\partial s}{\partial v}\right)_e=\frac{p}{c_v}-\frac{\Gamma T}{v}.
+\end{gathered}
+\end{equation}
+At fixed mass $v=V/m$ and $e=E/m$, so with $C_v\equiv mc_v$, and with \eqref{dg},
+\begin{equation}\label{dz_fixed_m}
+dp=\frac{(\Gamma p-K_s)\,dV+\Gamma\,dE}{V},\qquad dT=\Bigl(\frac{p}{C_v}-\frac{\Gamma T}{V}\Bigr)dV+\frac{dE}{C_v},\qquad dg=v\,dp-s\,dT .
+\end{equation}
+For the gas, \eqref{dz_fixed_m} holds at fixed composition with the mixture coefficients $\Gamma_g$, $K_{s,g}$, $C_{v,g}$. At fixed composition $p_v/p_g$ is fixed, so the vapor chemical potential $g_v(p_v,T_g)$ changes by $dg_v=\bar v_v\,dp_g-\bar s_v\,dT_g$, with $\bar v_v\equiv v_vp_v/p_g=R_vT_g/p_g$ and $\bar s_v\equiv s_v(p_v,T_g)$.
+
+\emph{Gas mass.} Along $\boldsymbol{d}_C$ the gas also receives vapor at fixed $m_a$. For the ideal-gas mixture, $T_g=(E_g-m_vq_v-m_aq_a)/C_{v,g}$ and $p_g=(m_vR_v+m_aR_a)T_g/V_g$, with $C_{v,g}=m_vc_{v,v}+m_ac_{v,a}$ and $\Gamma_g=(m_vR_v+m_aR_a)/C_{v,g}$, so
+\begin{equation}\label{dz_mass_g}
+\left(\frac{\partial T_g}{\partial m_v}\right)_{V_g,E_g,m_a}=-\frac{e_v}{C_{v,g}},\qquad
+\left(\frac{\partial p_g}{\partial m_v}\right)_{V_g,E_g,m_a}=\frac{R_vT_g-\Gamma_ge_v}{V_g},\qquad e_v\equiv c_{v,v}T_g+q_v .
+\end{equation}
+With the vapor mole fraction $x_v\equiv p_v/p_g=m_vR_v/(m_vR_v+m_aR_a)$, $dp_v=x_v\,dp_g+p_g\,dx_v$ and $dx_v=x_v(1-x_v)\,dm_v/m_v$ at fixed $m_a$, so
+\begin{equation}\label{dgv}
+dg_v=\bar v_v\,dp_g-\bar s_v\,dT_g+\mathcal{K}_{CC}\,dm_v,\qquad \mathcal{K}_{CC}\equiv\frac{R_vT_g(1-x_v)}{m_v}.
+\end{equation}
+
+\emph{Entries.} Substituting \eqref{dirs_lg} into \eqref{dz_fixed_m}, \eqref{dz_mass_g} and \eqref{dgv}: along $\boldsymbol{d}_M$,
+\begin{equation}\label{dM_phase}
+\begin{aligned}
+\partial_Mp_l&=-\frac{K_{s,l}+\Gamma_l(p_I-p_l)}{V_l}, &\qquad \partial_MT_l&=\frac{p_l-p_I}{C_{v,l}}-\frac{\Gamma_lT_l}{V_l},\\
+\partial_Mp_g&=\frac{K_{s,g}+\Gamma_g(p_I-p_{j}-p_g)}{V_g}, &\qquad \partial_MT_g&=\frac{p_I-p_{j}-p_g}{C_{v,g}}+\frac{\Gamma_gT_g}{V_g};
+\end{aligned}
+\end{equation}
+along $\boldsymbol{d}_T$,
+\begin{equation}\label{dT_phase}
+\partial_Tp_l=-\frac{\Gamma_l}{V_l},\qquad \partial_TT_l=-\frac1{C_{v,l}},\qquad \partial_Tp_g=\frac{\Gamma_g}{V_g},\qquad \partial_TT_g=\frac1{C_{v,g}};
+\end{equation}
+along $\boldsymbol{d}_C$ the liquid gives mass at its own specific volume and energy, so its intensive state does not change, $\partial_Cp_l=\partial_CT_l=\partial_Cg_l=0$, and
+\begin{equation}\label{dC_phase}
+\partial_Cp_g=\frac{\Gamma_g\bigl(e_l+(p_g+p_{j})v_l-e_v\bigr)-K_{s,g}v_l+R_vT_g}{V_g},\qquad
+\partial_CT_g=\frac{e_l+(p_g+p_{j})v_l-e_v}{C_{v,g}}-\frac{\Gamma_gT_gv_l}{V_g}.
+\end{equation}
+For the chemical potentials, the masses are fixed along $\boldsymbol{d}_M$ and $\boldsymbol{d}_T$, and the vapor mass changes along $\boldsymbol{d}_C$:
+\begin{equation}\label{dg_phase}
+\partial_bg_l=v_l\,\partial_bp_l-s_l\,\partial_bT_l,\qquad \partial_bg_v=\bar v_v\,\partial_bp_g-\bar s_v\,\partial_bT_g+\mathcal{K}_{CC}\,\delta_{bC}.
+\end{equation}
+\eqref{J_cols} with \eqref{dM_phase}--\eqref{dg_phase} gives all entries of $\hat{\boldsymbol{J}}$ at any state.
+
+\paragraph{Mechanical step.}
+From the start state $0$, the mechanical step is \eqref{elim_V} with $\delta\tilde{E}_l=\delta\tilde{m}_l=0$, i.e.\ $\hat{J}_{MM}\,\delta\tilde{V}_l=-\hat{F}_M^0$. By \eqref{J_cols} and \eqref{dM_phase}, $\hat{J}_{MM}=-\mathcal{K}^M$ with
+\begin{equation}\label{K_M}
+\mathcal{K}^M=\frac{K_{s,l}+\Gamma_l(p_I-p_l)}{V_l}+\frac{K_{s,g}+\Gamma_g(p_I-p_{j}-p_g)}{V_g},\qquad \delta\tilde{V}_l=\frac{\hat{F}_M^0}{\mathcal{K}^M},
+\end{equation}
+all evaluated at $0$. By \eqref{dirs_lg}, the extensive increments are $\delta V_l=-\delta V_g=\delta\tilde{V}_l$, $\delta E_l=-p_I\,\delta\tilde{V}_l$, $\delta E_g=(p_I-p_{j})\,\delta\tilde{V}_l$, $\delta m_l=\delta m_v=0$, and the intensive increments are
+\begin{equation}\label{incr_M}
+\delta p_k^M=\partial_Mp_k\,\delta\tilde{V}_l,\qquad \delta T_k^M=\partial_MT_k\,\delta\tilde{V}_l,\qquad k\in\{l,g\},
+\end{equation}
+with the coefficients \eqref{dM_phase}.
+
+\emph{End state.} Along $\boldsymbol{d}_M$ with $p_I$ held, by \eqref{dS_f} and \eqref{f_conj}, $dS=\tilde{F}_M\,d\tilde{V}_l$ with $\tilde{F}_M=(p_l-p_I)/T_l+(p_I-p_g-p_{j})/T_g$. While $p_I$ lies between $p_g+p_{j}$ and $p_l$, \eqref{f_F} gives $\tilde{F}_M=\hat{F}_M/T_M$ with $1/T_M>0$, and $S$ increases as the liquid expands for $\hat{F}_M>0$ and contracts for $\hat{F}_M<0$. At the Laplace pressure equilibrium of the path, $p_l=p_g+p_{j}\equiv p^*$, however,
+\begin{equation}\label{FM_end}
+\tilde{F}_M=(p^*-p_I)\Bigl(\frac1{T_l}-\frac1{T_g}\Bigr),
+\end{equation}
+which for $T_l\neq T_g$ vanishes only if $p_I=p^*$. For any other constant $p_I$, the pressures pass $p_I$ before they equalize, $p_I$ leaves the interval between $p_g+p_{j}$ and $p_l$, and the maximum of $S$ on the path lies before the pressure equilibrium. The instantaneous mechanical step therefore takes $p_I=p^*$, the pressure of its own end state. Then, where $p_l$ decreases and $p_g$ increases along $\boldsymbol{d}_M$, i.e.\ where both numerators of $\mathcal{K}^M$ in \eqref{K_M} are positive, $p_l>p^*>p_g+p_{j}$ before the end state for $\hat{F}_M^0>0$ (and the reverse for $\hat{F}_M^0<0$): $p^*$ lies between the two pressures at every state of the path, $\tilde{F}_M=\hat{F}_M/T_M$ keeps the sign of $\hat{F}_M^0$ up to the end state and changes it there, and the end state is the unique maximum of $S$ on its path. For a stiffened-gas or NASG liquid and the ideal-gas mixture, the numerators are $\bigl(p_l+\gamma_lp_\infty+(\gamma_l-1)p_I\bigr)/(1-b\rho_l)$ and $p_g+\Gamma_g(p_I-p_{j})$ (Algorithm, step 2), both positive for $p_I=p^*$, since $p^*>-p_\infty$ and $p^*-p_{j}=p_g^*>0$. Pressure equilibrium is one condition; the split of the energy is set by the work at $p_I$ in $\boldsymbol{d}_M$, here at the end pressure, so the end state depends on no other closure. The linear step above, with $p_I$ at $0$, agrees with it to first order, since $p_I^0-p^*=\mathcal{O}(\hat{F}_M^0)$.
+
+\emph{Choice of $p_I$ for the instantaneous step.} Every constant $p_I$ gives a path along $\boldsymbol{d}_M$ that ends in pressure equilibrium, $\hat{F}_M=0$, and conserves $E_l+E_g+p_{j}V_l$; the paths differ only in the split of the energy, through the work $p_I\,\delta\tilde{V}_l$. The equivalence of $\hat{F}_M=0$ and $\tilde{F}_M=0$ in \eqref{f_F} rests on \eqref{pI_w}, i.e.\ on $p_I$ lying between the pressures of the state at which the forces are evaluated. A $p_I$ evaluated at the start state, such as the impedance-weighted value of the Algorithm, satisfies this at the start but not at the end state, where both pressures equal $p^*$, so there \eqref{FM_end} is non-zero: the state of pressure equilibrium is not the maximum of $S$ on its path, and its entropy differs from that maximum at second order in $\hat{F}_M^0$. $p_I=p^*$ satisfies \eqref{pI_w} at every state of its path, so its end state is at once the pressure equilibrium and the maximum of $S$ on the path, which is the definition of the end states of all three stages; it needs no interface-pressure closure, and for a NASG liquid it has the closed form below. It is therefore the $p_I$ of the instantaneous mechanical step. $p^*$ is not known before the step: for a NASG liquid the end state has the closed form below, and for a general equation of state it is the root of the system \eqref{mech_end}, solved by Newton's method in the end state and $p^*$ together. The finite-rate step keeps $p_I$ at its start state, between the current pressures, where \eqref{dSdt_steps} holds.
+
+\paragraph{Thermal step.}
+From the start state $*$, where $\hat{F}_M^*=0$ and therefore $p_I=p_l=p_g+p_{j}$, the thermal step is \eqref{elim_Q} with $\delta\tilde{m}_l=0$. At this state \eqref{J_cols} with \eqref{dM_phase} and \eqref{dT_phase} gives
+\begin{equation}\label{J_MT_block}
+\begin{aligned}
+\hat{J}_{MM}&=-\Bigl(\frac{K_{s,l}}{V_l}+\frac{K_{s,g}}{V_g}\Bigr),&\qquad \hat{J}_{MT}&=-\Bigl(\frac{\Gamma_l}{V_l}+\frac{\Gamma_g}{V_g}\Bigr),\\
+\hat{J}_{TM}&=-\Bigl(\frac{\Gamma_lT_l}{V_l}+\frac{\Gamma_gT_g}{V_g}\Bigr),&\qquad \hat{J}_{TT}&=-\Bigl(\frac1{C_{v,l}}+\frac1{C_{v,g}}\Bigr).
+\end{aligned}
+\end{equation}
+With $\hat{F}_M^*=0$, $\hat{F}^{\prime}_T=\hat{F}_T^*$ by \eqref{schur_1}, and $\hat{J}'_{TT}=-\mathcal{K}^T$ with
+\begin{equation}\label{K_T}
+\mathcal{K}^T=\frac1{C_{v,l}}+\frac1{C_{v,g}}-\frac{\bigl(\Gamma_lT_l/V_l+\Gamma_gT_g/V_g\bigr)\bigl(\Gamma_l/V_l+\Gamma_g/V_g\bigr)}{K_{s,l}/V_l+K_{s,g}/V_g},\qquad \delta\tilde{E}_l=\frac{\hat{F}_T^*}{\mathcal{K}^T},
+\end{equation}
+all evaluated at $*$. The volume that holds $\hat{F}_M=0$ follows from \eqref{elim_V} with a zero force term,
+\begin{equation}
+\delta\tilde{V}_l=-\frac{\hat{J}_{MT}}{\hat{J}_{MM}}\,\delta\tilde{E}_l=-\frac{\Gamma_l/V_l+\Gamma_g/V_g}{K_{s,l}/V_l+K_{s,g}/V_g}\,\delta\tilde{E}_l .
+\end{equation}
+By \eqref{dirs_lg}, the extensive increments are $\delta V_l=-\delta V_g=\delta\tilde{V}_l$, $\delta E_l=-p_l\,\delta\tilde{V}_l-\delta\tilde{E}_l$, $\delta E_g=p_g\,\delta\tilde{V}_l+\delta\tilde{E}_l$, $\delta m_l=\delta m_v=0$: each phase works at its own pressure and the liquid gives the heat $\delta\tilde{E}_l$. The intensive increments are $\delta z_k^T=\partial_Mz_k\,\delta\tilde{V}_l+\partial_Tz_k\,\delta\tilde{E}_l$, i.e.\ by \eqref{dM_phase} and \eqref{dT_phase} at $p_I=p_l$,
+\begin{equation}\label{incr_T}
+\begin{gathered}
+\delta p^T=-\frac{K_{s,l}}{V_l}\,\delta\tilde{V}_l-\frac{\Gamma_l}{V_l}\,\delta\tilde{E}_l=\frac{K_{s,g}}{V_g}\,\delta\tilde{V}_l+\frac{\Gamma_g}{V_g}\,\delta\tilde{E}_l,\\
+\delta T_l^T=-\frac{\Gamma_lT_l}{V_l}\,\delta\tilde{V}_l-\frac{\delta\tilde{E}_l}{C_{v,l}},\qquad \delta T_g^T=\frac{\Gamma_gT_g}{V_g}\,\delta\tilde{V}_l+\frac{\delta\tilde{E}_l}{C_{v,g}},
+\end{gathered}
+\end{equation}
+where the two forms of $\delta p^T$ agree because $\hat{J}_{MM}\,\delta\tilde{V}_l+\hat{J}_{MT}\,\delta\tilde{E}_l=0$. Per unit $\delta\tilde{E}_l$, these are the derivatives $(\partial p/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}$ and $(\partial T_k/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}$, and $\mathcal{K}^T=(\partial T_g/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}-(\partial T_l/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}$.
+
+\emph{End state.} Along the step $\hat{F}_M=0$ is held, so $\tilde{F}_M=0$ by \eqref{f_F}, and by \eqref{dS_f}
+\begin{equation}
+dS=\tilde{F}_T\,d\tilde{E}_l=\frac{\hat{F}_T}{T_lT_g}\,d\tilde{E}_l .
+\end{equation} $S$ is stationary only at $\hat{F}_T=T_l-T_g=0$, and there $(\partial\tilde{F}_T/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}=-\mathcal{K}^T/(T_lT_g)<0$, so the end state is the maximum of $S$ at fixed masses: $\hat{F}_M=\hat{F}_T=0$, two conditions for the two unknowns $V_l$ and $E_l$, independent of $p_I$.
+
+\paragraph{Chemical step.}
+From the start state $**$, where $\hat{F}_M^{**}=\hat{F}_T^{**}=0$, so that $p_I=p_l=p_g+p_{j}$, $T_l=T_g=T$ and $e_l+(p_g+p_{j})v_l=h_l$, the chemical step is \eqref{row_C}, with $\delta\tilde{V}_l$ and $\delta\tilde{E}_l$ from \eqref{elim_V} and \eqref{elim_Q}. The block of the rows and columns $M$, $T$ is \eqref{J_MT_block} with $T_l=T_g=T$, and the column $C$ is, by \eqref{J_cols}, \eqref{dC_phase} and \eqref{dg_phase},
+\begin{equation}\label{J_colC}
+\begin{gathered}
+\hat{J}_{MC}=-\frac{\Gamma_g(h_l-e_v)-K_{s,g}v_l+R_vT}{V_g},\qquad
+\hat{J}_{TC}=-\frac{h_l-e_v}{C_{v,g}}+\frac{\Gamma_gTv_l}{V_g},\\
+\hat{J}_{CC}=\bar v_v\hat{J}_{MC}-\bar s_v\hat{J}_{TC}-\mathcal{K}_{CC}.
+\end{gathered}
+\end{equation}
+With $\hat{F}_M^{**}=\hat{F}_T^{**}=0$, $\hat{F}^{\prime\prime}_C=\hat{F}_C^{**}$ by \eqref{schur_1} and \eqref{row_C}, so $\delta\tilde{m}_l=\hat{F}_C^{**}/\mathcal{K}^C$ with $\mathcal{K}^C\equiv-\hat{J}''_{CC}$. The heat and volume that accompany the mass follow from \eqref{elim_Q} and \eqref{elim_V} with zero force terms; with $\hat{J}_{MM}=-\mathcal{K}^M$ and $\hat{J}'_{TT}=-\mathcal{K}^T$ of \eqref{K_M} and \eqref{K_T} at $**$,
+\begin{equation}\label{VE_C}
+\delta\tilde{E}_l=\frac{\hat{J}'_{TC}}{\mathcal{K}^T}\,\delta\tilde{m}_l,\quad \hat{J}'_{TC}=\hat{J}_{TC}+\frac{\hat{J}_{TM}\hat{J}_{MC}}{\mathcal{K}^M},\qquad
+\delta\tilde{V}_l=\frac{\hat{J}_{MT}\,\delta\tilde{E}_l+\hat{J}_{MC}\,\delta\tilde{m}_l}{\mathcal{K}^M}.
+\end{equation}
+The liquid changes only through $\delta\tilde{V}_l$ and $\delta\tilde{E}_l$, since $\partial_Cz_l=0$, and the gas has the same pressure and temperature increments because $\hat{F}_M$ and $\hat{F}_T$ are held. By \eqref{dM_phase} and \eqref{dT_phase} at $p_I=p_l$,
+\begin{equation}\label{PiTh}
+\delta p^C=-\frac{K_{s,l}}{V_l}\,\delta\tilde{V}_l-\frac{\Gamma_l}{V_l}\,\delta\tilde{E}_l\equiv-\Pi\,\delta\tilde{m}_l,\qquad
+\delta T^C=-\frac{\Gamma_lT}{V_l}\,\delta\tilde{V}_l-\frac{\delta\tilde{E}_l}{C_{v,l}}\equiv-\Theta\,\delta\tilde{m}_l,
+\end{equation}
+which define $\Pi$ and $\Theta$, the changes of $p$ and $T$ per unit mass received by the liquid.
+
+\emph{Pivot.} By the derivation of the pivots \eqref{stiff_def}, $\hat{J}''_{CC}\,\delta\tilde{m}_l$ is the change of $\hat{F}_C=g_l-g_v$ along the step. By \eqref{dg_phase}, the liquid potential changes by $v_l\,\delta p^C-s_l\,\delta T^C$, and the vapor potential, summed over the three transfers, by $\bar v_v\,\delta p^C-\bar s_v\,\delta T^C+\mathcal{K}_{CC}\,\delta\tilde{m}_l$. With $\Delta v\equiv v_l-\bar v_v$ and $\Delta s\equiv s_l-\bar s_v$,
+\begin{equation}
+\hat{J}''_{CC}\,\delta\tilde{m}_l=\Delta v\,\delta p^C-\Delta s\,\delta T^C-\mathcal{K}_{CC}\,\delta\tilde{m}_l,
+\end{equation}
+and by \eqref{PiTh}
+\begin{equation}\label{K_C}
+\mathcal{K}^C=-\hat{J}''_{CC}=\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC},\qquad \delta\tilde{m}_l=\frac{\hat{F}_C^{**}}{\mathcal{K}^C},
+\end{equation}
+all evaluated at $**$. By \eqref{dirs_lg}, the extensive increments are $\delta m_l=-\delta m_v=-\delta\tilde{m}_l$, $\delta V_l=-\delta V_g=\delta\tilde{V}_l-v_l\,\delta\tilde{m}_l$, $\delta E_l=-p_l\,\delta\tilde{V}_l-\delta\tilde{E}_l-e_l\,\delta\tilde{m}_l$ and $\delta E_g=-\delta E_l-p_{j}\,\delta V_l$.
+
+\emph{End state.} Along the step $\hat{F}_M=\hat{F}_T=0$ are held, so $\tilde{F}_M=\tilde{F}_T=0$ and $\tilde{F}_C=\hat{F}_C/T$ by \eqref{f_F}, and $dS=\tilde{F}_C\,d\tilde{m}_l=\hat{F}_C\,d\tilde{m}_l/T$: the volume and energy that accompany the mass generate no entropy, and the result does not depend on $\boldsymbol{d}_C$. $S$ is stationary only at $\hat{F}_C=g_l-g_v=0$, with $g_v$ at the vapor partial pressure, and there $(\partial\tilde{F}_C/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}=-\mathcal{K}^C/T<0$, so the end state is the maximum of $S$ over all exchanges, $\boldsymbol{F}=0$.
+
+\paragraph{Dilute vapor.}
+$\mathcal{K}_{CC}=R_vT_g(1-x_v)/m_v$ is singular as $m_v\to0$, and $\hat{F}_C$ contains $-R_vT_g\ln x_v$ through $g_v(p_v,T_g)$: in the dilute limit $\hat{F}_C$ is linear in $\ln m_v$, not in $m_v$. In the iteration of the chemical stage the Newton unknown of the mass is therefore $u=\ln m_v$: with $\delta u=\delta\tilde{m}_l/m_v$ from \eqref{row_C}, the new vapor mass is $m_ve^{\delta u}$, the transferred mass $m_v(e^{\delta u}-1)$ agrees with $\delta\tilde{m}_l$ to first order, and $\delta\tilde{E}_l$ and $\delta\tilde{V}_l$ follow from \eqref{elim_Q} and \eqref{elim_V} with this mass. The vapor mass is set to $m_ve^{\delta u}$ itself, not computed as $m_v+m_v(e^{\delta u}-1)$, which rounds to zero once $e^{\delta u}$ is below the machine precision. The root is unchanged and $m_v$ stays positive. A dry gas ($m_v=0$, $\hat{F}_C=+\infty$) is first given a vapor mass of negligible mole fraction along $\boldsymbol{d}_C$.
+
+\paragraph{Summary.}
+From its own start state, each step transfers $\delta\tilde{V}_l=\hat{F}_M^0/\mathcal{K}^M$, $\delta\tilde{E}_l=\hat{F}_T^*/\mathcal{K}^T$, $\delta\tilde{m}_l=\hat{F}_C^{**}/\mathcal{K}^C$ with the faster equilibria held and each stiffness evaluated at the start state of its step. The stiffnesses $\mathcal{K}^M$, $\mathcal{K}^T$, $\mathcal{K}^C$ derived above from the entries of $\hat{\boldsymbol{J}}$ are the pivots \eqref{stiff_def} of the Newton system \eqref{newton_hat} at the start state of each step, so each step is an elimination step of \eqref{newton_hat}. One pass of the three steps reaches the equilibria of the steps to first order; iterating the stages as below reaches them exactly, and the last stage ends at the full equilibrium $\boldsymbol{F}=0$ of \eqref{equilibrium_condition}.
+
+\paragraph{Update of pressure and temperature.}
+The transfers of a step give the new extensive state exactly, $\boldsymbol{x}_l^{n+1}=\boldsymbol{x}_l^n+\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n$ and $\boldsymbol{x}_g^{n+1}=\boldsymbol{x}_g^n-\boldsymbol{A}\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n$ by \eqref{update_X}. The intensive state ($p_k$, $T_k$, $g_k$) at the start of the next step can be obtained in three ways.
+\begin{enumerate}
+\item \emph{Linear update}, as in the steps above: $p_k$ and $T_k$ are advanced by the linear increments of the step ($\delta p_k^M$, $\delta T_k^M$, $\delta p^T$, $\delta T_k^T$, $\delta p^C$, $\delta T^C$). The equilibria of the step then hold exactly in the updated values, e.g.\ $p_l^*-p_g^*=p_{j}$, so the next step starts with its faster forces exactly zero, as its derivation assumes. The updated values are, however, not the equation-of-state values at $\boldsymbol{x}^{n+1}$; they differ from them by $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$, so the intensive and extensive states are consistent only to first order.
+\item \emph{Equation-of-state update}: $p_k$, $T_k$ and $g_k$ are evaluated from the equations of state at $\boldsymbol{x}^{n+1}$. The state is then consistent, but the equilibria of the step hold only to first order, and the next step starts with faster forces of order $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$ instead of zero. These residuals enter the elimination through the full right-hand sides $\hat{F}^{\prime n}_T$ and $\hat{F}^{\prime\prime n}_C$ of \eqref{schur_1} and \eqref{row_C}, and through the term $\hat{F}_M^n$ of \eqref{elim_V}; keeping them, instead of $\hat{F}_T^n$ and $\hat{F}_C^n$ alone, makes the next step a Newton step that also corrects the faster forces.
+\item \emph{Mixture-energy update}, Pelanti's closure~\cite[eqs.~(59), (70), (82)]{Pelanti2022}: $V_l$ and the masses are taken from $\boldsymbol{x}^{n+1}$, and the energy is split between the phases so that $\hat{F}_M=0$ exactly, with $E_l+E_g+p_{j}V_l$ unchanged. This adds to the transfer of the step a heat $\delta\tilde{E}_l^{c}$ along $\boldsymbol{d}_T$, the root of $\hat{F}_M(\boldsymbol{x}_l^{n+1}+\boldsymbol{d}_T\,\delta\tilde{E}_l^{c})=0$, which is of order $\lVert\hat{\boldsymbol{F}}^n\rVert^2$ and changes neither $V_l$ nor the masses. The state is consistent and in exact pressure equilibrium, but the temperature (and chemical) equilibria of the step hold only to first order. Because the correction is a heat exchanged at frozen volumes, the $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$ energy error of the linear step changes mostly the temperature of the phase with the smaller heat capacity.
+\end{enumerate}
+The three options give the same transfers to first order. Option 1 is a single linearized pass; option 2 is required for the iteration below; option 3 is Pelanti's one-pass procedure.
+
+\paragraph{Iteration of the stages.}
+A single pass takes one Newton step per stage and reaches the relaxed states to first order. The relaxed states themselves are reached by iterating \eqref{newton_hat} with option 2, $n=0,1,\dots$ from the start state $\boldsymbol{x}^0$ of the relaxation, with $\hat{\boldsymbol{J}}^n$ evaluated with $\boldsymbol{G}_k$ and $\boldsymbol{K}_k$ at $\boldsymbol{x}^n$ and $\boldsymbol{D}$ held at $\boldsymbol{x}^0$, with $p_I$ of \eqref{pI_w} at $\boldsymbol{x}^0$.
+
+\emph{Direct iteration.} The three relaxed states are the end states of the leading blocks of \eqref{newton_rows} from $\boldsymbol{x}^0$:
+\begin{enumerate}
+\item mechanical: the state with $\hat{F}_M=0$ on $\boldsymbol{x}^0+\mathrm{span}\{\boldsymbol{d}_M\}$ with $p_I=p^*$, its own end pressure (End state of the mechanical step), the maximum of $S$ on that path. Its path depends on the unknown $p^*$, so it is not the root of the leading $1\times1$ block with $\boldsymbol{D}$ held at $\boldsymbol{x}^0$; it is computed by the Newton iteration \eqref{mech_newton} below, or for a NASG liquid by the closed form below. With $p_I$ held at $\boldsymbol{x}^0$ instead, the mechanical stage is the root of the leading $1\times1$ block with $\boldsymbol{D}$ held at $\boldsymbol{x}^0$;
+\item thermo-mechanical: the leading $2\times2$ block, \eqref{elim_Q} with $\delta\tilde{m}_l^n=0$ followed by \eqref{elim_V}, until $\hat{F}_M=\hat{F}_T=0$. The end state is the maximum of $S$ at fixed masses, the $pT$-relaxed state; for a NASG liquid it is computed by the closed form below instead;
+\item full: the system \eqref{newton_rows}--\eqref{row_C}, until $\hat{\boldsymbol{F}}=0$. The end state is the maximum of $S$ over all exchanges, $\boldsymbol{F}=0$, the $pTg$-relaxed state.
+\end{enumerate}
+The $pT$- and $pTg$-relaxed states are unique, so they do not depend on $p_I$ or on the path. The unknowns of the iteration are $\tilde{V}_l$, $\tilde{E}_l$ and $u=\ln m_v$ (Dilute vapor), and the step is damped: for $\lambda=1,\frac12,\frac14,\dots$ the trial step has the mass $m_v^n(e^{\lambda\delta u^n}-1)$, with $\delta u^n$ from \eqref{row_C}, and $\delta\tilde{E}_l$, $\delta\tilde{V}_l$ from \eqref{elim_Q} and \eqref{elim_V} with $\lambda\hat{\boldsymbol{F}}^n$ in place of $\hat{\boldsymbol{F}}^n$ and this mass. The first $\lambda$ for which both phases have a state of their equations of state ($V_k>0$, $m_l>0$, $m_g>0$, $\rho_l$ below the largest density of its equation of state ($1/b$ for NASG), $p_l+p_\infty>0$, $p_g>0$, $T_k>0$, and $m_v>0$ in the full system) is taken. At $\lambda=1$ the trial is the Newton step, so near the end state the iteration converges quadratically; as $\lambda\to0$ it tends to $\lambda$ times the Newton step, and since the halving acts on the unknowns, a mass step $\delta u$ of any size is reduced to an admissible one.
+
+\emph{Pivots and convergence.} The elimination divides by the pivots $\hat{J}^n_{MM}=-\mathcal{K}^{M,n}$, $\hat{J}^{\prime n}_{TT}=-\mathcal{K}^{T,n}$ and $\hat{J}^{\prime\prime n}_{CC}=-\mathcal{K}^{C,n}$ of the block. They are positive near the end state by \eqref{pivot_K}; an iterate at which one of them is not positive stops the relaxation, and the cell is returned unchanged. The iteration ends when each force of the block satisfies
+\begin{equation}\label{conv_tol}
+|\hat{F}_k|\le\max\Bigl(\mathrm{tol}_k\,z_k^{\mathrm{ref}},\;10\,\epsilon_{\mathrm{m}}\bigl[\,|z_k|+V\bigl(|Z_{l,k1}|+|Z_{g,k1}|\bigr)+\bigl(|E_l|+|E_g|\bigr)|Z_{l,k2}|+|E_g|\,|Z_{g,k2}|\,\bigr]\Bigr),\qquad k\in\{M,T,C\},
+\end{equation}
+with the tolerances $\mathrm{tol}_k$, the scales $z^{\mathrm{ref}}=[\max(|p_l|,|p_g+p_{j}|),\,\max(T_l,T_g),\,R_vT_g]$, the magnitudes $|z_k|=|p_l|$, $\max(T_l,T_g)$, $\max(|g_l|,|g_v|)$, $\boldsymbol{Z}_k\equiv\partial\boldsymbol{z}_k/\partial\boldsymbol{x}_k$ with the columns of \eqref{dz_fixed_m}, $V=V_l+V_g$ and the machine precision $\epsilon_{\mathrm{m}}$. The second term is the round-off of $\hat{F}_k$: $V_g=V-V_l$ and $E_l$ are obtained from the conserved totals and carry their round-off, which $\boldsymbol{Z}_k$ amplifies.
+
+\emph{Chemical stage on the $pT$-relaxed states.} Started far from the $pT$-relaxed state, the mass step of \eqref{row_C} is driven by the faster forces through $\hat{F}^{\prime\prime}_C$, and a large mass step leaves the phases far from the $pT$-relaxed state through the linear $\delta\tilde{V}_l$ and $\delta\tilde{E}_l$ that accompany it. The $pTg$-relaxed state is therefore computed from $\boldsymbol{x}^0$ with the masses as the only outer unknown. With the air mass fixed, the masses are set by $m_v$. Let $S^*(m_v)$ be the maximum of $S$ at fixed masses, attained at the unique $pT$-relaxed state. $S$ is concave in the extensive state, and at fixed masses the maximization is over a convex set of $(V_l,E_l)$, so $S^*$ is concave in $m_v$. Along the $pT$-relaxed states $\hat{F}_M=\hat{F}_T=0$, so by the end state of the chemical step $dS^*=\hat{F}_C\,dm_v/T$ with $dm_v=d\tilde{m}_l$, and $\hat{F}_C/T$ is non-increasing in $m_v$: it has at most one root, and its sign tells on which side of the root $m_v$ lies. The iteration is:
+\begin{enumerate}
+\item the $pT$-relaxed state at the masses of $\boldsymbol{x}^0$ (item 2 above, or the closed form below for a NASG liquid), which gives the start $m_v^0$ on the $pT$-relaxed states;
+\item at the iterate $m_v^n$, with $\boldsymbol{D}$ evaluated there ($p_I=p_l$, since the iterate is a $pT$-relaxed state, and $v_l$, $e_l$ of the iterate) instead of at $\boldsymbol{x}^0$, the Newton step $\delta u^n=\delta\tilde{m}_l^n/m_v^n$ of \eqref{row_C}; its pivot $-\mathcal{K}^C$ is the derivative of $\hat{F}_C$ along the $pT$-relaxed states by \eqref{stiff_def}, so this is Newton's method in $u$ on $\hat{F}_C(m_v)$. $u^n$ is a lower bound of the root if $\hat{F}^{\prime\prime n}_C>0$ and an upper bound if $\hat{F}^{\prime\prime n}_C<0$. $\hat{F}^{\prime\prime}_C$ is used rather than $\hat{F}_C$ because the iterates hold $\hat{F}_M$ and $\hat{F}_T$ only to the tolerance of the iteration, and $\hat{F}^{\prime\prime}_C$ is the chemical force with these residuals eliminated, the one that sets the sign of $\delta u^n$. $u^n$ is always one of the bounds, and a Newton point outside the bounds found so far is replaced by their midpoint;
+\item the trial transfer: the mass $m_v^n(e^{\delta u}-1)$ with $\delta\tilde{E}_l$ and $\delta\tilde{V}_l$ from \eqref{elim_Q} and \eqref{elim_V}, which hold $\hat{F}_M$ and $\hat{F}_T$ to first order, followed by the $pT$-relaxed state at the new masses (item 2 above, or the closed form below for a NASG liquid). If that state does not exist, $\delta u$ is halved;
+\end{enumerate}
+until $\hat{\boldsymbol{F}}=0$. Every accepted iterate is a $pT$-relaxed state, the bounds close on the unique root, and Newton's method converges quadratically near it.
+
+\emph{Existence of the root.} If the gas contains air, $m_a>0$ keeps $V_g=(m_vR_v+m_aR_a)T/p_g$ positive as $m_v\to0$, so $p_v\to0$, $g_v\to-\infty$ and $\hat{F}_C\to+\infty$: a root exists. For a pure vapor, $m_a=0$, the gas can vanish as $m_v\to0$ and a root need not exist; the maximum of $S$ is then on the boundary $m_g=0$, and the cell condenses completely. As $m_v\to0$ on the $pT$-relaxed states, $p_g\to0$ and $\hat{F}_C\to+\infty$ unless the liquid holding all the water fills the volume at $p_l>p_{j}$; for a NASG liquid at temperature $T$, $p_l+p_\infty=R_lT/(v_l-b)$ with $R_l=(\gamma_l-1)c_{v,l}$, so this requires the water density $(m_l+m_v)/V\ge1/\bigl(b+R_lT/(p_\infty+p_{j})\bigr)$. At $\alpha_l=\tfrac12$ the water density is at most $(\rho_l+\rho_v)/2$, with $\rho_l<1/b$, and below the critical point ($T<T_c$, $p_v<p_c$) it stays below this bound: complete condensation occurs only past the critical point, where the model is not applied, and is not treated.
+
+\emph{Order.} The $p$- and $pT$-relaxed states are computed by items 1 and 2 of the direct iteration, or for a NASG liquid by the closed forms below. For the $pTg$-relaxed state, a cell with $\alpha_l<\epsilon_n$ or $\alpha_l>1-\epsilon_n$ is first seeded by nucleation (Sec.~\ref{sec_nuc}); then the $pT$-relaxed state at the masses of $\boldsymbol{x}^0$ is computed, and the chemical stage on the $pT$-relaxed states follows. A cell with $\alpha_l<\epsilon_n$ or $\alpha_l>1-\epsilon_n$ that is not seeded is returned unchanged: a single-phase cell is then the maximum of $S$ by \eqref{nuc_cond}, and a two-phase one is left to the caller. The direct iteration of the full system solves the same $\hat{\boldsymbol{F}}=0$ and ends at the same state, but its mass step can leave the admissible states, so it is not used for the $pTg$-relaxed state; the chemical stage on the $pT$-relaxed states converges from any start for which the root exists.
+
+\paragraph{Mechanical stage with $p_I=p^*$ for a general equation of state.}
+With $p_I=p^*$ held, \eqref{dirs_lg} gives the path at fixed masses in the volume $\delta\equiv V_l-V_l^0$ received by the liquid,
+\begin{equation}\label{mech_path}
+V_l=V_l^0+\delta,\qquad E_l=E_l^0-p^*\delta,\qquad V_g=V_g^0-\delta,\qquad E_g=E_g^0+(p^*-p_{j})\,\delta,
+\end{equation}
+which conserves $V$, the masses and $E_l+E_g+p_{j}V_l$ for any $\delta$ and $p^*$. The end state of the stage is the pressure equilibrium of the path whose interface pressure is its own end pressure, two conditions for the two unknowns $\delta$ and $p^*$:
+\begin{equation}\label{mech_end}
+R_l\equiv p_l(V_l,E_l)-p^*=0,\qquad R_g\equiv p_g(V_g,E_g)+p_{j}-p^*=0,
+\end{equation}
+whose difference is $R_l-R_g=\hat{F}_M$. Along \eqref{mech_path} at fixed $p^*$ the pressures change by $\partial_Mp_k$ of \eqref{dM_phase} with $p_I=p^*$, and at fixed $\delta$ a change of $p^*$ moves the energies by $\mp\delta\,dp^*$, which changes $p_k$ by $\mp\delta\,\Gamma_k/V_k$ by \eqref{dz_fixed_m}. Newton's method on \eqref{mech_end} is therefore
+\begin{equation}\label{mech_newton}
+\begin{bmatrix}\partial_Mp_l & -1-\delta\,\Gamma_l/V_l\\[2pt] \partial_Mp_g & -1+\delta\,\Gamma_g/V_g\end{bmatrix}
+\begin{bmatrix}\Delta\delta\\ \Delta p^*\end{bmatrix}=-\begin{bmatrix}R_l\\ R_g\end{bmatrix},
+\end{equation}
+with every coefficient at the current iterate. At $\delta=0$ the determinant is $\partial_Mp_g-\partial_Mp_l=\mathcal{K}^M$ of \eqref{K_M} at $p_I=p^*$, positive by the End state of the mechanical step. Each iterate is evaluated on the path \eqref{mech_path} from $\boldsymbol{x}^0$, not by increments, so the conservation holds exactly at every iterate; the iteration starts at $\delta=0$ with $p^*$ the impedance-weighted $p_I$ of the Algorithm, step 2, is damped by halving the step until both phases have a state, as in the iteration of the stages, and ends when $\hat{F}_M$ and $R_l$ are below the tolerance of $\hat{F}_M$ in \eqref{conv_tol}. For a NASG liquid and the ideal-gas mixture its root is the closed form below.
+
+\paragraph{Closed form of the mechanical stage.}
+For a NASG liquid, $(p_l+\gamma_lp_\infty)(V_l-bm_l)=(\gamma_l-1)(E_l-m_lq_l)$ ($b=0$ for a stiffened gas), and for the ideal-gas mixture of fixed composition, $p_gV_g=\Gamma_g(E_g-Q_g)$ with $Q_g=m_vq_v+m_aq_a$. Let $\delta\equiv V_l-V_l^0=V_g^0-V_g$ be the volume received by the liquid, $W^0\equiv V_l^0-bm_l$, and $y\equiv p^*-p_{j}$ the gas pressure of the end state. By \eqref{dirs_lg} with $p_I=p^*$, $E_l=E_l^0-p^*\delta$ and $E_g=E_g^0+y\,\delta$. The gas relation at the end state, $y(V_g^0-\delta)=\Gamma_g(E_g^0-Q_g)+\Gamma_gy\,\delta=p_g^0V_g^0+\Gamma_gy\,\delta$, gives
+\begin{equation}\label{mech_gas}
+\delta=\frac{V_g^0\,(y-p_g^0)}{(1+\Gamma_g)\,y},
+\end{equation}
+which increases with $y$. The liquid relation, $(p^*+\gamma_lp_\infty)(W^0+\delta)=(\gamma_l-1)(E_l^0-m_lq_l)-(\gamma_l-1)p^*\delta=(p_l^0+\gamma_lp_\infty)W^0-(\gamma_l-1)p^*\delta$, gives
+\begin{equation}\label{mech_liq}
+\delta=\frac{W^0\,(p_l^0-p^*)}{\gamma_l\,(p^*+p_\infty)},
+\end{equation}
+which decreases with $p^*=y+p_{j}$. With $z\equiv y-p_g^0$, so that $p_l^0-p^*=\hat{F}_M^0-z$, equating \eqref{mech_gas} and \eqref{mech_liq} and multiplying by $(1+\Gamma_g)\,y\,\gamma_l(p^*+p_\infty)$ gives
+\begin{equation}\label{mech_quad}
+\begin{gathered}
+a\,z^2+b\,z+c=0,\qquad a=\gamma_lV_g^0+(1+\Gamma_g)W^0,\\
+b=a\,p_g^0+\gamma_lV_g^0(p_{j}+p_\infty)-(1+\Gamma_g)W^0\hat{F}_M^0,\qquad c=-(1+\Gamma_g)W^0p_g^0\hat{F}_M^0 .
+\end{gathered}
+\end{equation}
+$a>0$, and at $y=0$, $z=-p_g^0$, the left side is $-\gamma_lV_g^0p_g^0(p_{j}+p_\infty)<0$ for $p_{j}>-p_\infty$, so \eqref{mech_quad} has exactly one root with $y>0$, its larger root; since \eqref{mech_gas} increases and \eqref{mech_liq} decreases, it is the only end state. It is computed without cancellation as $z=-2c/(b+\sqrt{b^2-4ac})$ for $b>0$ and $z=(-b+\sqrt{b^2-4ac})/(2a)$ otherwise, $\delta$ follows from \eqref{mech_gas}, and $E_l$, $E_g$ from the path, so that \eqref{alg_cons} holds exactly. The end state is admissible: $y>0$, $p^*+p_\infty>0$, $V_g=V_g^0(p_g^0+\Gamma_gy)/\bigl((1+\Gamma_g)y\bigr)>0$ and $V_l-bm_l=W^0\bigl(p_l^0+\gamma_lp_\infty+(\gamma_l-1)p^*\bigr)/\bigl(\gamma_l(p^*+p_\infty)\bigr)>0$, so both temperatures are positive.
+
+The NASG liquid is admissible for $V_l>bm_l$, where its pressure is finite; as $V_l\to bm_l$, $p_l\to\infty$, so the co-volume bounds the compression by itself and a relaxation from an admissible state stays admissible.
+
+\paragraph{Closed form of the $pT$-relaxed state.}
+At fixed masses the $pT$-relaxed state has $T_l=T_g=T$ and $p_l=p_g+p_{j}=y+p_{j}$, with $y$ the gas pressure, and keeps the cell volume $V=V_l^0+V_g^0$ and $E_l+E_g+p_{j}V_l$. With the NASG liquid and the ideal-gas mixture of the previous paragraph, write $W\equiv V_l-bm_l$ for the free volume of the liquid, $\omega\equiv V-bm_l$, $A_l\equiv m_lR_l$ with $R_l=(\gamma_l-1)c_{v,l}$, $A_g\equiv m_vR_v+m_aR_a$, $C\equiv m_lc_{v,l}+C_{v,g}$ and $\pi\equiv p_\infty+p_{j}$. The liquid energy is $E_l=m_l(c_{v,l}T+q_l)+p_\infty W$ and the gas energy $E_g=C_{v,g}T+Q_g$, so the conservation of $E_l+E_g+p_{j}V_l$, with $V_l=W+bm_l$, reads
+\begin{equation}\label{pT_energy}
+CT+\pi W=E_s,\qquad E_s\equiv E_l^0+E_g^0-m_lq_l-Q_g+p_{j}W^0 .
+\end{equation}
+The equations of state give $W=A_lT/(y+\pi)$, since $p_l+p_\infty=y+\pi$, and $V_g=A_gT/y$, and the volume is
+\begin{equation}\label{pT_volume}
+T\Bigl(\frac{A_l}{y+\pi}+\frac{A_g}{y}\Bigr)=\omega .
+\end{equation}
+Eliminating $T$ between \eqref{pT_energy}, $T\bigl(C+\pi A_l/(y+\pi)\bigr)=E_s$, and \eqref{pT_volume}, and multiplying by $y(y+\pi)$,
+\begin{equation}\label{pT_quad}
+a\,y^2+b\,y+c=0,\qquad a=C\omega,\qquad b=\omega\pi(C+A_l)-E_s(A_l+A_g),\qquad c=-E_sA_g\pi .
+\end{equation}
+For an admissible start, $E_l^0-m_lq_l=m_lc_{v,l}T_l^0+p_\infty W^0$ and $E_g^0-Q_g=C_{v,g}T_g^0$, so $E_s=m_lc_{v,l}T_l^0+C_{v,g}T_g^0+\pi W^0>0$ for $p_{j}>-p_\infty$; with $\omega>W^0>0$, $a>0$ and $c<0$, and \eqref{pT_quad} has exactly one root with $y>0$, its larger root, computed without cancellation as $y=-2c/(b+\sqrt{b^2-4ac})$ for $b\ge0$ and $y=(-b+\sqrt{b^2-4ac})/(2a)$ otherwise. This is the unique $pT$-relaxed state, consistently with its uniqueness as the maximum of $S$ at fixed masses. It is admissible: $y>0$, $p_l+p_\infty=y+\pi>0$, and by \eqref{pT_volume} $T=\omega\,y(y+\pi)/\bigl(A_ly+A_g(y+\pi)\bigr)>0$, so $W>0$ and $V_g=\omega A_g(y+\pi)/\bigl(A_ly+A_g(y+\pi)\bigr)>0$. The cell is updated with $V_g$, $E_g=C_{v,g}T+Q_g$ with $T=yV_g/A_g$, and $E_l$ from the conservation of $E_l+E_g+p_{j}V_l$, which then holds exactly. The same conditions, $E_s>0$, $\omega>0$ and $p_{j}>-p_\infty$, decide whether the $pT$-relaxed state exists at the trial masses of the chemical stage on the $pT$-relaxed states.
+
+\paragraph{Relation to Pelanti's sequential relaxation.}
+Instantaneous relaxation needs only the state at which each force vanishes, not the size of the force. The entropy forces $\tilde{\boldsymbol{F}}$ and the forces $\hat{\boldsymbol{F}}$ are related by the invertible matrix $\boldsymbol{C}$ of \eqref{C_def}, so they vanish at the same states and give the same end states. The steps above are moreover computed in $\hat{\boldsymbol{F}}$, whose components are Pelanti's forces~\cite{Pelanti2022}: $p_1-p_2$, $T_1-T_2$, $g_1-g_2$ with phase 1 the liquid, $p_{j}=0$, and $g_2$ the pure vapor. Her stiffnesses are those of the steps above:
+\begin{itemize}
+\item mechanical: $K_p=\mu\,(1/\xi_1^p+1/\xi_2^p)$~\cite[eq.~(55)]{Pelanti2022}, where $1/\xi_k^p=[\Gamma_k(p_I-p_k)+\rho_kc_k^2]/\alpha_k$~\cite[eq.~(51)]{Pelanti2022} is the phase-$k$ term of $\mathcal{K}^M$ in \eqref{K_M}, so $K_p=\mu\,\mathcal{K}^M$;
+\item thermal: per unit heat given by phase 1, $(\partial T_1/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}=-1/\xi_1^T$ and $(\partial T_2/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}=1/\xi_2^T$~\cite[eqs.~(62), (63)]{Pelanti2022}, so $K_T=\vartheta\,(1/\xi_1^T+1/\xi_2^T)$~\cite[eq.~(66)]{Pelanti2022} is $\vartheta\,\mathcal{K}^T$ of \eqref{K_T};
+\item chemical: her $S_p$ and $S_T$~\cite[eq.~(23)]{Pelanti2022} are the changes of $p$ and $T$ per unit mass received by phase 1 in the $pT$-relaxed model, $-(\partial p/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}$ and $-(\partial T/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}$, i.e.\ $\Pi$ and $\Theta$. By~\cite[eqs.~(71b), (71c), (73)]{Pelanti2022}, $1/\xi_1^g=S_p/\rho_1-s_1S_T$ and $1/\xi_2^g=-S_p/\rho_2+s_2S_T$, so $K_g=\nu\,(1/\xi_1^g+1/\xi_2^g)=\nu\,(\Delta v\,\Pi-\Delta s\,\Theta)$, which is $\nu\,\mathcal{K}^C$ with $\mathcal{K}_{CC}=0$ for a pure vapor. Her eq.~(72) prints $-s_2S_T$ for $k=2$; the sign used here follows from her eq.~(71c).
+\end{itemize}
+Her instantaneous limits~\cite[eqs.~(57), (68), (79), (80)]{Pelanti2022} are therefore the transfers \eqref{step_F}, with the heat and mass signs of footnote~\ref{fn_sign}. She takes the volume fraction and the partial density from these transfers and then closes the pressure with the mixture energy relation~\cite[eqs.~(59), (70), (82)]{Pelanti2022}, which is option 3 of the update of pressure and temperature, in one pass; the steps above as written use option 1. One pass of the steps \eqref{step_F} with option 3 is therefore her instantaneous procedure, step by step. Her one-pass states are first-order approximations of the exact relaxed states, which the iteration of the stages reaches: the $pT$- and $pTg$-relaxed states are unique, and the mechanical end state is the one of the path $\boldsymbol{d}_M$ with the chosen $p_I$.
+
+\paragraph{Relation to Pelanti and Shyue's instantaneous relaxation.}
+\cite{PelantiShyue2014} relax instantaneously, $\mu,\theta,\nu\to\infty$~\cite[eqs.~(34), (41), (44)]{PelantiShyue2014}, and solve for the end states exactly: pressure equilibrium at fixed masses with the interface work $E_k^*-E_k^0=\mp p_I(\alpha_1^*-\alpha_1^0)$, $p_I=(p_I^0+p^*)/2$~\cite[eqs.~(37), (38)]{PelantiShyue2014}; pressure and temperature equilibrium at fixed masses~\cite[eqs.~(42), (43)]{PelantiShyue2014}; pressure, temperature and Gibbs-energy equilibrium~\cite[eqs.~(46), (47)]{PelantiShyue2014}. The last two are the unique maxima of $S$ at fixed masses and over all exchanges, i.e.\ the end states of the thermal and chemical stages, for any $p_I$. Their mechanical end state moves $\boldsymbol{x}_l$ along the single direction $\boldsymbol{d}_M$ built on the constant $p_I=(p_I^0+p^*)/2$, with $p_I^0$ their impedance-weighted interface pressure, so it is the end state of the mechanical stage with that $p_I$, a value set implicitly by the end state. At their end state $\tilde{F}_M$ is half of \eqref{FM_end} with $p_I=p_I^0$; the mechanical stage here takes $p_I=p^*$. For a stiffened-gas liquid ($b=0$), $p_{j}=0$ and a single gas, the root of \eqref{pT_quad} is the admissible root of their quadratic for the $pT$-relaxed pressure~\cite[eqs.~(C.3)--(C.5)]{PelantiShyue2014}. Their thermo-chemical step needs neither $\rho_I$ nor $e_I$~\cite[eq.~(44)]{PelantiShyue2014}, consistently with the independence of the chemical end state from $\boldsymbol{d}_C$ shown above.
+
+\subsubsection{Finite-rate relaxation}
+Starting from equation \eqref{dS_F_dx}, we have
+\begin{equation}\label{dSdt}
+\frac{dS}{dt} = \boldsymbol{F} \cdot \frac{d\boldsymbol{x}_l}{dt}
+\end{equation}
+Entropy maximization fixes the end state of each step, but not how fast it is approached. The rate requires a constitutive law for the transfers, which is additional physical input. As in the sequential relaxation, the mechanical, thermal and chemical processes are assumed to act on separated time scales, in this order from the fastest to the slowest~\cite[Sec.~5]{Pelanti2022}.
+
+\paragraph{Entropy production of each step.}
+With $d\boldsymbol{x}_l/dt=\boldsymbol{D}\,\dot{\tilde{\boldsymbol{x}}}_l$, \eqref{dSdt} becomes $dS/dt=\tilde{\boldsymbol{F}}\cdot\dot{\tilde{\boldsymbol{x}}}_l=\tilde{F}_M\dot{\tilde{V}}_l+\tilde{F}_T\dot{\tilde{E}}_l+\tilde{F}_C\dot{\tilde{m}}_l$ by the same steps as \eqref{dS_f}. During a step the faster forces are held at zero and the slower transfers are inactive, so only the term of the step remains. By \eqref{f_F},
+\begin{equation}\label{dSdt_steps}
+\frac{dS}{dt}=\frac{\hat{F}_M}{T_M}\,\dot{\tilde{V}}_l,\qquad
+\frac{dS}{dt}=\frac{\hat{F}_T}{T_lT_g}\,\dot{\tilde{E}}_l,\qquad
+\frac{dS}{dt}=\frac{\hat{F}_C}{T}\,\dot{\tilde{m}}_l,
+\end{equation}
+in the mechanical, thermal and chemical step, respectively. The second law, $dS/dt\ge0$, therefore requires that the liquid expands while $\hat{F}_M>0$, gives heat while $\hat{F}_T>0$, and gives mass while $\hat{F}_C>0$.
+
+\paragraph{Rate law.}
+The simplest law with these signs is linear in the force of the step, with a positive rate times the liquid-minus-gas difference,
+\begin{equation}\label{step_laws}
+\dot{\tilde{V}}_l=\lambda \hat{F}_M,\qquad \dot{\tilde{E}}_l=\vartheta \hat{F}_T,\qquad \dot{\tilde{m}}_l=\nu \hat{F}_C,
+\end{equation}
+with rates $\lambda,\vartheta,\nu\ge0$ that may depend on the state. Substituting \eqref{step_laws} into \eqref{dSdt_steps},
+\begin{equation}\label{dSdt_rates}
+\frac{dS}{dt}=\frac{\lambda \hat{F}_M^2}{T_M},\qquad \frac{dS}{dt}=\frac{\vartheta \hat{F}_T^2}{T_lT_g},\qquad \frac{dS}{dt}=\frac{\nu \hat{F}_C^2}{T},
+\end{equation}
+all non-negative. With $\hat{\boldsymbol{F}}$ of \eqref{Fhat_def}, \eqref{step_laws} reads
+\begin{equation}\label{rate_matrix}
+\dot{\tilde{\boldsymbol{x}}}_l=\boldsymbol{R}\,\hat{\boldsymbol{F}},\qquad \boldsymbol{R}=\mathrm{diag}(\lambda,\vartheta,\nu),
+\end{equation}
+each step using its own row. These are Pelanti's relaxation sources~\cite[eq.~(2)]{Pelanti2022} with phase 1 the liquid, up to the sign convention for heat and mass\footnote{\label{fn_sign}Pelanti~\cite[eq.~(2)]{Pelanti2022} counts all transfers as received by phase 1, so her heat and mass sources are $\vartheta(T_2-T_1)$ and $\nu(g_2-g_1)$, a positive rate times gas minus liquid. Here heat and mass are counted as given by the liquid, so her sources are $-\dot{\tilde{E}}_l=-\vartheta \hat{F}_T$ and $-\dot{\tilde{m}}_l=-\nu \hat{F}_C$ with the same rates; her directions are $-\boldsymbol{d}_T$ and $-\boldsymbol{d}_C$, and her transfers are $-\delta\tilde{E}_l$ and $-\delta\tilde{m}_l$.}, and her mechanical rate $\mu$ is renamed $\lambda$ to avoid a clash with the chemical potential. Departures from her model: $p_{j}$ in $\hat{F}_M$, and $g_v(p_v,T_g)$ in place of her pure-vapor $g_2$. Written in the entropy forces instead, by \eqref{f_F}, \eqref{step_laws} is $\dot{\tilde{\boldsymbol{x}}}_l=\boldsymbol{L}\,\tilde{\boldsymbol{F}}$ with $\boldsymbol{L}=\mathrm{diag}(\lambda T_M,\,\vartheta T_lT_g,\,\nu T)$: the temperatures move into the coefficients. Pelanti allows her rates to be functions of the state~\cite[after eq.~(2)]{Pelanti2022}, so both forms describe the same models; $\hat{\boldsymbol{F}}$ is used here so that the rates are hers.
+
+\paragraph{Relaxation equation of each step.}
+Along a step, with the faster forces held at zero, the force changes with the transferred amount through the stiffness \eqref{stiff_def}. By the chain rule and \eqref{step_laws},
+\begin{equation}
+\begin{aligned}
+\frac{d\hat{F}_M}{dt}&=\left(\frac{\partial \hat{F}_M}{\partial\tilde{V}_l}\right)_{\tilde{E}_l,\tilde{m}_l}\dot{\tilde{V}}_l=-\mathcal{K}^M\lambda \hat{F}_M,\\
+\frac{d\hat{F}_T}{dt}&=\left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\dot{\tilde{E}}_l=-\mathcal{K}^T\vartheta \hat{F}_T,\\
+\frac{d\hat{F}_C}{dt}&=\left(\frac{\partial \hat{F}_C}{\partial\tilde{m}_l}\right)_{\hat{F}_M,\hat{F}_T}\dot{\tilde{m}}_l=-\mathcal{K}^C\nu \hat{F}_C .
+\end{aligned}
+\end{equation}
+In vector form, \eqref{stiff_def} reads $d\hat{\boldsymbol{F}}=-\boldsymbol{\mathcal{K}}\,d\tilde{\boldsymbol{x}}_l$ row by row, with $\boldsymbol{\mathcal{K}}\equiv\mathrm{diag}(\mathcal{K}^M,\mathcal{K}^T,\mathcal{K}^C)$, and with \eqref{rate_matrix}, since diagonal matrices commute,
+\begin{equation}\label{force_ode}
+\frac{d\hat{\boldsymbol{F}}}{dt}=-\boldsymbol{\mathcal{K}}\boldsymbol{R}\,\hat{\boldsymbol{F}}=-\boldsymbol{R}\boldsymbol{\mathcal{K}}\,\hat{\boldsymbol{F}},
+\end{equation}
+each step using its own row.
+
+\paragraph{Solution with frozen coefficients.}
+Freezing $\boldsymbol{R}$ and $\boldsymbol{\mathcal{K}}$ at the start state of the step, where the force is $\hat{\boldsymbol{F}}^0$, \eqref{force_ode} has the exact solution
+\begin{equation}\label{force_exp}
+\hat{\boldsymbol{F}}(t)=e^{-\boldsymbol{R}\boldsymbol{\mathcal{K}}t}\,\hat{\boldsymbol{F}}^0,
+\end{equation}
+where the exponential of the diagonal matrix is taken entry by entry.
+Substituting \eqref{force_exp} into \eqref{step_laws} and integrating over $[0,\Delta t]$, for the mechanical step
+\begin{equation}
+\delta\tilde{V}_l=\int_0^{\Delta t}\lambda \hat{F}_M^0\,e^{-\lambda\mathcal{K}^Mt}\,dt=\frac{\hat{F}_M^0}{\mathcal{K}^M}\bigl(1-e^{-\lambda\mathcal{K}^M\Delta t}\bigr),
+\end{equation}
+and likewise for the thermal and chemical steps,
+\begin{equation}\label{finite_solution}
+\delta\tilde{\boldsymbol{x}}_l=\boldsymbol{\Omega}\,\delta\tilde{\boldsymbol{x}}_l^\infty,\qquad \boldsymbol{\Omega}\equiv\boldsymbol{I}-e^{-\boldsymbol{R}\boldsymbol{\mathcal{K}}\Delta t}=\mathrm{diag}(\omega_M,\omega_T,\omega_C),\qquad
+\delta\tilde{\boldsymbol{x}}_l^\infty=\boldsymbol{\mathcal{K}}^{-1}\hat{\boldsymbol{F}}^0,
+\end{equation}
+$\delta\tilde{\boldsymbol{x}}_l^\infty=[\hat{F}_M^0/\mathcal{K}^M,\,\hat{F}_T^0/\mathcal{K}^T,\,\hat{F}_C^0/\mathcal{K}^C]^T$ holds the instantaneous transfers \eqref{step_F} of the sequential relaxation. Every increment of a sequential step ($\delta p$, $\delta T$, $\delta V$, $\delta E$, $\delta m$) is linear in its transfer, so a finite-rate step is the instantaneous step with all of its increments multiplied by the entry of $\boldsymbol{\Omega}$ of the step, $\omega\in[0,1)$. $\omega\to1$ as the rate goes to infinity, which recovers the instantaneous sequential relaxation, i.e.\ the Newton step of the constrained entropy maximum of the step; $\omega=0$ for zero rate. Within the linearization the force keeps its sign and decays monotonically, so by \eqref{dSdt_rates} the entropy increases throughout the step and the state does not pass the end state of the step. The entries of $\boldsymbol{R}\boldsymbol{\mathcal{K}}$, $\lambda\mathcal{K}^M$, $\vartheta\mathcal{K}^T$, $\nu\mathcal{K}^C$, are Pelanti's exponents $K_p$, $K_T$, $K_g$~\cite[eqs.~(55), (66), (76)]{Pelanti2022}, and \eqref{finite_solution} is her solution~\cite[eqs.~(54), (56), (65), (67), (75), (77)]{Pelanti2022}, up to the closure noted in the relation to Pelanti's sequential relaxation.
+
+\paragraph{Chemical step with exact vapor potential.}
+The frozen solution \eqref{finite_solution} treats $\mathcal{K}^C$ as constant over the step. For the ideal-gas mixture, $p_g=(m_vR_v+m_aR_a)T_g/V_g$ and the definition of $x_v$ before \eqref{dgv} give the vapor partial pressure
+\begin{equation}\label{pv_dalton}
+p_v=x_vp_g=\frac{m_vR_vT_g}{V_g},
+\end{equation}
+and $g_v(p_v,T_g)$ contains $R_vT_g\ln p_v$, so at fixed $V_g$ and $T_g$ it changes by $R_vT_g/m_v$ per unit vapor mass, for a vapor--air gas and for a pure vapor alike. $\mathcal{K}^C$ therefore changes by $\mathcal{O}(1)$ relative to itself when $m_v$ changes by $\mathcal{O}(m_v)$, and tends to infinity as $m_v\to0$. Two failures of the frozen solution follow. Since $\hat{F}_C$ contains $-R_vT\ln m_v$, $\hat{F}_C^{**}/\mathcal{K}^C\sim m_v\ln(1/m_v)\to0$ as $m_v\to0$: it transfers almost nothing into a nearly dry gas, while the rate law \eqref{step_laws} evaporates at the finite rate $\nu\hat{F}_C$. When a vapor-rich gas condenses, $\mathcal{K}^C$ grows as $m_v$ falls, the frozen $\mathcal{K}^C$ underestimates it, and the frozen solution can condense more vapor than the gas holds. The step is therefore integrated along its linear path, with $\Pi$, $\Theta$ and the volume transfer per unit mass frozen at the start state $**$, as Pelanti freezes her capacities, and with $g_l$ and $g_v$ evaluated from the equations of state on this path.
+
+Write $\tilde{m}\equiv m_v-m_v^{**}$ for the mass given by the liquid during the step, and $\chi_V\equiv\delta\tilde{V}_l/\delta\tilde{m}_l$ for the volume transfer per unit mass of \eqref{VE_C}. By \eqref{PiTh} and \eqref{dirs_lg}, $\delta V_l=(\chi_V-v_l^{**})\,\delta\tilde{m}_l$, and the path of the step is
+\begin{equation}\label{FC_path}
+p_l=p_l^{**}-\Pi\,\tilde{m},\qquad T=T^{**}-\Theta\,\tilde{m},\qquad V_g=V_g^{**}-(\chi_V-v_l^{**})\,\tilde{m}.
+\end{equation}
+On this path the force is
+\begin{equation}\label{FC_exact}
+\hat{F}_C(m_v)=g_l(p_l,T)-g_v(p_v,T),\qquad p_v=\frac{m_vR_vT}{V_g}.
+\end{equation}
+By \eqref{dg}, $dg_l=v_l\,dp_l-s_l\,dT$ and $dg_v=v_v\,dp_v-s_v\,dT$ with $v_v\,dp_v=R_vT\,d\ln p_v$, and by \eqref{pv_dalton} $d\ln p_v=dm_v/m_v+dT/T-dV_g/V_g$. Along \eqref{FC_path}, $d\tilde{m}=dm_v$, so
+\begin{equation}\label{KC_exact}
+\mathcal{K}^C(m_v)\equiv-\frac{d\hat{F}_C}{dm_v}=v_l\Pi-s_l\Theta+R_vT\Bigl(\frac1{m_v}-\frac{\Theta}{T}+\frac{\chi_V-v_l^{**}}{V_g}\Bigr)+s_v\Theta,
+\end{equation}
+with $v_l$, $s_l$ at $(p_l,T)$ and $s_v$ at $(p_v,T)$. At $m_v^{**}$ this is $\mathcal{K}^C$ of \eqref{K_C}: there $p_g$ changes as $p_l$, since $\hat{F}_M$ is held, so differentiating $p_g=(m_vR_v+m_aR_a)T/V_g$ along the path gives $-\Pi=R_vT/V_g-p_g\Theta/T+p_g(\chi_V-v_l)/V_g$. Multiplying by $\bar v_v=R_vT/p_g$, with $R_vT\,\bar v_v/V_g=R_vTx_v/m_v$, gives $-\bar v_v\Pi=R_vTx_v/m_v-R_v\Theta+R_vT(\chi_V-v_l)/V_g$, and \eqref{KC_exact} becomes $(v_l-\bar v_v)\Pi-(s_l-\bar s_v)\Theta+R_vT(1-x_v)/m_v=\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC}$. With $\hat{F}_C$ a function of $m_v$ alone, the rate law $dm_v/dt=\nu\hat{F}_C(m_v)$ is a separable scalar equation, and the vapor mass at the end of the step solves
+\begin{equation}\label{dm_dt_exact}
+\nu\,\Delta t=\int_{m_v^{**}}^{m_v^{\otimes}}\frac{dm_v}{\hat{F}_C(m_v)} ,\qquad \delta\tilde{m}_l=m_v^{\otimes}-m_v^{**},
+\end{equation}
+after which $\delta\tilde{E}_l$ and $\delta\tilde{V}_l$ follow from \eqref{VE_C}. Where $\mathcal{K}^C(m_v)\equiv-d\hat{F}_C/dm_v>0$, $\hat{F}_C$ decreases monotonically and has a single root $m_v^\infty$, the end state of the step with these frozen coefficients. Near the root $\hat{F}_C\approx\mathcal{K}^C(m_v^\infty)(m_v^\infty-m_v)$, so the integral diverges logarithmically there: $m_v^{\otimes}$ lies between $m_v^{**}$ and $m_v^\infty$, tends to $m_v^\infty$ as $\nu\Delta t\to\infty$, and, where the path is admissible down to $m_v\to0$, $m_v$ stays positive because $\hat{F}_C\to+\infty$ as $m_v\to0$. Two limits recover the known solutions. Linearizing $\hat{F}_C$ about $m_v^{**}$ gives $\hat{F}_C=\hat{F}_C^{**}-\mathcal{K}^C\tilde{m}$ and \eqref{finite_solution}; for a pure vapor this is Pelanti's solution, which therefore agrees with \eqref{dm_dt_exact} to first order in the transferred mass. For a dilute vapor in a gas whose pressure, temperature and volume do not change with the transfer ($\Pi=\Theta=0$, $\chi_V=v_l^{**}$), $\hat{F}_C=R_vT\ln(m_s/m_v)$ with $m_s=m_v^{**}e^{\hat{F}_C^{**}/(R_vT)}$ the vapor mass at saturation, and \eqref{dm_dt_exact} is an exponential integral.
+
+The integral is evaluated in a variable $\theta$ that removes its end-point singularities: $m_v=m_v^\infty/(1+e^{-\theta})$ for evaporation and $m_v=m_v^\infty+(m_v^{**}-m_v^\infty)e^{-\theta}$ for condensation. The integrand $|dm_v/d\theta|/|\hat{F}_C|$ is then bounded, vanishes as $m_v\to0$ and tends to $1/\mathcal{K}^C(m_v^\infty)$ at the root. Gauss--Legendre quadrature on unit panels in $\theta$ accumulates $\nu t(\theta)$, and the upper limit of \eqref{dm_dt_exact} is found by Newton's method within the panel where $\nu t$ reaches $\nu\Delta t$. The root $m_v^\infty$ is bracketed from $m_v^{**}$ by the sign of $\hat{F}_C$, symmetrically for the two directions: for evaporation ($\hat{F}_C^{**}>0$) $m_v$ is doubled, starting from $\max(2m_v^{**},m_v^{d})$ with $m_v^{d}$ the vapor mass of mole fraction $10^{-12}$, until $\hat{F}_C<0$; for condensation ($\hat{F}_C^{**}<0$) it is halved until $\hat{F}_C>0$. Each trial must lie on the admissible part of the path \eqref{FC_path}, $V_g>0$ with a liquid state at $(p_l,T)$, and leave mass in the phase that gives it, $m_v<m_v^{**}+m_l^{**}$ for evaporation and $m_v>0$ for condensation; otherwise the path has no root and the step fails. Within the bracket the root is found by Newton's method in $\ln m_v$, with bisection when a Newton point leaves the bracket.
+
+The chemical rate may instead be set by a relaxation time $\tau_C$, a rate that depends on the state as \eqref{step_laws} allows: $\nu=1/\bigl(\mathcal{K}^C(m_v^\infty)\,\tau_C\bigr)$, with the stiffness \eqref{KC_exact} at the end state of the step. Near that state $\hat{F}_C\approx\mathcal{K}^C(m_v^\infty)(m_v^\infty-m_v)$, so $m_v$ approaches $m_v^\infty$ as $e^{-t/\tau_C}$ in every cell, whereas $1/(\nu\mathcal{K}^C)$ at a fixed $\nu$ varies between cells with $\mathcal{K}^C\sim R_vT/m_v$. The stiffness at the start state would not do: it diverges as $m_v^{**}\to0$, so $\nu\to0$ and a nearly dry gas would not evaporate.
+
+\emph{Choice of the solution.} The frozen solution \eqref{finite_solution}, $\delta\tilde{m}_l=\omega_C\hat{F}_C^{**}/\mathcal{K}^C$ with $\mathcal{K}^C$ at $**$, is the linearization of \eqref{dm_dt_exact}, accurate for small $\nu\mathcal{K}^C\Delta t$, which is the regime the finite rate is meant for. It fails where $\mathcal{K}^C$ changes over the step. Its term $R_vT(1-x_v)/m_v$ changes relatively by $|\delta\tilde{m}_l|/m_v^{**}$, while its other terms change with $p_l$, $T$ and $V_g$, whose relative changes along \eqref{FC_path} are smaller for the same transfer. In condensation $\mathcal{K}^C$ grows as the vapor is removed, the frozen $\mathcal{K}^C$ underestimates it, and the frozen transfer can exceed $m_v^{**}$; in evaporation into a nearly dry gas $\mathcal{K}^C$ falls as the vapor grows, the frozen $\mathcal{K}^C$ overestimates it, and the frozen transfer, about $m_v^{**}\ln(m_v^\infty/m_v^{**})$ for large $\nu\mathcal{K}^C\Delta t$, falls far short of the rate law. The chemical step therefore takes the frozen solution where $|\delta\tilde{m}_l|\le\epsilon_{\mathrm{lin}}\,m_v^{**}$ and $m_l^{**}-\delta\tilde{m}_l>0$, with $\epsilon_{\mathrm{lin}}<1$, so that $\mathcal{K}^C$ changes by at most of order $\epsilon_{\mathrm{lin}}$ over the step and the relative error of the transfer is of order $\epsilon_{\mathrm{lin}}$; otherwise it takes \eqref{dm_dt_exact} at the same $\nu$. The test uses only the start state, so it is decided before the step. For a small step $|\delta\tilde{m}_l|/m_v^{**}\approx\nu\mathcal{K}^C\Delta t\,|\hat{F}_C^{**}|/(\mathcal{K}^Cm_v^{**})$, the product of $\nu\mathcal{K}^C\Delta t$ and of the relative distance of $m_v^{**}$ from its chemical equilibrium. A dry gas, $m_v^{**}=0$, always takes \eqref{dm_dt_exact}: there $\hat{F}_C^{**}$ and $\mathcal{K}^C$ are infinite, the frozen solution is undefined, and from a seeded vapor mass it would transfer about $m_v^{s}\ln(m_v^\infty/m_v^{s})$ whatever $\nu$, so that the seed $m_v^s$, not the rate, would set the evaporation. With the relaxation time $\tau_C$, $\nu$ requires $m_v^\infty$, so the root is computed first and the test then decides whether the quadrature is needed. The integral is a safeguard for large steps and a dry gas; the rates of an application are meant to keep the chemical step in the frozen solution.
+
+\paragraph{Activation.}
+In one relaxation call the transfers faster than the finite-rate one are instantaneous ($r\to\infty$) and the slower ones are not activated, as in Pelanti's steps 2(a)--2(c)~\cite[Sec.~5]{Pelanti2022}, where the mechanical step is always instantaneous. After a linearized finite step the faster equilibria hold only to first order; they can be restored by iterating the faster stages with option 2 of the update of pressure and temperature.
+
+\paragraph{Algorithm of a relaxation call.}
+The relaxation acts on each cell after the hyperbolic step of size $\Delta t$; the momentum is not changed. A cell in which one phase is absent or nearly absent is first seeded by the nucleation of Sec.~\ref{sec_nuc} when the chemical step is activated. Per unit cell volume, $V_l=\alpha_l$ and $V_g=\alpha_g=1-\alpha_l$, and the cell state is
+\begin{equation}\label{cell_state}
+\alpha_l,\qquad m_l=\alpha_l\rho_l,\qquad m_g=\alpha_g\rho_g,\qquad E_l=\alpha_l\rho_le_l,\qquad E_g=\alpha_g\rho_ge_g,\qquad m_v=\alpha_g\rho_gY_v,
+\end{equation}
+with the air mass $m_a=m_g-m_v$ fixed. The steps are taken in the order $M$, $T$, $C$. With $s$ the slowest activated step, the steps before $s$ are instantaneous ($\omega=1$), the step $s$ has the rate $r_s\in\{\lambda,\vartheta,\nu\}$ ($\omega_s=1$ if $r_s=\infty$), and the steps after $s$ are skipped. Each step consists of the following parts, with every coefficient evaluated at the start state of the step and $\boldsymbol{D}$ held there.
+
+\emph{1. Phase state.} From the equations of state at the current cell state: $\rho_k$, $e_k$, $p_k$, $T_k$, the sound speed $c_k$ with $K_{s,k}=\rho_kc_k^2$, $\Gamma_k$, and $C_{v,k}=m_kc_{v,k}$; for the liquid $v_l=1/\rho_l$, $h_l$, $s_l$ and $g_l(p_l,T_l)$; for the gas $x_v=p_v/p_g$, $\bar v_v=R_vT_g/p_g$, $\bar s_v=s_v(p_v,T_g)$, $g_v(p_v,T_g)$, $e_v=c_{v,v}T_g+q_v$ and $\mathcal{K}_{CC}=R_vT_g(1-x_v)/m_v$. For the ideal-gas mixture $\Gamma_g=(m_vR_v+m_aR_a)/C_{v,g}$ and $K_{s,g}=(1+\Gamma_g)\,p_g$.
+
+\emph{2. Mechanical step.} $p_I$ is chosen between $p_g+p_{j}$ and $p_l$ and held during the step. The default is Pelanti's impedance-weighted interface pressure~\cite{Pelanti2022}, $p_I=\bigl(Z_gp_l+Z_l(p_g+p_{j})\bigr)/(Z_l+Z_g)$ with $Z_k=\rho_kc_k$, for which $p_I-p_g-p_{j}=Z_g\hat{F}_M/(Z_l+Z_g)$ and $p_l-p_I=Z_l\hat{F}_M/(Z_l+Z_g)$. It keeps both numerators of $\mathcal{K}^M$ in \eqref{K_M} positive except for extreme forces. For the ideal-gas mixture, $K_{s,g}=\gamma_gp_g$ and $\Gamma_g=\gamma_g-1$, so the gas numerator is $\gamma_gp_g+(\gamma_g-1)Z_g\hat{F}_M/(Z_l+Z_g)$, negative only for $-\hat{F}_M>\gamma_gp_g(Z_l+Z_g)/\bigl((\gamma_g-1)Z_g\bigr)$. For a stiffened-gas or NASG liquid, $K_{s,l}=\gamma_l(p_l+p_\infty)/(1-b\rho_l)$ and $\Gamma_l=(\gamma_l-1)/(1-b\rho_l)$, so the liquid numerator is $\bigl(p_l+\gamma_lp_\infty+(\gamma_l-1)p_I\bigr)/(1-b\rho_l)$, positive for $p_I>-(p_l+\gamma_lp_\infty)/(\gamma_l-1)$. A $p_I$ close to the pressure of a liquid in tension, such as $p_I=p_l$ or the mean of $p_l$ and $p_g+p_{j}$, can instead make $\mathcal{K}^M$ negative when the gas volume is small, as shown after \eqref{pivot_K}. With this $p_I$, by \eqref{K_M},
+\begin{equation}\label{alg_M}
+\begin{gathered}
+\hat{F}_M^0=p_l-p_g-p_{j},\qquad \mathcal{K}^M=\frac{K_{s,l}+\Gamma_l(p_I-p_l)}{\alpha_l}+\frac{K_{s,g}+\Gamma_g(p_I-p_{j}-p_g)}{\alpha_g},\\
+\omega_M=1-e^{-\lambda\mathcal{K}^M\Delta t},\qquad \delta\tilde{V}_l=\omega_M\,\frac{\hat{F}_M^0}{\mathcal{K}^M},\\
+\alpha_l\leftarrow\alpha_l+\delta\tilde{V}_l,\qquad E_l\leftarrow E_l-p_I\,\delta\tilde{V}_l,\qquad E_g\leftarrow E_g+(p_I-p_{j})\,\delta\tilde{V}_l,
+\end{gathered}
+\end{equation}
+with $m_l$, $m_g$, $m_v$ unchanged. The linear increments of the intensive state are \eqref{incr_M}. An instantaneous mechanical step ($\lambda=\infty$) takes instead $p_I=p^*$, the pressure of its end state (End state of the mechanical step), by \eqref{mech_newton}, or by \eqref{mech_quad} for a NASG liquid.
+
+\emph{3. Thermal step.} From a state with $\hat{F}_M=0$, with $p_I$ held at $p_l$, by \eqref{K_T},
+\begin{equation}\label{alg_T}
+\begin{gathered}
+\hat{F}_T^*=T_l-T_g,\qquad \mathcal{K}^T=\frac1{C_{v,l}}+\frac1{C_{v,g}}-\frac{\bigl(\Gamma_lT_l/\alpha_l+\Gamma_gT_g/\alpha_g\bigr)\bigl(\Gamma_l/\alpha_l+\Gamma_g/\alpha_g\bigr)}{K_{s,l}/\alpha_l+K_{s,g}/\alpha_g},\\
+\omega_T=1-e^{-\vartheta\mathcal{K}^T\Delta t},\qquad \delta\tilde{E}_l=\omega_T\,\frac{\hat{F}_T^*}{\mathcal{K}^T},\qquad \delta\tilde{V}_l=-\frac{\Gamma_l/\alpha_l+\Gamma_g/\alpha_g}{K_{s,l}/\alpha_l+K_{s,g}/\alpha_g}\,\delta\tilde{E}_l,\\
+\alpha_l\leftarrow\alpha_l+\delta\tilde{V}_l,\qquad E_l\leftarrow E_l-p_I\,\delta\tilde{V}_l-\delta\tilde{E}_l,\qquad E_g\leftarrow E_g+(p_I-p_{j})\,\delta\tilde{V}_l+\delta\tilde{E}_l,
+\end{gathered}
+\end{equation}
+with $m_l$, $m_g$, $m_v$ unchanged. The linear increments of the intensive state are \eqref{incr_T}.
+
+\emph{4. Chemical step.} From a state with $\hat{F}_M=\hat{F}_T=0$, $T_l=T_g=T$, with $p_I$ held at $p_l$: the entries \eqref{J_MT_block} and \eqref{J_colC} with $V_k=\alpha_k$, and $\mathcal{K}^M$, $\mathcal{K}^T$ of \eqref{alg_M} and \eqref{alg_T} at this state, give by \eqref{VE_C}, \eqref{PiTh} and \eqref{K_C} the volume and heat per unit mass and the stiffness,
+\begin{equation}\label{alg_C_coef}
+\begin{gathered}
+\chi_E\equiv\frac{\delta\tilde{E}_l}{\delta\tilde{m}_l}=\frac1{\mathcal{K}^T}\Bigl(\hat{J}_{TC}+\frac{\hat{J}_{TM}\hat{J}_{MC}}{\mathcal{K}^M}\Bigr),\qquad
+\chi_V\equiv\frac{\delta\tilde{V}_l}{\delta\tilde{m}_l}=\frac{\hat{J}_{MT}\,\chi_E+\hat{J}_{MC}}{\mathcal{K}^M},\\
+\Pi=\frac{K_{s,l}}{\alpha_l}\,\chi_V+\frac{\Gamma_l}{\alpha_l}\,\chi_E,\qquad \Theta=\frac{\Gamma_lT}{\alpha_l}\,\chi_V+\frac{\chi_E}{C_{v,l}},\qquad
+\mathcal{K}^C=(v_l-\bar v_v)\,\Pi-(s_l-\bar s_v)\,\Theta+\mathcal{K}_{CC},
+\end{gathered}
+\end{equation}
+and the updates
+\begin{equation}\label{alg_C}
+\begin{gathered}
+\hat{F}_C^{**}=g_l-g_v,\qquad \omega_C=1-e^{-\nu\mathcal{K}^C\Delta t},\qquad \delta\tilde{m}_l=\omega_C\,\frac{\hat{F}_C^{**}}{\mathcal{K}^C},\qquad \delta\tilde{E}_l=\chi_E\,\delta\tilde{m}_l,\qquad \delta\tilde{V}_l=\chi_V\,\delta\tilde{m}_l,\\
+\alpha_l\leftarrow\alpha_l+\delta\tilde{V}_l-v_l\,\delta\tilde{m}_l,\qquad m_l\leftarrow m_l-\delta\tilde{m}_l,\qquad m_g\leftarrow m_g+\delta\tilde{m}_l,\qquad m_v\leftarrow m_v+\delta\tilde{m}_l,\\
+E_l\leftarrow E_l-p_I\,\delta\tilde{V}_l-\delta\tilde{E}_l-e_l\,\delta\tilde{m}_l,\qquad E_g\leftarrow E_g+(p_I-p_{j})\,\delta\tilde{V}_l+\delta\tilde{E}_l+(e_l+p_{j}v_l)\,\delta\tilde{m}_l .
+\end{gathered}
+\end{equation}
+The linear increments of the intensive state are $\delta p^C=-\Pi\,\delta\tilde{m}_l$ and $\delta T^C=-\Theta\,\delta\tilde{m}_l$ for both phases. $\delta\tilde{m}_l$ is computed instead from \eqref{dm_dt_exact}, which evaluates $g_l$ and $g_v$ exactly along the path \eqref{FC_path}; $\omega_C\hat{F}_C^{**}/\mathcal{K}^C$ is its linearization.
+
+\emph{5. Intensive state.} After each step the intensive state is updated by one of the options of the update of pressure and temperature: the linear increments above (option 1), the equations of state at the updated cell state (option 2), or Pelanti's mixture-energy closure (option 3). When the steps up to $s$ are instantaneous, the relaxed state is computed instead by the iteration of the stages with option 2, or for a NASG liquid by the closed forms of the mechanical stage and the $pT$-relaxed state; with a finite step $s$, the faster equilibria are reached by that iteration before the step, and may be restored the same way after it (Activation).
+
+\emph{Conservation.} The updates \eqref{alg_M}--\eqref{alg_C} follow \eqref{dirs_lg}, so for any $p_I$ and any $\omega$ each step satisfies exactly
+\begin{equation}\label{alg_cons}
+\delta\alpha_l+\delta\alpha_g=0,\qquad \delta m_l+\delta m_g=0,\qquad \delta m_a=0,\qquad \delta E_l+\delta E_g+p_{j}\,\delta\alpha_l=0 .
+\end{equation}
+Without surface tension ($p_{j}=0$) and with Pelanti's sign convention (footnote~\ref{fn_sign}), \eqref{alg_M}--\eqref{alg_C} are her finite-rate steps~\cite[eqs.~(54)--(56), (65)--(67), (75)--(77)]{Pelanti2022} with her stiffnesses, up to the closure of the intensive state.
+
+\paragraph{Simultaneous transfers.}
+Without rate separation the three transfers act at once, and $dS/dt=\tilde{F}_M\dot{\tilde{V}}_l+\tilde{F}_T\dot{\tilde{E}}_l+\tilde{F}_C\dot{\tilde{m}}_l$. $\tilde{F}_M=\hat{F}_M/T_M$ and $\tilde{F}_T=\hat{F}_T/(T_lT_g)$ hold at any state, but $\tilde{F}_C=\hat{F}_C/T$ only at pressure and temperature equilibrium; in general $\tilde{F}_C=(\hat{F}_C-v_l\hat{F}_M+s_l\hat{F}_T)/T_g$ by \eqref{C_def}. Pelanti's model~\cite[eqs.~(1e), (1f)]{Pelanti2022} lets the transferred mass carry the energy $g_I$ and no volume; for mass given by the liquid this is the direction $\boldsymbol{d}_C^P=[0,\,-g_I,\,-1]^T$, which is related to $\boldsymbol{d}_C$ by
+\begin{equation}\label{dC_dCP}
+\boldsymbol{d}_C=\boldsymbol{d}_C^P-v_l\,\boldsymbol{d}_M+(e_l+p_Iv_l-g_I)\,\boldsymbol{d}_T .
+\end{equation}
+Its conjugate force is $\tilde{F}_C^P=\boldsymbol{d}_C^P\cdot\boldsymbol{F}=-g_IF_2-F_3=(g_l-g_I)/T_l+(g_I-g_v)/T_g$. The interface chemical potential lies between $g_l$ and $g_v$~\cite[eq.~(3)]{Pelanti2022}; with $g_l-g_I=w_C(g_l-g_v)$ and $g_I-g_v=(1-w_C)(g_l-g_v)$, $w_C\in[0,1]$, the same steps as for $\tilde{F}_M$ in \eqref{f_F} give, at any state,
+\begin{equation}\label{f_P}
+\tilde{F}_C^P=\frac{w_C\hat{F}_C}{T_l}+\frac{(1-w_C)\hat{F}_C}{T_g}=\frac{\hat{F}_C}{T_C},\qquad \frac1{T_C}\equiv\frac{w_C}{T_l}+\frac{1-w_C}{T_g}.
+\end{equation}
+With $\boldsymbol{d}_C^P$, \eqref{rate_matrix} therefore gives $dS/dt=\lambda \hat{F}_M^2/T_M+\vartheta \hat{F}_T^2/(T_lT_g)+\nu \hat{F}_C^2/T_C\ge0$ for simultaneous transfers as well. Under rate separation the choice between $\boldsymbol{d}_C$ and $\boldsymbol{d}_C^P$ does not matter, since $\tilde{F}_M=\tilde{F}_T=0$ there by \eqref{f_F}.
+
+\textcolor{red}{Open: (i) solution of simultaneous transfers; (ii) values of $\lambda$, $\vartheta$, $\nu$.}
+
+\subsubsection{Nucleation}\label{sec_nuc}
+The relaxation above needs both phases in the cell: the potentials $\boldsymbol{y}_k$ of \eqref{potentials} are intensive and undefined for a phase of zero mass. A cell that holds a single phase lies on the boundary $m_l=0$ or $m_g=0$ of the admissible states. It is the maximum of $S$ over all exchanges only if no creation of a small amount of the absent phase increases $S$. Otherwise the phase present is metastable, a superheated liquid or a supersaturated gas: a seed of the absent phase is then created, and the steps $M$, $T$, $C$ start from the two-phase state.
+
+\paragraph{Entropy of a seed.}
+Let $P$ denote the phase present, the parent, and let the seed be a mass $\delta m$ of the absent phase, a pure substance, at a uniform state $(p_s,T_s)$ with specific volume $v_s$, energy $e_s$, entropy $s_s$ and Gibbs energy $g_s=e_s+p_sv_s-T_ss_s$ by \eqref{hg}. The seed is exchanged under the conservation of the relaxation, $d\boldsymbol{x}_g=-\boldsymbol{A}\,d\boldsymbol{x}_l$ with $\boldsymbol{A}$ of \eqref{A_sigma} and the pressure jump $p_{j}$ of the cell ($p_{j}=0$ in a cell without interface). Let $\boldsymbol{\sigma}\equiv[v_s,e_s,1]^T$ be the extensive state of the seed per unit mass. The parent changes by $\delta\boldsymbol{x}_P=-\delta m\,\boldsymbol{A}_P\boldsymbol{\sigma}$, with $\boldsymbol{A}_P=\boldsymbol{A}^{-1}$ for a liquid parent, whose seed is gas, and $\boldsymbol{A}_P=\boldsymbol{A}$ for a gas parent: per unit seed mass the liquid gives the energy $e_s-p_{j}v_s$ and the gas gives $e_s+p_{j}v_s$, so that $E_l+E_g+p_{j}V_l$ is conserved. The mass given is $m_l$ for a liquid parent and $m_v$, at fixed $m_a$, for a gas parent. $S$ is extensive, so the seed has the entropy $\delta m\,s_s$, and by \eqref{potentials} the entropy of the parent changes by $-\boldsymbol{y}_P\cdot\boldsymbol{A}_P\boldsymbol{\sigma}\,\delta m$ to first order. The entropy gained per unit seed mass is therefore
+\begin{equation}\label{nuc_a}
+a\equiv\frac{dS}{d\delta m}=s_s-\boldsymbol{y}_P\cdot\boldsymbol{A}_P\boldsymbol{\sigma}=\frac{g_P-B_s}{T_P},\qquad B_s\equiv e_s+p_P^*v_s-T_Ps_s,
+\end{equation}
+with $g_P=g_l(p_l,T_l)$ for the liquid by \eqref{dS_l}, $g_P=g_v(p_v,T_g)$ for the gas by \eqref{dS_g}, and $p_P^*=p_l-p_{j}$ for a liquid parent, $p_P^*=p_g+p_{j}$ for a gas parent: the pressure of the seed phase in Laplace equilibrium with the parent.
+
+\emph{Best seed.} At fixed $(p_P^*,T_P)$, $B_s$ is a function of the seed state. By \eqref{first_thermo_law}, $dB_s=(T_s-T_P)\,ds_s-(p_s-p_P^*)\,dv_s$, so $B_s$ is stationary at $T_s=T_P$, $p_s=p_P^*$. It is a minimum there, because $e_s(s_s,v_s)$ is convex for a stable phase and $B_s$ differs from it by a linear function of $(s_s,v_s)$; its minimum is $g_s(p_P^*,T_P)$. Hence some seed increases $S$ to first order if and only if
+\begin{equation}\label{nuc_cond}
+g_P>g_s(p_P^*,T_P):
+\end{equation}
+the absent phase, at the temperature of the parent and in Laplace equilibrium with it, has the lower chemical potential. If \eqref{nuc_cond} fails, the single-phase state is the maximum of $S$ and the cell is not relaxed. For a seed at the temperature of the parent, $T_s=T_P=T$, \eqref{nuc_a} with $B_s=g_s+(p_P^*-p_s)v_s$ reads
+\begin{equation}\label{nuc_dS}
+a=\frac{g_P-g_s(p_s,T)+(p_s-p_P^*)\,v_s}{T}.
+\end{equation}
+
+\paragraph{Cavitation.}
+The parent is the liquid and the seed is pure vapor. Define the saturation pressure $p_{vsat}(p_l,T)$ of the liquid as the pressure of the vapor in chemical equilibrium with the liquid at $(p_l,T)$,
+\begin{equation}\label{pvsat_def}
+g_v(p_{vsat},T)=g_l(p_l,T).
+\end{equation}
+By \eqref{dg}, $(\partial g_v/\partial p)_T=v_v>0$, so $g_v(p_l-p_{j},T_l)<g_l(p_l,T_l)=g_v(p_{vsat},T_l)$ if and only if $p_l-p_{j}<p_{vsat}$, and \eqref{nuc_cond} is
+\begin{equation}\label{cav_crit}
+p_{vsat}(p_l,T_l)>p_l-p_{j} .
+\end{equation}
+For the NASG liquid and the ideal-gas vapor, $g=c_pT+q+bp-Ts$ with $s=c_p\ln T-(c_p-c_v)\ln(p+p_\infty)+q'$, where $b=p_\infty=0$ for the vapor and $R_v=c_{p,v}-c_{v,v}$. Dividing \eqref{pvsat_def} by $T$ gives the explicit form
+\begin{equation}\label{pvsat_nasg}
+R_v\ln p_{vsat}=c_{p,l}-c_{p,v}+q'_v-q'_l+\frac{q_l-q_v+b\,p_l}{T}+(c_{p,v}-c_{p,l})\ln T+(c_{p,l}-c_{v,l})\ln(p_l+p_\infty),
+\end{equation}
+in which the liquid pressure enters through $b$ and $p_\infty$. The seed is vapor at $(p_{vsat}(p_l,T_l),T_l)$, in thermal and chemical equilibrium with the liquid, so by \eqref{nuc_dS} $a=(p_{vsat}-p_l+p_{j})\,v_v/T_l>0$; the mechanical step then relaxes the pressure difference. The seed occupies its own volume $\delta m\,v_v$, taken from the liquid: $\delta V_l=-\delta m\,v_v$, $\delta E_l=-\delta m\,(e_v-p_{j}v_v)$, $\delta m_l=-\delta m$, and the gas receives $\delta m\,[v_v,e_v,1]^T$.
+
+\paragraph{Condensation.}
+The parent is the gas and the seed is liquid. Define the saturation temperature $T_{sat}(p_l,p_v)$ by
+\begin{equation}\label{Tsat_def}
+g_l(p_l,T_{sat})=g_v(p_v,T_{sat}),
+\end{equation}
+the temperature at which liquid at $p_l$ is in chemical equilibrium with the vapor at the partial pressure $p_v$. At fixed $p_l$ and $p_v$, by \eqref{dg}, $\partial(g_v-g_l)/\partial T=s_l-\bar s_v$, and at $T_{sat}$, where $g_l=g_v$, $\bar s_v-s_l=(\bar h_v-h_l)/T_{sat}$ with $\bar h_v=h_v(T)$ of the ideal-gas vapor. On the branch where the latent heat $\bar h_v-h_l$ is positive, $g_v>g_l$ if and only if $T<T_{sat}$, and \eqref{nuc_cond}, with the liquid at $p_g+p_{j}$, is
+\begin{equation}\label{cond_crit}
+T_g<T_{sat}(p_g+p_{j},p_v).
+\end{equation}
+For the NASG liquid, \eqref{Tsat_def} is \eqref{pvsat_nasg} with $p_{vsat}=p_v$, solved for $T$ by Newton's method on the branch where its right-hand side increases with $T$; differentiating \eqref{pvsat_def} at fixed $p_l$ gives $d\ln p_{vsat}/dT=(\bar h_v-h_l)/(R_vT^2)$, so this is the branch of positive latent heat. The seed is liquid at $(p_g+p_{j},T_g)$, in Laplace and thermal equilibrium with the gas, which by the best seed gives the largest $a=[g_v(p_v,T_g)-g_l(p_g+p_{j},T_g)]/T_g>0$. It occupies its own volume $\delta m\,v_l$, taken from the gas: $\delta V_g=-\delta m\,v_l$, $\delta E_g=-\delta m\,(e_l+p_{j}v_l)$, $\delta m_v=-\delta m$, and the liquid receives $\delta m\,[v_l,e_l,1]^T$.
+
+\paragraph{Thresholds.}
+\eqref{cav_crit} and \eqref{cond_crit} are the thermodynamic limits of metastability. Two model parameters delay nucleation beyond them: cavitation requires in addition $p_l<p_{cav}$, and condensation $T_g<T_{sat}-\Delta T_c$. The defaults $p_{cav}=\infty$ and $\Delta T_c=0$ nucleate at the thermodynamic limits.
+
+\paragraph{Size of the seed.}
+The state of the seed is held while its mass grows, so the seed has the entropy $\delta m\,s_s$ at every size, and $dS/d\delta m=a(\delta m)$, with $a$ of \eqref{nuc_a} evaluated for the parent after it has given $\delta m$. By the trapezoidal rule, to second order,
+\begin{equation}\label{nuc_dS2}
+\delta S=\tfrac12\bigl[a(0)+a(\delta m)\bigr]\,\delta m,
+\end{equation}
+and $a(\delta m)\le a(0)$, since $da/d\delta m=-\boldsymbol{\sigma}^T\boldsymbol{K}_P\boldsymbol{\sigma}\le0$ by \eqref{stiffness}. The seed increases $S$ if $a(\delta m)>-a(0)$, and it keeps at least half of the first-order gain $a(0)\,\delta m$ if $a(\delta m)\ge0$, i.e.\ if it does not carry the parent past the state at which the seed is in equilibrium with it.
+
+\emph{Seed limit.} Write $A\equiv T_Pa=g_P-B_s$ by \eqref{nuc_a}; since $T_P>0$, $a(\delta m)\ge0$ if and only if $A(\delta m)\ge0$. With the seed state held and $p_{j}$ constant, $dB_s=v_s\,dp_P-s_s\,dT_P$. Let $\boldsymbol{z}_P=[p_P,T_P,g_P]^T$ and $\boldsymbol{Z}_P\equiv\partial\boldsymbol{z}_P/\partial\boldsymbol{x}_P=-\boldsymbol{G}_P\boldsymbol{K}_P$ by \eqref{dz_dy} and \eqref{stiffness}, with rows $\boldsymbol{Z}_{P,1}$, $\boldsymbol{Z}_{P,2}$, $\boldsymbol{Z}_{P,3}$. The parent changes by $d\boldsymbol{x}_P=-\boldsymbol{A}_P\boldsymbol{\sigma}\,d\delta m$, so
+\begin{equation}\label{nuc_dA}
+\frac{dA}{d\delta m}=-\bigl(\boldsymbol{Z}_{P,3}-v_s\boldsymbol{Z}_{P,1}+s_s\boldsymbol{Z}_{P,2}\bigr)\cdot\boldsymbol{A}_P\boldsymbol{\sigma}.
+\end{equation}
+The columns of $\boldsymbol{Z}_P$ for $V_P$ and $E_P$ are \eqref{dz_fixed_m}. The mass column is \eqref{dz_mass_g} and \eqref{dgv} for the gas; for the liquid it follows from $\boldsymbol{Z}_l\boldsymbol{x}_l=0$, since scaling the extensive state does not change the intensive one. Linearizing $A$, the seed is limited by
+\begin{equation}\label{nuc_cap}
+\delta m\le\frac{A(0)}{|dA/d\delta m|}\quad\text{when }\frac{dA}{d\delta m}<0,
+\end{equation}
+evaluated at the parent state before the seed. Then $a(\delta m)=0$ to first order and $\delta S=\tfrac12\,a(0)\,\delta m$ to second order by \eqref{nuc_dS2}: the seed does not carry the parent past the state at which it is in equilibrium with the seed.
+
+\emph{Cavitation.} For the liquid parent, $dg_l=v_l\,dp_l-s_l\,dT_l$ by \eqref{dg}, so $\boldsymbol{Z}_{l,3}=v_l\boldsymbol{Z}_{l,1}-s_l\boldsymbol{Z}_{l,2}$, and \eqref{nuc_dA} is $dA/d\delta m=-(v_v-v_l)\,dp_l/d\delta m+(s_v-s_l)\,dT_l/d\delta m$. The liquid gives the volume $\delta m\,v_v$ and the mass $\delta m$, so at fixed mass it is compressed by $\delta m\,(v_v-v_l)$ and gives the energy $\delta m\,(e_v-p_{j}v_v-e_l)$; by \eqref{dz_fixed_m} its pressure rises by $dp_l/d\delta m=[K_{s,l}(v_v-v_l)-\Gamma_l(e_v-p_{j}v_v-e_l+p_l(v_v-v_l))]/V_l$. With $A(0)=(p_{vsat}-p_l+p_{j})\,v_v$ by \eqref{nuc_dS}, neglecting the temperature and $\Gamma_l$ terms and $v_l$ against $v_v$, which holds for a stiff liquid, \eqref{nuc_cap} becomes
+\begin{equation}\label{nuc_cap_cav}
+\delta m\le\frac{\rho_vV_l\,(p_{vsat}-p_l+p_{j})}{K_{s,l}}:
+\end{equation}
+the liquid may be compressed at most to $p_{vsat}+p_{j}$, where the seed would be in Laplace equilibrium with it.
+
+\emph{Condensation.} For the gas parent, \eqref{nuc_dA} collects two effects. The gas loses vapor, which lowers $g_v$ by $\mathcal{K}_{CC}\,\delta m$ by \eqref{dgv}, and it is heated at nearly fixed volume by the latent heat that the seed leaves in it. At fixed $V_g$ and masses, \eqref{dz_fixed_m} and \eqref{dg_phase} give $dT_g=dE_g/C_{v,g}$, $dp_g=\Gamma_g\,dE_g/V_g$ and $dg_v=(R_v-\bar s_v)\,dE_g/C_{v,g}$, so the heating changes $A$ by $[(R_v-\bar s_v+s_l)/C_{v,g}-v_l\Gamma_g/V_g]\,dE_g$, which is negative when $T(\bar s_v-s_l)$, the latent heat, exceeds $R_vT$. Both effects decrease $A$, and \eqref{nuc_cap} stops the seed before they cancel $A(0)$.
+
+\emph{Limits.} Both seeds are further limited to a volume fraction $\epsilon_n$ of the cell, $\delta m\le\epsilon_n\rho_s$ with $\epsilon_n=0.01$, and to half of the mass that the parent gives: $\delta m\le m_l/2$ for cavitation and $\delta m\le\min(m_v,m_g)/2$ for condensation.
+
+\paragraph{Relaxation from the seed.}
+Nucleation is tested only when the chemical step is activated, in cells with $\alpha_l<\epsilon_n$ or $\alpha_l>1-\epsilon_n$: cavitation if $\alpha_l>1/2$, condensation otherwise. A dry gas cannot condense, since $g_v\to-\infty$ as $m_v\to0$. In a near-pure cell the seed is added to the traces of its own phase, and the merged phase starts the relaxation. The seed conserves exactly
+\begin{equation}\label{nuc_cons}
+\delta\alpha_l+\delta\alpha_g=0,\qquad \delta m_l+\delta m_g=0,\qquad \delta m_a=0,\qquad \delta E_l+\delta E_g+p_{j}\,\delta\alpha_l=0,
+\end{equation}
+as the steps in \eqref{alg_cons}; the interface of the seed itself is not resolved and carries no energy. The steps $M$, $T$, $C$ then run from the seeded state. With instantaneous steps the end state is the unique $\boldsymbol{F}=0$ of the definiteness of the stiffness matrices and does not depend on the seed, which only sets the start of the iteration of the stages. If the stages do not reach it, the seed is undone and the cell is returned unchanged. With a finite chemical rate the seed is a mass transfer not limited by the rate law \eqref{step_laws}, and the result of the step depends on $\delta m$; at $\nu=0$ no seed is created.
+
+\paragraph{Relation to Pelanti's models.}
+Pelanti's methods~\cite{Pelanti2022,Pelanti2026} do not create a phase: the absent phase is given a small volume fraction everywhere in the initial condition, an initial vapor content in the liquid being ``numerically necessary to model cavitation''~\cite[Sec.~5.1]{Pelanti2026}, and the mass transfer is activated where $T_l>T_{sat}(p)$ or where $\min(\alpha_l,\alpha_v)$ exceeds a tolerance~\cite[Sec.~5]{Pelanti2026}. Her vapor is a separate phase at the mixture pressure $p$, so $T_l>T_{sat}(p)$ is \eqref{cav_crit} at $p_l=p$ and $p_{j}=0$. The seed replaces this initial content of the absent phase. The opposite situation, a phase that vanishes during the transfer, she treats by setting its volume fraction to a tolerance $\epsilon_\alpha$ and rescaling the rate~\cite[eq.~(44)]{Pelanti2026}.
+
+\textcolor{red}{Open: complete evaporation. When the root $\boldsymbol{F}=0$ lies beyond the available liquid mass, the maximum of $S$ is on the boundary $m_l=0$ and the chemical stage leaves the admissible states; the framework does not yet treat this end state.}
+
+\subsubsection{Derivation in the phase variables}\label{sec_phase}
+The steps of the sequential relaxation can also be derived in the phase variables, without the transfer coordinates, as in Pelanti~\cite{Pelanti2022}. The derivation below gives the same stiffnesses and increments as \eqref{K_M}--\eqref{K_C}.
+
 In mechanical relaxation step, mass of phases remain unchanged and the only energy exchange is due to the volume change
 \begin{equation}\label{work_M}
 dm_k=0, \quad dE_k=-p_{I,k}\,dV_k,\qquad p_{I,l}=p_I,\quad p_{I,g}=p_I-p_{j},
@@ -600,10 +1120,10 @@ p_l^* = p_l^0 + \delta p_l^M,\qquad p_g^* = p_g^0 + \delta p_g^M,
 \phi_l^M\equiv \frac{W_g^{eff}}{W_l^{eff}+W_g^{eff}},\qquad \phi_g^M\equiv \frac{W_l^{eff}}{W_l^{eff}+W_g^{eff}}.
 \end{equation}
 In terms of the transferred volume $\delta\tilde{V}_l=\delta V_l=-\delta V_g$, \eqref{dp_W} gives $d\hat{F}_M=dp_l-dp_g=-(1/W_l^{eff}+1/W_g^{eff})\,d\tilde{V}_l$, so by \eqref{stiff_def} and \eqref{step_F}, with $W_k^{eff}$ at the start state $0$,
-\begin{equation}\label{K_M}
+\begin{equation}\label{K_M_phase}
 \mathcal{K}^M=\frac1{W_l^{eff}}+\frac1{W_g^{eff}},\qquad \delta\tilde{V}_l=\frac{\hat{F}_M^0}{\mathcal{K}^M},\qquad \delta E_l=-p_{I,l}\,\delta\tilde{V}_l,\qquad \delta E_g=p_{I,g}\,\delta\tilde{V}_l,
 \end{equation}
-which gives $\delta p_l^M=-\delta\tilde{V}_l/W_l^{eff}=-\phi_l^M\hat{F}_M^0$. $1/W_k^{eff}=[\Gamma_k(p_{I,k}-p_k)+K_{s,k}]/V_k$ is Pelanti's $1/\xi_k^p$~\cite[eq.~(51)]{Pelanti2022}, where $p_{j}=0$.
+This is \eqref{K_M}, with $1/W_k^{eff}$ its phase terms, and it gives $\delta p_l^M=-\delta\tilde{V}_l/W_l^{eff}=-\phi_l^M\hat{F}_M^0$. $1/W_k^{eff}=[\Gamma_k(p_{I,k}-p_k)+K_{s,k}]/V_k$ is Pelanti's $1/\xi_k^p$~\cite[eq.~(51)]{Pelanti2022}, where $p_{j}=0$.
 \noindent The corresponding temperature change would be
 \begin{equation}
 T_l^* = T_l^0 + \delta T_l^M,\qquad T_g^* = T_g^0 + \delta T_g^M,
@@ -756,11 +1276,11 @@ C_{p,l} dT_l + V_l \left( 1 - T_l \alpha_{p,l} \right) dp + C_{p,g} dT_g + V_g \
 \end{equation}
 which is simplified to
 \begin{equation}\label{sys_T_2}
-C_{p,l} dT_l + C_{p,g} dT_g - \mathcal{A}_p^T dp = 0,
+C_{p,l} dT_l + C_{p,g} dT_g - \mathcal{A}_{pT} dp = 0,
 \end{equation}
 where
 \begin{equation}
-\mathcal{A}_p^T \equiv V_l T_l \alpha_{p,l} + V_g T_g \alpha_{p,g}.
+\mathcal{A}_{pT} \equiv V_l T_l \alpha_{p,l} + V_g T_g \alpha_{p,g}.
 \end{equation}
 Applied to the increments $\delta T_l^T$, $\delta T_g^T$, $\delta p^T$ of the step, with the coefficients at the start state $*$, equations \eqref{T_constraint}, \eqref{sys_T_1}, and \eqref{sys_T_2} form a system of 3 equations and 3 unknowns, whose solution is
 \begin{equation}
@@ -770,7 +1290,7 @@ T_l^{**} = T_l^* + \delta T_l^T,\qquad T_g^{**} = T_g^* + \delta T_g^T,
 \delta T_l^T = -\phi_l^T \hat{F}_T^*, \quad \delta T_g^T = +\phi_g^T \hat{F}_T^* 
 \end{equation}
 \begin{equation}\label{phi_T}
-\phi_l^T =\frac{W_TC_{p,g} - \mathcal{A}_p^TV_g\alpha_{p,g}}{D}, \quad \phi_g^T = \frac{W_TC_{p,l} - \mathcal{A}_p^TV_l\alpha_{p,l}}{D},
+\phi_l^T =\frac{W_TC_{p,g} - \mathcal{A}_{pT}V_g\alpha_{p,g}}{\mathcal{D}}, \quad \phi_g^T = \frac{W_TC_{p,l} - \mathcal{A}_{pT}V_l\alpha_{p,l}}{\mathcal{D}},
 \end{equation}
 and the corresponding pressure would be
 \begin{equation}
@@ -778,16 +1298,16 @@ p_l^{**} = p_l^*+\delta p^T, \quad p_g^{**} = p_g^*+\delta p^T, \quad \delta p^T
 \end{equation}
 where the coefficients used in the above equations are listed below
 \begin{equation}
-\mathcal{A}_p \equiv V_l \alpha_{p,l} + V_g \alpha_{p,g}, \quad C_p \equiv C_{p,l}+C_{p,g}, \quad D \equiv C_pW_T-\mathcal{A}_p\mathcal{A}_p^T.
+\mathcal{A}_p \equiv V_l \alpha_{p,l} + V_g \alpha_{p,g}, \quad C_p \equiv C_{p,l}+C_{p,g}, \quad \mathcal{D} \equiv C_pW_T-\mathcal{A}_p\mathcal{A}_{pT}.
 \end{equation}
 In terms of the heat $\delta\tilde{E}_l$ of \eqref{heat_def}, with $dH_k=dE_k+p_k\,dV_k+V_k\,dp$ and \eqref{dH_T},
 \begin{equation}\label{heat_split}
 -d\tilde{E}_l=C_{p,l}\,dT_l-a_l\,dp,\qquad d\tilde{E}_l=C_{p,g}\,dT_g-a_g\,dp,\qquad a_k\equiv V_kT_k\alpha_{p,k}.
 \end{equation}
-Their sum is \eqref{sys_T_2}, since $\mathcal{A}_p^T=a_l+a_g$. Write \eqref{sys_T_1} as $b_l\,dT_l+b_g\,dT_g=W_T\,dp$ with $b_k\equiv V_k\alpha_{p,k}$, so that $\mathcal{A}_p=b_l+b_g$. Substituting $dT_l$ and $dT_g$ from \eqref{heat_split},
+Their sum is \eqref{sys_T_2}, since $\mathcal{A}_{pT}=a_l+a_g$. Write \eqref{sys_T_1} as $b_l\,dT_l+b_g\,dT_g=W_T\,dp$ with $b_k\equiv V_k\alpha_{p,k}$, so that $\mathcal{A}_p=b_l+b_g$. Substituting $dT_l$ and $dT_g$ from \eqref{heat_split},
 \begin{equation}\label{dp_dQ}
-\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=-\frac1{\hat W}\Bigl(\frac{b_l}{C_{p,l}}-\frac{b_g}{C_{p,g}}\Bigr),\qquad
-\hat W\equiv W_T-\frac{a_lb_l}{C_{p,l}}-\frac{a_gb_g}{C_{p,g}},
+\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=-\frac1{W_E}\Bigl(\frac{b_l}{C_{p,l}}-\frac{b_g}{C_{p,g}}\Bigr),\qquad
+W_E\equiv W_T-\frac{a_lb_l}{C_{p,l}}-\frac{a_gb_g}{C_{p,g}},
 \end{equation}
 \begin{equation}\label{dT_dQ}
 \left(\frac{\partial T_l}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\frac1{C_{p,l}}\Bigl[-1+a_l\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\Bigr],\qquad
@@ -797,7 +1317,7 @@ and, by \eqref{stiff_def} and \eqref{step_F},
 \begin{equation}\label{K_T_step}
 \begin{split}
 \mathcal{K}^T&=-\left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}=\left(\frac{\partial T_g}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}-\left(\frac{\partial T_l}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\\
-&=\frac1{C_{p,l}}+\frac1{C_{p,g}}+\frac1{\hat W}\Bigl(\frac{a_l}{C_{p,l}}-\frac{a_g}{C_{p,g}}\Bigr)\Bigl(\frac{b_l}{C_{p,l}}-\frac{b_g}{C_{p,g}}\Bigr),\qquad
+&=\frac1{C_{p,l}}+\frac1{C_{p,g}}+\frac1{W_E}\Bigl(\frac{a_l}{C_{p,l}}-\frac{a_g}{C_{p,g}}\Bigr)\Bigl(\frac{b_l}{C_{p,l}}-\frac{b_g}{C_{p,g}}\Bigr),\qquad
 \delta\tilde{E}_l=\frac{\hat{F}_T^*}{\mathcal{K}^T}.
 \end{split}
 \end{equation}
@@ -807,6 +1327,7 @@ This step reproduces the thermal solution above:
 \phi_g^T=\frac1{\mathcal{K}^T}\left(\frac{\partial T_g}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l},\qquad
 \delta p^T=\left(\frac{\partial p}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\delta\tilde{E}_l .
 \end{equation}
+These are the increments \eqref{incr_T} of the thermal step, and \eqref{K_T_step} equals \eqref{K_T}.
 
 In chemical relaxation step, liquid and gas exchange mass while forcing thermo-mechanical equilibrium and as a result, liquid and gas phases share the same $\delta T$ and $\delta p$.
 \begin{equation}
@@ -875,7 +1396,7 @@ Plugging the above $dV_k$ and $dH_k$ relations into volume and energy invariance
 \end{equation}
 and
 \begin{equation}
-C_p \,\delta T^C - \mathcal{A}_p^T \,\delta p^C - \Delta h \,\delta\tilde{m}_l = 0,
+C_p \,\delta T^C - \mathcal{A}_{pT} \,\delta p^C - \Delta h \,\delta\tilde{m}_l = 0,
 \end{equation}
 where
 \begin{equation}
@@ -911,7 +1432,7 @@ dg_v = v_v x_v dp_g - s_v dT_g + v_v p_g \frac{x_v (1-x_v)}{m_v} dm_v.
 Finally, the $3 \times 3$ system is
 \begin{align}
 - W_T \,\delta p^C + \mathcal{A}_p \,\delta T^C - \Delta v \,\delta\tilde{m}_l &= 0,\\
-- \mathcal{A}_p^T \,\delta p^C + C_p \,\delta T^C - \Delta h \,\delta\tilde{m}_l &= 0,\\
+- \mathcal{A}_{pT} \,\delta p^C + C_p \,\delta T^C - \Delta h \,\delta\tilde{m}_l &= 0,\\
 - \Delta v \,\delta p^C + \Delta s \,\delta T^C + \mathcal{K}_{CC} \,\delta\tilde{m}_l &= \hat{F}_C^{**},
 \end{align}
 where the third row is $\hat{F}_C^{**}+\delta \hat{F}_C=0$ with $d\hat{F}_C=dg_l-dg_v$, $\Delta s=s_l-\bar s_v$, $\bar s_v=s_v(T,p_v)$, and
@@ -937,127 +1458,13 @@ p_l^{\otimes} = p_l^{**} + \delta p^C, \quad p_g^{\otimes} = p_g^{**} + \delta p
 \begin{equation}
 T_l^{\otimes} = T_g^{\otimes} = T^{**} + \delta T^C, \quad \delta T^C = -\Theta\, \delta\tilde{m}_l,
 \end{equation}
-where the coefficients, evaluated at the start state $**$, are the changes of $p$ and $T$ per unit mass received by the liquid,
+where $\Pi$ and $\Theta$ of \eqref{PiTh}, evaluated at the start state $**$, take the closed form
 \begin{equation}
-\Pi = \frac{C_p \Delta v - \mathcal{A}_p \Delta h}{D}, \quad \Theta = \frac{\mathcal{A}_p^T \Delta v - W_T \Delta h}{D}.
+\Pi = \frac{C_p \Delta v - \mathcal{A}_p \Delta h}{\mathcal{D}}, \quad \Theta = \frac{\mathcal{A}_{pT} \Delta v - W_T \Delta h}{\mathcal{D}}.
 \end{equation}
 The last row of the $3\times3$ system, with $dp=-\Pi\,d\tilde{m}_l$ and $dT=-\Theta\,d\tilde{m}_l$ along the step, gives $d\hat{F}_C=dg_l-dg_v=-(\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC})\,d\tilde{m}_l$, i.e.\ $(\partial \hat{F}_C/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}=-(\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC})$, so by \eqref{stiff_def} and \eqref{step_F}
-\begin{equation}\label{K_C}
-\mathcal{K}^C=\frac1{\phi_l^C}=\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC},\qquad \delta\tilde{m}_l=\frac{\hat{F}_C^{**}}{\mathcal{K}^C}.
+\begin{equation}\label{K_C_phase}
+\mathcal{K}^C=\frac1{\phi_l^C}=\Delta v\,\Pi-\Delta s\,\Theta+\mathcal{K}_{CC},\qquad \delta\tilde{m}_l=\frac{\hat{F}_C^{**}}{\mathcal{K}^C},
 \end{equation}
-The volume and energy that accompany $\delta\tilde{m}_l$ follow from the held equilibria, not from $\boldsymbol{d}_C$.
+which is \eqref{K_C}. The volume and energy that accompany $\delta\tilde{m}_l$ follow from the held equilibria, not from $\boldsymbol{d}_C$.
 
-\paragraph{Dilute vapor.}
-$\mathcal{K}_{CC}=R_vT_g(1-x_v)/m_v$ is singular as $m_v\to0$, and $\hat{F}_C$ contains $-R_vT_g\ln x_v$ through $g_v(p_v,T_g)$: in the dilute limit $\hat{F}_C$ is linear in $\ln m_v$, not in $m_v$. In the iteration of the chemical stage the mass transfer is therefore applied as an increment of $\ln m_v$: $\delta\tilde{m}_l$ from \eqref{row_C} is replaced by $m_v[\exp(\delta\tilde{m}_l/m_v)-1]$, which agrees with it to first order, and $\delta\tilde{E}_l$ and $\delta\tilde{V}_l$ follow from \eqref{elim_Q} and \eqref{elim_V} with this mass. The root is unchanged and $m_v$ stays positive. A dry gas ($m_v=0$, $\hat{F}_C=+\infty$) is first given a vapor mass of negligible mole fraction along $\boldsymbol{d}_C$.
-
-\paragraph{Summary.}
-From its own start state, each step transfers $\delta\tilde{V}_l=\hat{F}_M^0/\mathcal{K}^M$, $\delta\tilde{E}_l=\hat{F}_T^*/\mathcal{K}^T$, $\delta\tilde{m}_l=\hat{F}_C^{**}/\mathcal{K}^C$ with the faster equilibria held and each stiffness evaluated at the start state of its step. The stiffnesses $\mathcal{K}^M$, $\mathcal{K}^T$, $\mathcal{K}^C$ derived above from the equations of state are the pivots \eqref{stiff_def} of the Newton system \eqref{newton_hat} at the start state of each step, so each step is an elimination step of \eqref{newton_hat}. One pass of the three steps reaches the equilibria of the steps to first order; iterating the stages as below reaches them exactly, and the last stage ends at the full equilibrium $\boldsymbol{F}=0$ of \eqref{equilibrium_condition}.
-
-\paragraph{Update of pressure and temperature.}
-The transfers of a step give the new extensive state exactly, $\boldsymbol{x}_l^{n+1}=\boldsymbol{x}_l^n+\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n$ and $\boldsymbol{x}_g^{n+1}=\boldsymbol{x}_g^n-\boldsymbol{A}\boldsymbol{D}^n\,\delta\tilde{\boldsymbol{x}}_l^n$ by \eqref{update_X}. The intensive state ($p_k$, $T_k$, $g_k$) at the start of the next step can be obtained in two ways.
-\begin{enumerate}
-\item \emph{Linear update}, as in the steps above: $p_k$ and $T_k$ are advanced by the linear increments of the step ($\delta p_k^M$, $\delta T_k^M$, $\delta p^T$, $\delta T_k^T$, $\delta p^C$, $\delta T^C$). The equilibria of the step then hold exactly in the updated values, e.g.\ $p_l^*-p_g^*=p_{j}$, so the next step starts with its faster forces exactly zero, as its derivation assumes. The updated values are, however, not the equation-of-state values at $\boldsymbol{x}^{n+1}$; they differ from them by $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$, so the intensive and extensive states are consistent only to first order.
-\item \emph{Equation-of-state update}: $p_k$, $T_k$ and $g_k$ are evaluated from the equations of state at $\boldsymbol{x}^{n+1}$. The state is then consistent, but the equilibria of the step hold only to first order, and the next step starts with faster forces of order $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$ instead of zero. These residuals enter the elimination through the full right-hand sides $\hat{F}^{\prime n}_T$ and $\hat{F}^{\prime\prime n}_C$ of \eqref{schur_1} and \eqref{row_C}, and through the term $\hat{F}_M^n$ of \eqref{elim_V}; keeping them, instead of $\hat{F}_T^n$ and $\hat{F}_C^n$ alone, makes the next step a Newton step that also corrects the faster forces.
-\item \emph{Mixture-energy update}, Pelanti's closure~\cite[eqs.~(59), (70), (82)]{Pelanti2022}: $V_l$ and the masses are taken from $\boldsymbol{x}^{n+1}$, and the energy is split between the phases so that $\hat{F}_M=0$ exactly, with $E_l+E_g+p_{j}V_l$ unchanged. This adds to the transfer of the step a heat $\delta\tilde{E}_l^{c}$ along $\boldsymbol{d}_T$, the root of $\hat{F}_M(\boldsymbol{x}_l^{n+1}+\boldsymbol{d}_T\,\delta\tilde{E}_l^{c})=0$, which is of order $\lVert\hat{\boldsymbol{F}}^n\rVert^2$ and changes neither $V_l$ nor the masses. The state is consistent and in exact pressure equilibrium, but the temperature (and chemical) equilibria of the step hold only to first order. Because the correction is a heat exchanged at frozen volumes, the $\mathcal{O}(\lVert\hat{\boldsymbol{F}}^n\rVert^2)$ energy error of the linear step changes mostly the temperature of the phase with the smaller heat capacity.
-\end{enumerate}
-The three options give the same transfers to first order. Option 1 is a single linearized pass; option 2 is required for the iteration below; option 3 is Pelanti's one-pass procedure.
-
-\paragraph{Iteration of the stages.}
-A single pass takes one Newton step per stage. To reach the end state of each stage exactly, each stage is iterated with option 2, $n=0,1,\dots$ from its start state, with $\boldsymbol{D}$ held at the start state of the stage, so that $p_I$ and the path of the stage are fixed, and $\hat{\boldsymbol{J}}^n$ evaluated with $\boldsymbol{G}_k$ and $\boldsymbol{K}_k$ at $\boldsymbol{x}^n$:
-\begin{enumerate}
-\item mechanical stage: $\hat{J}^n_{MM}\,\delta\tilde{V}_l^n=-\hat{F}_M^n$ with $\delta\tilde{E}_l^n=\delta\tilde{m}_l^n=0$, until $\hat{F}_M=0$. The end state is the maximum of $S$ along $\boldsymbol{x}^0+\mathrm{span}\{\boldsymbol{d}_M\}$;
-\item thermal stage: the leading $2\times2$ block of \eqref{newton_rows} with $\delta\tilde{m}_l^n=0$, i.e.\ \eqref{elim_V} and \eqref{elim_Q} with $\hat{F}^{\prime n}_T$ including $\hat{F}_M^n$, until $\hat{F}_M=\hat{F}_T=0$. The end state is the maximum of $S$ at fixed masses, the $pT$-relaxed state;
-\item chemical stage: the full system \eqref{newton_rows}--\eqref{row_C}, until $\hat{\boldsymbol{F}}=0$. The end state is the maximum of $S$ over all exchanges, $\boldsymbol{F}=0$, the $pTg$-relaxed state.
-\end{enumerate}
-Each stage is a Newton--Raphson iteration on its own forces with the leading block of $\hat{\boldsymbol{J}}^n$ as Jacobian, so it converges quadratically near its end state. Its first iteration is the step of the single pass, since at the start of the stage the faster forces are zero (option 1) or $\mathcal{O}(\lVert\hat{\boldsymbol{F}}\rVert^2)$ (option 2). Because the end state $\boldsymbol{F}=0$ is unique for strictly concave $S$, the chemical stage alone, started close enough to it, reaches the same full equilibrium; the mechanical and thermal stages provide such a start.
-
-\paragraph{Relation to Pelanti's sequential relaxation.}
-Instantaneous relaxation needs only the state at which each force vanishes, not the size of the force. The entropy forces $\tilde{\boldsymbol{F}}$ and the forces $\hat{\boldsymbol{F}}$ are related by the invertible matrix $\boldsymbol{C}$ of \eqref{C_def}, so they vanish at the same states and give the same end states. The steps above are moreover computed in $\hat{\boldsymbol{F}}$, whose components are Pelanti's forces~\cite{Pelanti2022}: $p_1-p_2$, $T_1-T_2$, $g_1-g_2$ with phase 1 the liquid, $p_{j}=0$, and $g_2$ the pure vapor. Her stiffnesses are those of the steps above:
-\begin{itemize}
-\item mechanical: $K_p=\mu\,(1/\xi_1^p+1/\xi_2^p)$~\cite[eq.~(55)]{Pelanti2022}, where $1/\xi_k^p=[\Gamma_k(p_I-p_k)+\rho_kc_k^2]/\alpha_k$~\cite[eq.~(51)]{Pelanti2022} is $1/W_k^{eff}$, so $K_p=\mu\,\mathcal{K}^M$;
-\item thermal: per unit heat given by phase 1, $(\partial T_1/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}=-1/\xi_1^T$ and $(\partial T_2/\partial\tilde{E}_l)_{\hat{F}_M,\tilde{m}_l}=1/\xi_2^T$~\cite[eqs.~(62), (63)]{Pelanti2022}, so $K_T=\vartheta\,(1/\xi_1^T+1/\xi_2^T)$~\cite[eq.~(66)]{Pelanti2022} is $\vartheta\,\mathcal{K}^T$ of \eqref{K_T_step};
-\item chemical: her $S_p$ and $S_T$~\cite[eq.~(23)]{Pelanti2022} are the changes of $p$ and $T$ per unit mass received by phase 1 in the $pT$-relaxed model, $-(\partial p/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}$ and $-(\partial T/\partial\tilde{m}_l)_{\hat{F}_M,\hat{F}_T}$, i.e.\ $\Pi$ and $\Theta$. By~\cite[eqs.~(71b), (71c), (73)]{Pelanti2022}, $1/\xi_1^g=S_p/\rho_1-s_1S_T$ and $1/\xi_2^g=-S_p/\rho_2+s_2S_T$, so $K_g=\nu\,(1/\xi_1^g+1/\xi_2^g)=\nu\,(\Delta v\,\Pi-\Delta s\,\Theta)$, which is $\nu\,\mathcal{K}^C$ with $\mathcal{K}_{CC}=0$ for a pure vapor. Her eq.~(72) prints $-s_2S_T$ for $k=2$; the sign used here follows from her eq.~(71c).
-\end{itemize}
-Her instantaneous limits~\cite[eqs.~(57), (68), (79), (80)]{Pelanti2022} are therefore the transfers \eqref{step_F}, with the heat and mass signs of footnote~\ref{fn_sign}. She takes the volume fraction and the partial density from these transfers and then closes the pressure with the mixture energy relation~\cite[eqs.~(59), (70), (82)]{Pelanti2022}, which is option 3 of the update of pressure and temperature, in one pass; the steps above as written use option 1. One pass of the steps \eqref{step_F} with option 3 is therefore her instantaneous procedure, step by step. Her one-pass states are first-order approximations of the exact relaxed states, which the iteration of the stages reaches: the $pT$- and $pTg$-relaxed states are unique, and the mechanical end state is the one of the path $\boldsymbol{d}_M$ with the chosen $p_I$.
-
-\paragraph{Relation to Pelanti and Shyue's instantaneous relaxation.}
-\cite{PelantiShyue2014} relax instantaneously, $\mu,\theta,\nu\to\infty$~\cite[eqs.~(34), (41), (44)]{PelantiShyue2014}, and solve for the end states exactly: pressure equilibrium at fixed masses with the interface work $E_k^*-E_k^0=\mp p_I(\alpha_1^*-\alpha_1^0)$, $p_I=(p_I^0+p^*)/2$~\cite[eqs.~(37), (38)]{PelantiShyue2014}; pressure and temperature equilibrium at fixed masses~\cite[eqs.~(42), (43)]{PelantiShyue2014}; pressure, temperature and Gibbs-energy equilibrium~\cite[eqs.~(46), (47)]{PelantiShyue2014}. The last two are the unique maxima of $S$ at fixed masses and over all exchanges, i.e.\ the end states of the thermal and chemical stages, for any $p_I$. Their mechanical end state moves $\boldsymbol{x}_l$ along the single direction $\boldsymbol{d}_M$ built on the constant $p_I=(p_I^0+p^*)/2$, with $p_I^0$ their impedance-weighted interface pressure, so it is the end state of the mechanical stage with that $p_I$, a value set implicitly by the end state. Their thermo-chemical step needs neither $\rho_I$ nor $e_I$~\cite[eq.~(44)]{PelantiShyue2014}, consistently with the independence of the chemical end state from $\boldsymbol{d}_C$ shown above.
-
-\subsubsection{Finite-rate relaxation}
-Starting from equation \eqref{dS_F_dx}, we have
-\begin{equation}\label{dSdt}
-\frac{dS}{dt} = \boldsymbol{F} \cdot \frac{d\boldsymbol{x}_l}{dt}
-\end{equation}
-Entropy maximization fixes the end state of each step, but not how fast it is approached. The rate requires a constitutive law for the transfers, which is additional physical input. As in the sequential relaxation, the mechanical, thermal and chemical processes are assumed to act on separated time scales, in this order from the fastest to the slowest~\cite[Sec.~5]{Pelanti2022}.
-
-\paragraph{Entropy production of each step.}
-With $d\boldsymbol{x}_l/dt=\boldsymbol{D}\,\dot{\tilde{\boldsymbol{x}}}_l$, \eqref{dSdt} becomes $dS/dt=\tilde{\boldsymbol{F}}\cdot\dot{\tilde{\boldsymbol{x}}}_l=\tilde{F}_M\dot{\tilde{V}}_l+\tilde{F}_T\dot{\tilde{E}}_l+\tilde{F}_C\dot{\tilde{m}}_l$ by the same steps as \eqref{dS_f}. During a step the faster forces are held at zero and the slower transfers are inactive, so only the term of the step remains. By \eqref{fM_steps}, \eqref{fT_steps} and \eqref{dS_C_sum},
-\begin{equation}\label{dSdt_steps}
-\frac{dS}{dt}=\frac{\hat{F}_M}{T_M}\,\dot{\tilde{V}}_l,\qquad
-\frac{dS}{dt}=\frac{\hat{F}_T}{T_lT_g}\,\dot{\tilde{E}}_l,\qquad
-\frac{dS}{dt}=\frac{\hat{F}_C}{T}\,\dot{\tilde{m}}_l,
-\end{equation}
-in the mechanical, thermal and chemical step, respectively. The second law, $dS/dt\ge0$, therefore requires that the liquid expands while $\hat{F}_M>0$, gives heat while $\hat{F}_T>0$, and gives mass while $\hat{F}_C>0$.
-
-\paragraph{Rate law.}
-The simplest law with these signs is linear in the force of the step, with a positive rate times the liquid-minus-gas difference,
-\begin{equation}\label{step_laws}
-\dot{\tilde{V}}_l=\lambda \hat{F}_M,\qquad \dot{\tilde{E}}_l=\vartheta \hat{F}_T,\qquad \dot{\tilde{m}}_l=\nu \hat{F}_C,
-\end{equation}
-with rates $\lambda,\vartheta,\nu\ge0$ that may depend on the state. Substituting \eqref{step_laws} into \eqref{dSdt_steps},
-\begin{equation}\label{dSdt_rates}
-\frac{dS}{dt}=\frac{\lambda \hat{F}_M^2}{T_M},\qquad \frac{dS}{dt}=\frac{\vartheta \hat{F}_T^2}{T_lT_g},\qquad \frac{dS}{dt}=\frac{\nu \hat{F}_C^2}{T},
-\end{equation}
-all non-negative. With $\hat{\boldsymbol{F}}$ of \eqref{Fhat_def}, \eqref{step_laws} reads
-\begin{equation}\label{rate_matrix}
-\dot{\tilde{\boldsymbol{x}}}_l=\boldsymbol{R}\,\hat{\boldsymbol{F}},\qquad \boldsymbol{R}=\mathrm{diag}(\lambda,\vartheta,\nu),
-\end{equation}
-each step using its own row. These are Pelanti's relaxation sources~\cite[eq.~(2)]{Pelanti2022} with phase 1 the liquid, up to the sign convention for heat and mass\footnote{\label{fn_sign}Pelanti~\cite[eq.~(2)]{Pelanti2022} counts all transfers as received by phase 1, so her heat and mass sources are $\vartheta(T_2-T_1)$ and $\nu(g_2-g_1)$, a positive rate times gas minus liquid. Here heat and mass are counted as given by the liquid, so her sources are $-\dot{\tilde{E}}_l=-\vartheta \hat{F}_T$ and $-\dot{\tilde{m}}_l=-\nu \hat{F}_C$ with the same rates; her directions are $-\boldsymbol{d}_T$ and $-\boldsymbol{d}_C$, and her transfers are $-\delta\tilde{E}_l$ and $-\delta\tilde{m}_l$.}, and her mechanical rate $\mu$ is renamed $\lambda$ to avoid a clash with the chemical potential. Departures from her model: $p_{j}$ in $\hat{F}_M$, and $g_v(p_v,T_g)$ in place of her pure-vapor $g_2$. Written in the entropy forces instead, by \eqref{f_F}, \eqref{step_laws} is $\dot{\tilde{\boldsymbol{x}}}_l=\boldsymbol{L}\,\tilde{\boldsymbol{F}}$ with $\boldsymbol{L}=\mathrm{diag}(\lambda T_M,\,\vartheta T_lT_g,\,\nu T)$: the temperatures move into the coefficients. Pelanti allows her rates to be functions of the state~\cite[after eq.~(2)]{Pelanti2022}, so both forms describe the same models; $\hat{\boldsymbol{F}}$ is used here so that the rates are hers.
-
-\paragraph{Relaxation equation of each step.}
-Along a step, with the faster forces held at zero, the force changes with the transferred amount through the stiffness \eqref{stiff_def}. By the chain rule and \eqref{step_laws},
-\begin{equation}
-\begin{aligned}
-\frac{d\hat{F}_M}{dt}&=\left(\frac{\partial \hat{F}_M}{\partial\tilde{V}_l}\right)_{\tilde{E}_l,\tilde{m}_l}\dot{\tilde{V}}_l=-\mathcal{K}^M\lambda \hat{F}_M,\\
-\frac{d\hat{F}_T}{dt}&=\left(\frac{\partial \hat{F}_T}{\partial\tilde{E}_l}\right)_{\hat{F}_M,\tilde{m}_l}\dot{\tilde{E}}_l=-\mathcal{K}^T\vartheta \hat{F}_T,\\
-\frac{d\hat{F}_C}{dt}&=\left(\frac{\partial \hat{F}_C}{\partial\tilde{m}_l}\right)_{\hat{F}_M,\hat{F}_T}\dot{\tilde{m}}_l=-\mathcal{K}^C\nu \hat{F}_C .
-\end{aligned}
-\end{equation}
-In vector form, \eqref{stiff_def} reads $d\hat{\boldsymbol{F}}=-\boldsymbol{\mathcal{K}}\,d\tilde{\boldsymbol{x}}_l$ row by row, with $\boldsymbol{\mathcal{K}}\equiv\mathrm{diag}(\mathcal{K}^M,\mathcal{K}^T,\mathcal{K}^C)$, and with \eqref{rate_matrix}, since diagonal matrices commute,
-\begin{equation}\label{force_ode}
-\frac{d\hat{\boldsymbol{F}}}{dt}=-\boldsymbol{\mathcal{K}}\boldsymbol{R}\,\hat{\boldsymbol{F}}=-\boldsymbol{R}\boldsymbol{\mathcal{K}}\,\hat{\boldsymbol{F}},
-\end{equation}
-each step using its own row.
-
-\paragraph{Solution with frozen coefficients.}
-Freezing $\boldsymbol{R}$ and $\boldsymbol{\mathcal{K}}$ at the start state of the step, where the force is $\hat{\boldsymbol{F}}^0$, \eqref{force_ode} has the exact solution
-\begin{equation}\label{force_exp}
-\hat{\boldsymbol{F}}(t)=e^{-\boldsymbol{R}\boldsymbol{\mathcal{K}}t}\,\hat{\boldsymbol{F}}^0,
-\end{equation}
-where the exponential of the diagonal matrix is taken entry by entry.
-Substituting \eqref{force_exp} into \eqref{step_laws} and integrating over $[0,\Delta t]$, for the mechanical step
-\begin{equation}
-\delta\tilde{V}_l=\int_0^{\Delta t}\lambda \hat{F}_M^0\,e^{-\lambda\mathcal{K}^Mt}\,dt=\frac{\hat{F}_M^0}{\mathcal{K}^M}\bigl(1-e^{-\lambda\mathcal{K}^M\Delta t}\bigr),
-\end{equation}
-and likewise for the thermal and chemical steps,
-\begin{equation}\label{finite_solution}
-\delta\tilde{\boldsymbol{x}}_l=\boldsymbol{\Omega}\,\delta\tilde{\boldsymbol{x}}_l^\infty,\qquad \boldsymbol{\Omega}\equiv\boldsymbol{I}-e^{-\boldsymbol{R}\boldsymbol{\mathcal{K}}\Delta t}=\mathrm{diag}(\omega_M,\omega_T,\omega_C),\qquad
-\delta\tilde{\boldsymbol{x}}_l^\infty=\boldsymbol{\mathcal{K}}^{-1}\hat{\boldsymbol{F}}^0,
-\end{equation}
-$\delta\tilde{\boldsymbol{x}}_l^\infty=[\hat{F}_M^0/\mathcal{K}^M,\,\hat{F}_T^0/\mathcal{K}^T,\,\hat{F}_C^0/\mathcal{K}^C]^T$ holds the instantaneous transfers \eqref{step_F} of the sequential relaxation. Every increment of a sequential step ($\delta p$, $\delta T$, $\delta V$, $\delta E$, $\delta m$) is linear in its transfer, so a finite-rate step is the instantaneous step with all of its increments multiplied by the entry of $\boldsymbol{\Omega}$ of the step, $\omega\in[0,1)$. $\omega\to1$ as the rate goes to infinity, which recovers the instantaneous sequential relaxation, i.e.\ the Newton step of the constrained entropy maximum of the step; $\omega=0$ for zero rate. Within the linearization the force keeps its sign and decays monotonically, so by \eqref{dSdt_rates} the entropy increases throughout the step and the state does not pass the end state of the step. The entries of $\boldsymbol{R}\boldsymbol{\mathcal{K}}$, $\lambda\mathcal{K}^M$, $\vartheta\mathcal{K}^T$, $\nu\mathcal{K}^C$, are Pelanti's exponents $K_p$, $K_T$, $K_g$~\cite[eqs.~(55), (66), (76)]{Pelanti2022}, and \eqref{finite_solution} is her solution~\cite[eqs.~(54), (56), (65), (67), (75), (77)]{Pelanti2022}, up to the closure noted in the relation to Pelanti's sequential relaxation.
-
-\paragraph{Activation.}
-In one relaxation call the transfers faster than the finite-rate one are instantaneous ($r\to\infty$) and the slower ones are not activated, as in Pelanti's steps 2(a)--2(c)~\cite[Sec.~5]{Pelanti2022}, where the mechanical step is always instantaneous. After a linearized finite step the faster equilibria hold only to first order; they can be restored by iterating the faster stages with option 2 of the update of pressure and temperature.
-
-\paragraph{Simultaneous transfers.}
-Without rate separation the three transfers act at once, and $dS/dt=\tilde{F}_M\dot{\tilde{V}}_l+\tilde{F}_T\dot{\tilde{E}}_l+\tilde{F}_C\dot{\tilde{m}}_l$. $\tilde{F}_M=\hat{F}_M/T_M$ and $\tilde{F}_T=\hat{F}_T/(T_lT_g)$ hold at any state, but $\tilde{F}_C=\hat{F}_C/T$ only at pressure and temperature equilibrium; in general $\tilde{F}_C=(\hat{F}_C-v_l\hat{F}_M+s_l\hat{F}_T)/T_g$ by \eqref{C_def}. Pelanti's model~\cite[eqs.~(1e), (1f)]{Pelanti2022} lets the transferred mass carry the energy $g_I$ and no volume; for mass given by the liquid this is the direction $\boldsymbol{d}_C^P=[0,\,-g_I,\,-1]^T$, which is related to $\boldsymbol{d}_C$ by
-\begin{equation}\label{dC_dCP}
-\boldsymbol{d}_C=\boldsymbol{d}_C^P-v_l\,\boldsymbol{d}_M+(e_l+p_Iv_l-g_I)\,\boldsymbol{d}_T .
-\end{equation}
-Its conjugate force is $\tilde{F}_C^P=\boldsymbol{d}_C^P\cdot\boldsymbol{F}=-g_IF_2-F_3=(g_l-g_I)/T_l+(g_I-g_v)/T_g$. The interface chemical potential lies between $g_l$ and $g_v$~\cite[eq.~(3)]{Pelanti2022}; with $g_l-g_I=w_C(g_l-g_v)$ and $g_I-g_v=(1-w_C)(g_l-g_v)$, $w_C\in[0,1]$, the same steps as \eqref{fM_steps} give, at any state,
-\begin{equation}\label{f_P}
-\tilde{F}_C^P=\frac{w_C\hat{F}_C}{T_l}+\frac{(1-w_C)\hat{F}_C}{T_g}=\frac{\hat{F}_C}{T_C},\qquad \frac1{T_C}\equiv\frac{w_C}{T_l}+\frac{1-w_C}{T_g}.
-\end{equation}
-With $\boldsymbol{d}_C^P$, \eqref{rate_matrix} therefore gives $dS/dt=\lambda \hat{F}_M^2/T_M+\vartheta \hat{F}_T^2/(T_lT_g)+\nu \hat{F}_C^2/T_C\ge0$ for simultaneous transfers as well. Under rate separation the choice between $\boldsymbol{d}_C$ and $\boldsymbol{d}_C^P$ does not matter, by \eqref{F12_zero}.
-
-\textcolor{red}{Open: (i) solution of simultaneous transfers; (ii) values of $\lambda$, $\vartheta$, $\nu$; (iii) dilute vapor: with $\mathcal{K}^C$ frozen, \eqref{finite_solution} gives $\delta\tilde{m}_l=\omega_C\hat{F}_C^0/\mathcal{K}^C\sim m_v\ln(1/x_v)\to0$ as $m_v\to0$, while the rate law \eqref{step_laws} evaporates at a finite rate, because $\mathcal{K}_{CC}$ varies by $\mathcal{O}(1)$ relative to itself over the step. Candidate: freeze $\mathcal{K}_{pT}=\Delta v\,\Pi-\Delta s\,\Theta$ and integrate the mixing term $-R_vT\ln x_v$ of $\hat{F}_C$ exactly.}

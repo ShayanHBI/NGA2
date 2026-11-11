@@ -2938,8 +2938,9 @@ contains
             dbg_cell=(i.ge.dbg_ilo.and.i.le.dbg_ihi.and.j.ge.dbg_jlo.and.j.le.dbg_jhi.and.k.ge.dbg_klo.and.k.le.dbg_khi) ! debug
             if (dbg_cell) then; dbg_i=i; dbg_j=j; dbg_k=k; end if ! debug
             ! Regular relaxation branch
-            if (.not.oldmix.or.abs(pVF(i,j,k,1)-0.5_WP).lt.this%VFrb.or.any(pQ(i,j,k,1:4).le.0.0_WP)) then
+            if (.not.oldmix.or.abs(pVF(i,j,k,1)-0.5_WP).lt.this%VFrb.or.any(pQ(i,j,k,1:2).le.0.0_WP)) then
                ! Pure cells, cells inside the band and cells with a non-positive phase quantity
+               ! Masses only: a phase energy Q(3:4) can be legally negative (NASG with q<0), the relaxation checks admissibility
                dbg_branch=1 ! debug
                call this%relax%apply(dt=dt,VF=pVF(i,j,k,1),Q=pQ(i,j,k,:),Pjump=Pjump)
             else

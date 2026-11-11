@@ -86,7 +86,7 @@ Each example provides two modules in its `src/` directory:
 
 ### Abstract Bases (`src/libraries/`)
 
-- **`material`** (`material_class.f90`): fields `name`, `ns` (=1 for pure substances), `species_names(:)`. Every method takes a trailing composition `y(:)` (ignored by pure substances). Methods follow `p, rho, T` argument precedence: `get_p/T/c/cv/gruneisen_from_rho_e(rho,e,y)`, `get_T/c/e/rhoe_from_p_rho(p,rho,y)`, `get_e/rho/h/s/g/rhoe_from_p_T(p,T,y)`, `get_hk_from_p_T(p,T,y,hk)` (subroutine), `get_p_from_rho_T`, `get_cv_from_rho_T`. Prefer `*_from_rho_e` in hot loops.
+- **`material`** (`material_class.f90`): fields `name`, `ns` (=1 for pure substances), `species_names(:)`. Every method takes a trailing composition `y(:)` (ignored by pure substances). Methods follow `p, rho, T` argument precedence: `get_p/T/c/cv/gruneisen_from_rho_e(rho,e,y)`, `get_T/c/e/rhoe_from_p_rho(p,rho,y)`, `get_e/rho/h/s/g/rhoe_from_p_T(p,T,y)`, `get_hk_from_p_T(p,T,y,hk)` (subroutine), `get_p_from_rho_T`, `get_cv_from_rho_T`. Prefer `*_from_rho_e` in hot loops. `get_rho_max(y)`: density above which the EOS has no state (`huge` by default, 1/b for `nasg`); a finite test, safe under `-ffast-math`.
 - **`thermorelax`** (`thermorelax_class.f90`): no fields; deferred `apply(dt,VF,Q,Pjump,ierr)`; default no-op `get_chem_transfer(...)`. Exports error codes `RELAX_OK=0` … `RELAX_VACUUM_VAPOR=8`.
 
 ### EOS Classes
@@ -95,7 +95,7 @@ Each example provides two modules in its `src/` directory:
 material
 ├── ideal_gas      (gamma, cv, cp, R, q, qp)        ideal_gas_class.f90
 │   └── stiffened_gas  (+ pinf)                     stiffened_gas_class.f90
-│       └── nasg       (+ b, brhomax=0.9 clamp)     nasg_class.f90
+│       └── nasg       (+ b, brhomax=0.9 clamp)     nasg_class.f90   (max-ent pTg requires brhomax>=1: no clamp)
 ├── igmix          (per-species arrays gamma, cv, cp, R, q, qp)   igmix_class.f90
 └── coolprop       (only with USE_COOLPROP=TRUE)    coolprop_class.f90
 ```
@@ -118,10 +118,12 @@ All store EOS objects as `liq`/`gas` pointers (pass `target` objects) and share 
 | `relax_ig_sg` | `thermorelax` | `(gas,liq)` — gas first | IG/SG p, pT (`Prelax=1`, `PTrelax=2`) |
 | `relax_ig_nasg` | `thermorelax` | `(gas,liq)` | IG/NASG; adds `PThybrid=3` |
 | `relax_igmix_sg` | `thermorelax` | `(liq,gas,indV,indA)` | SG/NASG liquid + igmix gas; `model` = `Prelax=1`, `PTrelax=2`, `PTgrelax=3`, `PThybrid=4` |
-| `relax_igmix_nasg` | `relax_igmix_sg` | same | Pelanti 2022 instantaneous relaxation |
+| `relax_igmix_nasg` | `relax_igmix_sg` | same | Pelanti 2022 instantaneous relaxation; closed-form `p_relax`/`pT_relax` conserve E_l+E_g+p_j·V_l (liquid works at p_I, gas at p_I−p_j; stable quadratic root); `pTg_relax` inherited from `relax_igmix_sg` (does not conserve exactly) |
 | `relax_igmix_nasg_finite` | `relax_igmix_sg` | same | Pelanti 2022 finite-rate (Sec. 7.2.3, eqs. 51, 71–83); rates `lambda`, `theta`, `nu` (default `huge` = instantaneous) |
-| `relax_igmix_max_ent` | `relax_igmix_sg` | `(liq,gas,indV,indA)` | `~/Downloads/relaxation_ent_max.tex`: Newton on F̂ in transfer coordinates, stages M→T→C iterated with D held per stage; nucleation; works with `apply_relax_splitremix` |
-| `relax_igmix_max_ent_finite` | `relax_igmix_max_ent` | same | Finite rate `MRR`/`TRR`/`CRR` (or `tauC`); faster stages instantaneous; `closure` = `closure_restore` (tex) or `closure_pelanti` (Pelanti eqs. 59/70/82) |
+| `relax_igmix_max_ent_inst` | `relax_igmix_sg` | `(liq,gas,indV,indA)` | `src/thermo/relaxation_ent_max.tex` (wrapper `relaxation_ent_max_main.tex`), EOS-agnostic liquid (material API, Z_l from Γ, c, c_v; ρ_l<`get_rho_max`): Newton on F̂ in transfer coordinates. `max_ent_apply`: `admissible` start check (`get_state`), pTg nucleation of near-pure cells (unseeded near-pure → `RELAX_DEGENERATE`, left to split-remix; unseeded pure → `RELAX_OK`). `relax_M`: default `pI_end` = `iterate_pI_end` (Newton in δ,p\*, eqs. mech_path/mech_end/mech_newton), other `pI_mode` = `iterate(1)` with p_I held at the start; `relax_MT` = `iterate(2)`; pTg = `require_unclamped` (dies unless NASG `brhomax>=1`), `relax_MT`, then `relax_C` (Newton in ln m_v on the pT-relaxed states); `force_tol` = eq. conv_tol |
+| `relax_igmix_nasg_max_ent_inst` | `relax_igmix_max_ent_inst` | same | SG/NASG liquid: closed forms `relax_M` (p_I=p\*, eq. mech_quad) and `relax_MT` (eq. pT_quad), NASG `liq_state`, closed `admissible` (W0>0, T_l>0, T_g>0); module procedures `nasg_relax_M`/`nasg_relax_MT`/`nasg_admissible`/`nasg_liq_state` shared with the NASG finite class; closed forms set K^M, K^T |
+| `relax_igmix_max_ent_finite` | `relax_igmix_max_ent_inst` | same | EOS-agnostic finite rate `MRR`/`TRR`/`CRR` (or `tauC`, ν=1/(K^C(m_v^∞)τ_C)); faster stages instantaneous, slower inactive; M/T: exponential `finite_step` (ω=1−e^{−rKΔt}); C: frozen exponential if \|δm\|≤`dmv_lin`·m_v\*\* (0.1), else and for a dry gas the exact integral `chemical_transfer_exact` (eq. dm_dt_exact, a safeguard; `chem_exact` flags it); `closure` = `closure_restore` (default) or `closure_pelanti` (`mixture_energy_closure`, tex option 3, leaves T_l≠T_g) |
+| `relax_igmix_nasg_max_ent_finite` | `relax_igmix_max_ent_finite` | same | SG/NASG liquid: the closed forms and `admissible` of `relax_igmix_nasg_max_ent_inst` and Pelanti's closed-form `mixture_energy_closure` (eqs. 59/70/82, plus p_j) |
 | `relax_numerical` | `thermorelax` | `(liq,gas)` | Mechanical-only Newton, any `material` |
 
 `indV`/`indA` are the vapor/air species indices in the `igmix` gas. Model constants (`Prelax`, …) are exported by `relax_igmix_sg_class`.
@@ -161,7 +163,7 @@ For a pure liquid and vapor+air gas (vapor=1, air=2): nQ=8, Q(8) = `(1−VF)·ρ
 
 ## Reference Case: `examples/amrcomp_impact/`
 
-Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_nasg` relaxation applied through `fs%apply_relax_splitremix` (the `relax_igmix_nasg_finite` lines are kept commented out in `simulation.f90`). `Relaxation type` (p, pT, pThybrid, pTg) selects `relax_model%model`; `Merge Q` switches `merge_Q`. Only `src/simulation.f90` is in its `Make.package`.
+Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_nasg` relaxation applied through `fs%apply_relax_splitremix` (the `relax_igmix_nasg_finite` lines are kept commented out in `simulation.f90`). `Relaxation type` (p, pT, pThybrid, pTg) selects `relax_model%model`; `Merge Q` switches `merge_Q`. Only `src/simulation.f90` is in its `Make.package`. It sets `water%brhomax=1e10` (unclamped NASG); the max-ent classes are not wired in yet. In `apply_relax_splitremix`, a cell goes to the regular (whole-cell) branch only if pure, inside the VF band, or with a non-positive mass Q(1:2); a near-pure cell that the pTg call does not seed is relaxed in the VF=0.5 reactor.
 
 ---
 
@@ -169,7 +171,7 @@ Shock–droplet impact with NASG water and vapor+air `igmix` gas, `relax_igmix_n
 
 | Directory | Build | Tests |
 |---|---|---|
-| `examples/eos_relax/` | `make` (targets `run`, `maxent`, `finite`, …) | single-cell relaxation, `test_max_ent` (max-ent classes vs tex closed forms, Pelanti, relax_igmix_nasg), finite-rate tests, `test_pelanti_ref` (literal Pelanti transcription) |
+| `examples/eos_relax/` | `make` (targets `run`, `maxent`, `finite`, `bench`, `cmp`, …) | single-cell relaxation, `test_max_ent` (max-ent classes vs tex closed forms, Pelanti, relax_igmix_nasg), finite-rate tests, `test_pelanti_ref` (literal Pelanti transcription), `bench_stages` (max_ent class vs former staged scheme), `cmp_nasg_maxent` (relax_igmix_nasg_max_ent_inst vs relax_igmix_nasg cost/accuracy on subcritical VF=0.5 reactors), `test_pelanti_shyue_ref` (`make ps14`: relax_igmix_nasg_max_ent_inst p/pT vs literal Pelanti & Shyue 2014 App. C.1/C.2) |
 | `examples/amrcomp_venturi/eos_check/` | `make -f Makefile.test_eos run` | NASG water/vapor/air vs Liu et al. 2026 Table 4 |
 
 These link `src/libraries/{precision,material_class,thermorelax_class}.f90` and `src/thermo/*.f90` with local stubs (`messager_stub.f90`). Many of these files are untracked; check `git status` before assuming they exist.

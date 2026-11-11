@@ -13,7 +13,6 @@ module relax_igmix_nasg_finite_class
    private
 
    public :: relax_igmix_nasg_finite
-   public :: log_E1,inv_log_E1
 
    type, extends(relax_igmix_sg) :: relax_igmix_nasg_finite
       !> Typed pointer for direct b access (avoids select type in hot path)

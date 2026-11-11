@@ -29,6 +29,7 @@ module nasg_class
       procedure :: get_rhoe_from_p_rho     => nasg_get_rhoe_from_p_rho
       procedure :: get_rhoe_from_p_T       => nasg_get_rhoe_from_p_T
       procedure :: print                   => nasg_print
+      procedure :: get_rho_max             => nasg_get_rho_max
       ! Inherited unchanged from stiffened_gas:
       !   get_e_from_p_T   (b does not enter the calorically-perfect internal energy at given p,T)
       !   get_s_from_p_T   (same)
@@ -49,6 +50,14 @@ contains
       end if
       this%b=b
    end subroutine nasg_initialize
+
+   !> NASG has a state only for b*rho<1
+   real(WP) function nasg_get_rho_max(this,y) result(rho_max)
+      class(nasg), intent(in) :: this
+      real(WP), dimension(:), intent(in) :: y
+      rho_max=huge(1.0_WP)
+      if (this%b.gt.0.0_WP) rho_max=1.0_WP/this%b
+   end function nasg_get_rho_max
 
    real(WP) function nasg_get_p_from_rho_e(this,rho,e,y) result(p)
       class(nasg), intent(in) :: this

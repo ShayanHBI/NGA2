@@ -16,7 +16,7 @@ program eos_relax
    use thermorelax_class,          only: thermorelax
    use relax_igmix_sg_class,       only: relax_igmix_sg,PTgrelax
    use relax_igmix_nasg_class,     only: relax_igmix_nasg
-   use relax_igmix_max_ent_class, only: relax_igmix_max_ent
+   use relax_igmix_nasg_max_ent_inst_class, only: relax_igmix_nasg_max_ent_inst
    implicit none
 
    real(WP), parameter :: Mv=0.0180153_WP, Ma=0.02897_WP   ! molar masses [kg/mol]
@@ -149,7 +149,7 @@ program eos_relax
    max_ent_nasg_block: block
       type(nasg),              target :: liq
       type(igmix),             target :: gas
-      type(relax_igmix_max_ent),target :: rm
+      type(relax_igmix_nasg_max_ent_inst),target :: rm
       real(WP) :: CvL,GammaL,PinfL,bL,qL,qpL
       real(WP) :: CvV,GammaV,      qV,qpV
       real(WP) :: CvA,GammaA,      qA,qpA
@@ -169,6 +169,8 @@ program eos_relax
       call read_real('input_NASG','Air reference energy shift',                      qA)
       call read_real('input_NASG','Air reference entropy shift',                     qpA)
       call liq%initialize(gamma=GammaL,pinf=PinfL,b=bL,cv=CvL,q=qL,qp=qpL,name='water')
+      ! Max-ent pTg requires the unclamped NASG liquid
+      liq%brhomax=1.0_WP
       call gas%initialize(gamma=[GammaV,GammaA],cv=[CvV,CvA],q=[qV,qA],qp=[qpV,qpA], &
       &                    species_names=['vapor','air  '],name='gas')
       call rm%initialize(liq=liq,gas=gas,indV=1,indA=2)

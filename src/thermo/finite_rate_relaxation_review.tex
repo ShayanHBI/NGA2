@@ -1,0 +1,367 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[margin=0.86in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern,microtype}
+\usepackage{amsmath,amssymb,bm,mathtools}
+\usepackage{booktabs,longtable,array,tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,urlcolor=blue!65!black,linkcolor=blue!55!black,citecolor=blue!65!black}
+\usepackage{fancyhdr}
+\pagestyle{fancy}\fancyhf{}\lhead{Finite-rate relaxation: literature and closures}\rhead{Working research review}\cfoot{\thepage}
+\setlength{\headheight}{14pt}
+\setlength{\parskip}{0.38em}\setlength{\parindent}{0pt}
+\setlist[itemize]{topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt}
+\newcommand{\mi}{\mathrm{i}}
+\newcommand{\liq}{\ell}
+\newcommand{\vap}{v}
+\newcommand{\gas}{g}
+\newcommand{\nc}{a}
+\newcommand{\dif}{\mathrm{d}}
+\newcommand{\ddt}{\frac{\dif}{\dif t}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\area}{a_\mi}
+\newcommand{\jcond}{j_{\mathrm{cond}}}
+\newcommand{\jevap}{j_{\mathrm{evap}}}
+\newcommand{\gdiff}{\Delta g}
+\newcommand{\mcal}{\mathcal{M}}
+\newcommand{\qcal}{\mathcal{Q}}
+\title{\textbf{Physically Based Finite-Rate Relaxation for Compressible Liquid--Vapor--Gas Flow}\\[0.5em]
+\large Critical review of ten supplied publications and a closure strategy for a sharp-interface solver}
+\author{Research working document}
+\date{2 November 2026 \quad --- \quad Version 1.0}
+\begin{document}
+\maketitle
+\begin{abstract}
+This report evaluates ten supplied publications on finite-rate thermodynamic relaxation, evaporation/condensation, and interfacial transport, with special attention to the proposal to use Nusselt- and Sherwood-number correlations to set physical heat- and mass-relaxation rates in a compressible liquid--vapor--noncondensable-gas solver using a geometrically sharp interface. It distinguishes numerical relaxation operators from constitutive closures, develops dimensionally consistent mappings between heat/mass fluxes and Pelanti-style relaxation coefficients, derives a regular near-equilibrium chemical coefficient for an ideal binary gas mixture, and identifies the limitations of lumped correlations for shocks, phase nucleation, and resolved boundary layers. \textbf{Status:} a detailed first-pass research synthesis of the ten supplied items, not a claim that all closures have been validated for the intended shock--droplet configuration. Equation labels and page references are to the original articles unless explicitly designated as derivations in this report.
+\end{abstract}
+\tableofcontents
+\clearpage
+\section{Executive conclusions}
+\begin{enumerate}
+\item \textbf{There is direct precedent for the advisor's suggestion.} De Lorenzo, Lafon and Pelanti \cite{DeLorenzo2019} use the physical thermal transfer $h A_\mi(T_2-T_1)$ in their temperature-relaxation equations (their Eq.~40). Sirianni and Re \cite{SirianniRe2026} explicitly estimate temperature and Gibbs-free-energy relaxation parameters from a Nusselt-based heat flux and an interfacial energy balance (their Eqs.~24--25). Sirianni's thesis \cite{SirianniThesis2026} expands the approach to a two-resistance formulation (Eqs.~5.4--5.7 and 5.43--5.46).
+\item \textbf{The simplest thermal closure is} $\vartheta=\area h_{\rm eff}$ (under a symmetric sensible-heat exchange model, with compatible sign and energy conventions), where $\area=A_\mi/V$ is the true reconstructed interface area per control volume. This has units $\mathrm{W\,m^{-3}\,K^{-1}}$.
+\item \textbf{For water vapor plus inert gas, a Sherwood model is a particularly natural mass closure.} The physical mass flux depends on the interfacial saturation vapor composition versus the adjacent gas composition, including diffusion resistance and, when significant, Stefan flow. Near equilibrium it can be expressed in the Onsager-like form $\mcal=\nu\gdiff$ with a finite, nonnegative $\nu$ derived from transport and an EOS susceptibility, rather than evaluating a possibly singular $\mcal/\gdiff$ directly.
+\item \textbf{Do not conflate a film model with resolved transport.} Bure\v{s} and Sato \cite{BuresSato2021} demonstrate geometrically sharp interface fluxes derived from resolved gradients. Kumar et al. \cite{VijayaKumar2021} show that interface-face flux implementations can be less grid-dependent than volumetric implementations for their condensation problems. The right closure depends on what the code already resolves.
+\item \textbf{A physical sharp interface provides geometry, not necessarily the unresolved interfacial physics.} Geometric VOF gives $A_\mi$ for a resolved interface; nuclei, daughter droplets, subgrid mist, and turbulent/thermal concentration layers may still need models.
+\item \textbf{The conventional nonnegative relaxation parameters cannot represent every admissible interfacial energy-transfer configuration.} Sirianni's thesis identifies metastable situations in which mapping two independent interface-side heat fluxes into their constrained relaxation structure would demand negative parameters \cite{SirianniThesis2026}. This is a limitation of that \emph{mapping}, not evidence that the physical heat flux is nonphysical.
+\end{enumerate}
+
+\section{Problem statement, conventions, and scope}
+The target application is a compressible solver with a liquid phase, a gaseous phase composed of condensable water vapor and an inert species, and a geometrically sharp volume-of-fluid interface. The numerical framework currently uses or is inspired by finite-rate mechanical, thermal, and chemical relaxation as formulated by Pelanti \cite{Pelanti2022,Pelanti2026}. The goal is to replace arbitrary relaxation parameters with functions determined by geometry, EOS, transport properties, and experimentally defensible correlations.
+
+Adopt the following \emph{report conventions} unless otherwise noted:
+\begin{align}
+\area &= \frac{A_\mi}{V_{\rm cell}}\quad [\mathrm{m^{-1}}],\\
+\qcal &= \vartheta(T_g-T_\ell)\quad [\mathrm{W\,m^{-3}}],\\
+\mcal &= \nu(g_v-g_\ell)\quad [\mathrm{kg\,m^{-3}\,s^{-1}}].
+\end{align}
+Here $\mcal$ denotes \emph{liquid mass gain} (positive for condensation). The gas component is a mixture; $g_v$ must refer to the \emph{partial chemical potential of the water-vapor species}, not the Gibbs free energy per unit mass of the entire gas mixture. It is essential to match source-term signs in the actual implementation before adopting any formula in this report.
+
+\subsection{Dimensions and the relaxation-rate distinction}
+\begin{align}
+[\vartheta]&=\mathrm{J\,m^{-3}\,s^{-1}\,K^{-1}},\\
+[\nu]&=\frac{\mathrm{kg\,m^{-3}\,s^{-1}}}{\mathrm{J\,kg^{-1}}}
+=\mathrm{kg^2\,J^{-1}\,m^{-3}\,s^{-1}}=\mathrm{kg\,s\,m^{-5}}.
+\end{align}
+The \emph{source coefficients} $\vartheta,\nu$ are not, by themselves, inverse characteristic times. For a frozen linearized system $\dot{\Delta T}=-K_T\Delta T$ and $\dot{\gdiff}=-K_g\gdiff$, one has $\tau_T=1/K_T$ and $\tau_g=1/K_g$. The rate constants $K_T,K_g$ contain both the source coefficient and EOS/mixture susceptibilities. In particular, the available chemical energy and mass storage influence how quickly the state approaches equilibrium. Pelanti (2022) discusses this distinction in its finite-rate exponential-relaxation construction \cite{Pelanti2022}.
+
+\section{A physical closure from Nusselt and Sherwood correlations}
+\subsection{Interface area and geometrical length}
+For a reconstructed interface segment $A_\mi$ inside a cell $V$,
+\begin{equation}\label{eq:a}
+\area=\frac{A_\mi}{V}.
+\end{equation}
+For a uniform dispersed population of spherical liquid drops of diameter $d_p$ with volume fraction $\alpha_\ell$, $\area=6\alpha_\ell/d_p$. This latter expression is a \emph{population geometry model}, not generally the same as area directly reconstructed for a single distorted resolved drop. For a deformed cylindrical drop under a nominally 2D simulation, define the area and volume consistently per unit out-of-plane depth.
+
+\subsection{Sensible thermal exchange: simple symmetric closure}
+For a heat-transfer correlation $Nu$ and thermal conductivity $k$,
+\begin{align}
+h &= \frac{Nu\,k}{d},\label{eq:hnu}\\
+q''_{g\to\ell}&=h_{\rm eff}(T_g-T_\ell),\\
+\qcal&=\area q''_{g\to\ell}
+=\underbrace{\area h_{\rm eff}}_{\vartheta}(T_g-T_\ell).\label{eq:theta}
+\end{align}
+Equation~\eqref{eq:theta} is a \emph{derived constitutive mapping}, assuming that the bulk-to-bulk sensible heat transfer can be represented by one thermal resistance. If separate liquid and gas films are represented, the overall effective coefficient for pure sensible exchange can be approximated by
+\begin{equation}\label{eq:series}
+\frac{1}{h_{\rm eff}}=\frac{1}{h_\ell}+\frac{1}{h_g}+R_{\rm interface}^{T},
+\end{equation}
+with appropriate interfacial resistance $R_{\rm interface}^{T}$. This series law is not an adequate replacement for a full energy balance when interfacial latent heat is appreciable.
+
+For constant-volume, no-phase-change, approximately uniform phasic reservoirs with volumetric heat capacities $C_\ell$ and $C_g$ in $\mathrm{J\,m^{-3}\,K^{-1}}$, energy conservation gives
+\begin{align}
+C_\ell \dot T_\ell&=\area h_{\rm eff}(T_g-T_\ell),\\
+C_g \dot T_g&=-\area h_{\rm eff}(T_g-T_\ell).
+\end{align}
+Therefore,
+\begin{equation}\label{eq:tauT}
+\boxed{\tau_T^{\rm lumped}=\frac{C_\ell C_g}{\area h_{\rm eff}(C_\ell+C_g)}.}
+\end{equation}
+This is a \emph{lumped-reservoir derivation} only. The actual pressure-relaxed compressible thermal timescale is altered by thermal expansion, pressure work, and EOS response; use the exact Jacobian of the implemented relaxation ODE to compute $K_T$.
+
+\subsection{Ranz--Marshall baseline and limits}
+For a nearly spherical drop with relative gas--drop speed $U_{\rm rel}$,
+\begin{equation}\label{eq:RM}
+Nu_0=2+0.6Re_d^{1/2}Pr^{1/3},\qquad
+Sh_0=2+0.6Re_d^{1/2}Sc^{1/3},
+\end{equation}
+\begin{equation}
+Re_d=\frac{\rho_g U_{\rm rel}d}{\mu_g},\qquad
+Pr=\frac{\mu_gc_{p,g}}{k_g},\qquad
+Sc=\frac{\mu_g}{\rho_g D_{va}}.
+\end{equation}
+These are useful baseline droplet correlations, not universal shock-wave interfacial laws. A \emph{single-velocity} multiphase solver may have zero resolved phase slip $U_{\rm rel}$ by construction; mechanically setting $Re_d=0$ then returns the conduction/diffusion limit $Nu=Sh=2$. Any alternative velocity scale must be physically justified, e.g., a resolved surrounding gas velocity relative to a tracked droplet or a separately modeled slip velocity. Shock compression and deformation also change the applicability of steady spherical correlations \cite{AbramzonSirignano1989,LiaoLucas2018}.
+
+\subsection{Sherwood-to-mass-flux closure with Stefan flow}
+Let $Y_{v,b}$ be the gas-side reference vapor mass fraction and $Y_{v,I}$ the gas-side composition in equilibrium with the liquid interface. For a stagnant inert gas at the interface and a conventional film model, an ideal-gas binary-mixture evaporation law is
+\begin{equation}\label{eq:ste}
+\jevap=\rho_g k_m\ln\!\left(\frac{1-Y_{v,b}}{1-Y_{v,I}}\right),
+\qquad k_m=\frac{Sh\,D_{va}}{d}.
+\end{equation}
+Here $\jevap>0$ when $Y_{v,I}>Y_{v,b}$, and the corresponding \emph{condensation-positive} rate is
+\begin{equation}\label{eq:cond}
+\boxed{\jcond=-\jevap=\rho_g k_m\ln\!\left(\frac{1-Y_{v,I}}{1-Y_{v,b}}\right).}
+\end{equation}
+$\mcal=\area\jcond$. The logarithmic Stefan-flow correction is especially important when water vapor is not dilute. Formula~\eqref{eq:ste} assumes a suitable film-averaged $\rho_g,D_{va}$, an impermeable inert species, approximately isobaric diffusion within the gas film, and negligible extra interfacial kinetic resistance. The Abramzon--Sirignano model gives a more developed moving-droplet formulation with modified Nusselt/Sherwood numbers and Stefan-flow corrections \cite{AbramzonSirignano1989}.
+
+\subsection{A nonsingular, entropy-consistent near-equilibrium chemical coefficient}
+For ideal vapor in an ideal binary gas mixture at local temperature $T$, the water-vapor chemical-potential difference near coexistence may be written (under an appropriate pure-liquid reference and negligible curvature)
+\begin{equation}\label{eq:gln}
+\Delta g\equiv g_v-g_\ell\simeq R_vT\ln\!\left(\frac{p_v}{p_{v,I}^{\rm eq}}\right).
+\end{equation}
+For non-ideal liquid EOS, $p_{v,I}^{\rm eq}$ is obtained by satisfying $g_v(T,p_v)=g_\ell(T,p_\ell)$; it need not equal the bulk pure-water saturation pressure if liquid pressure differs, surface tension is important, or temperatures jump across the interface. If the thermodynamic states used by the model are at different temperatures, \eqref{eq:gln} is \emph{not} a globally exact affinity formula; this section applies to the isothermal near-equilibrium limit.
+
+At fixed gas total pressure $p$, let $x_v=p_v/p$, and let $M_v$ and $M_a$ be molar masses. Then
+\begin{equation}\label{eq:Yx}
+Y_v=\frac{M_v x_v}{M_vx_v+M_a(1-x_v)},\qquad
+\left.\frac{\partial Y_v}{\partial\ln p_v}\right|_{p,T}
+=\frac{M_vM_a\,x_v(1-x_v)}{[M_vx_v+M_a(1-x_v)]^2}.
+\end{equation}
+Near equilibrium, linearization of Eq.~\eqref{eq:cond} about $Y_{v,b}=Y_{v,I}$ gives
+\begin{equation}
+\jcond\simeq\frac{\rho_g k_m}{1-Y_{v,I}}(Y_{v,b}-Y_{v,I}),
+\end{equation}
+while Eq.~\eqref{eq:gln} gives
+\begin{equation}
+\Delta g\simeq R_vT\left[\ln(p_{v,b})-\ln(p_{v,I}^{\rm eq})\right].
+\end{equation}
+Thus, with $\mcal=\nu\Delta g$ and condensation-positive sign convention, the \emph{derived small-driving-force closure} is
+\begin{equation}\label{eq:nu}
+\boxed{\nu_{\rm diff,eq}=\frac{\area\rho_g k_m}{(1-Y_{v,I})R_vT}
+\left.\frac{\partial Y_v}{\partial\ln p_v}\right|_{p,T,I}\ge0.}
+\end{equation}
+This result is a \textbf{new mapping derived here from the standard ideal-mixture film model}, not an equation reported verbatim by any of the reviewed papers. It avoids taking a numerical ratio $\mcal/\Delta g$ when both vanish, and has the required units. In a real-gas mixture, the Jacobian $\partial Y_v/\partial\Delta g$ should be obtained from the actual EOS and equilibrium interface conditions. Far from equilibrium, one can compute the physical signed flux from the full model and \emph{if desired} use a secant coefficient $\nu_{\rm sec}=\mcal/\Delta g$, but only when the signs are compatible and both driving forces are well resolved. In general, directly using the flux is preferable to forcing an arbitrary nonlinear constitutive relation into a linear affinity form.
+
+\subsection{Physical time-scale estimate from gas storage}
+If the relevant gas mass per mixture volume is $C_{Y}=\alpha_g\rho_g$ and the interface vapor mass fraction is nearly fixed while interfacial flux remains linear in $Y_{v,b}-Y_{v,I}$, then
+\begin{equation}\label{eq:tauMass}
+\boxed{\tau_{Y}^{\rm lumped}\sim\frac{\alpha_g\rho_g(1-Y_{v,I})}{\area\rho_g k_m}
+=\frac{\alpha_g(1-Y_{v,I})}{\area k_m}.}
+\end{equation}
+The exact coefficient depends on whether mass fractions, total gas density, volume fraction, or total pressure are allowed to change in the relaxation process. Equations~\eqref{eq:tauMass} and \eqref{eq:tauT} are scale estimates, not substitutions for Pelanti's analytic $K_T,K_g$.
+
+\subsection{Interfacial energy closure: heat and mass are coupled}
+For mass flux $j$ from liquid to gas (evaporation-positive), define $q''_\ell$ and $q''_g$ to be the conductive heat fluxes \emph{toward the interface} from the liquid and gas sides. For a local equilibrium interface and negligible interfacial energy storage, a schematic Stefan balance is
+\begin{equation}\label{eq:stefan}
+q''_\ell+q''_g=j\,[h_{v,I}-h_{\ell,I}]=j L_I.
+\end{equation}
+When $q''_\ell$ and $q''_g$ are resolved from gradients, Eq.~\eqref{eq:stefan} may determine $j$ together with saturation and diffusion conditions. When film correlations are used, $q''_k=h_k(T_k-T_I)$ under the defined sign conventions. For a noncondensable gas, the diffusion-controlled flux and energy balance must be solved consistently for the unknown interface temperature/composition. \textbf{Do not simultaneously impose} an independently chosen $j$ from Sherwood and $j=(q''_\ell+q''_g)/L_I$ \emph{without solving their compatibility}. Otherwise the energy balance can be violated.
+
+\section{Paper-by-paper critical summaries: ten supplied publications}
+\subsection{1. Sirianni and Re (2026): simultaneous finite-rate BN relaxation}
+\textbf{Citation:} G. Sirianni and B. Re, \emph{Efficient solution of mechanical and thermo-chemical finite-rate relaxation for compressible liquid-vapor flows under arbitrary equations of state}, \emph{Journal of Computational Physics} 545 (2026) 114467. DOI \href{https://doi.org/10.1016/j.jcp.2025.114467}{10.1016/j.jcp.2025.114467} \cite{SirianniRe2026}.
+
+\textbf{Model and numerical contribution.} The full seven-equation Baer--Nunziato model permits pressure, velocity, thermal, and chemical disequilibrium. The paper proposes an efficient analytic solution of a linearized stiff relaxation ODE, with adaptive stepping and a generic EOS. Its principal contribution is the relaxation \emph{integrator}; it does not comprehensively validate a universal constitutive coefficient closure.
+
+\textbf{Direct coefficient evidence.} Section 5.3, Eqs.~(22)--(25), gives an illustrative pressure relaxation coefficient $\mu=6\alpha_2/(\pi d_p\rho_2c_2)$ inspired by acoustic impedance, a drag-based velocity rate, and a thermal rate based on $Q=\xi A_I[T_{\rm sat}(P_2)-T_1]$ with $A_I=6\alpha_2/d_p$ and $\xi$ taken from $Nu$. It estimates $\theta\approx Q/(T_2-T_1)$, followed by a mass-transfer rate estimated from the heat-transfer enthalpy balance and $\nu\approx \dot m/(g_2-g_1)$. The printed expression for $\xi$ appears dimensionally ambiguous in the extracted text: dimensional consistency requires $\xi=Nu\,k_1/d_p$, not $Nu/(k_1d_p)$. Cross-check the source page before transcribing.
+
+\textbf{Results and transferability.} In an MDM nozzle example, smaller droplets have faster thermal and chemical relaxation, and the transient solution changes appreciably with diameter. This shows sensitivity to physically based closure functions; it does not establish transferability to water--air shock--droplet dynamics. The formulation has separate phase velocities, unlike a strictly single-velocity solver. The chosen phase interface may be a population of droplets rather than a directly tracked reconstructed interface.
+
+\textbf{Recommendation.} Use this as a main precedent for mapping physical fluxes to thermodynamic relaxation coefficients and for checking dimensions. Do not copy the nozzle constants or spherical dispersed-area formula directly to a resolved, deformed cylindrical drop.
+
+\subsection{2. De Lorenzo, Lafon and Pelanti (2019): arbitrary-rate two-phase relaxation with interfacial morphology}
+\textbf{Citation:} M. De Lorenzo, Ph. Lafon, and M. Pelanti, \emph{A hyperbolic phase-transition model with non-instantaneous EoS-independent relaxation procedures}, \emph{Journal of Computational Physics} 379 (2019) 279--308. DOI \href{https://doi.org/10.1016/j.jcp.2018.12.002}{10.1016/j.jcp.2018.12.002} \cite{DeLorenzo2019}.
+
+\textbf{Key equations.} Section 4.2 explicitly sets $\Phi^{\rm th}_{2\to1}=h A_{\rm int}(T_2-T_1)$ (Eq.~40) and includes this flux in the phasic first law (Eq.~41), while imposing dynamic pressure equilibrium (Eq.~42). This is the cleanest direct evidence that a conventional Nusselt-derived $h$ can enter the relaxation ODE. Section 4.3 uses an interfacial mass flux $G_{1\to2}A_{\rm int}$ (Eqs.~47--48), derives an EOS-consistent mass/energy/pressure/temperature system, and presents a Gibbs-difference mass-relaxation law in Eq.~61.
+
+\textbf{Strength.} The interfacial area explicitly couples flow morphology to the thermodynamic rate; the paper avoids requiring simplistic EOS relations. The chemical subsystem is built to conserve mixture mass and energy and to preserve pressure equilibrium and the post-thermal-stage temperature difference.
+
+\textbf{Limitations.} Mechanical and thermal stages are sequential; thermal transfer is assumed completed or separately represented before the mass step. Its stated chemical rate law is a thermodynamic driving law, not a universal microscopic prediction of $\Theta_g$. The mass closure still needs calibration or a physical model. Mixing large-scale film coefficients with geometric sharp interface fluxes requires care. \textbf{Recommendation:} study Eqs.~40--46 and 47--62 together when implementing a consistent $Nu/Sh\to\vartheta,\nu$ mapping.
+
+\subsection{3. Pelanti (2026): three-phase LVG finite-rate chemical relaxation}
+\textbf{Citation:} M. Pelanti, \emph{Numerical relaxation techniques for mass transfer in three-phase liquid-vapor-gas flows}, \emph{Computers \& Fluids} 305 (2026) 106893. DOI \href{https://doi.org/10.1016/j.compfluid.2025.106893}{10.1016/j.compfluid.2025.106893} \cite{Pelanti2026}.
+
+\textbf{Core contribution.} Extends the arbitrary-rate mass relaxation operator to liquid, vapor, and an inert gaseous component with separate phasic descriptions and a common velocity. The governing relaxation sources have pressure differences, temperature differences, and Gibbs-free-energy differences (Eq.~2). The finite-rate procedure derives a tractable exponential mass-relaxation update while preserving equilibrium constraints and mixture energy.
+
+\textbf{Important assumption.} The examples assume instantaneous mechanical relaxation and, for the finite-rate chemical step, instantaneous temperature equilibration of liquid/vapor or all phases (Section 4). Their nominal characteristic times obey $\tau_\mu\ll\tau_\vartheta\ll\tau_\nu$. This limits how directly one can treat independently finite thermal and chemical transfer with distinct boundary-layer physics.
+
+\textbf{Physical-closure gap.} The article handles a prescribed finite chemical relaxation parameter $\nu$; it does not, by itself, give a universally predictive interfacial transfer law for a single deforming water interface in air. With a noncondensable species, the vapor \emph{partial} chemical potential and the gas mixture species fraction must be used consistently. The physical mass flux may be set by vapor diffusion, kinetic accommodation, or heat supply, depending on conditions. \textbf{Recommendation:} use this paper as the closest \emph{mathematical operator} reference, then attach a film/Stefan flux closure with an explicitly computed interface area.
+
+\subsection{4. Liao and Lucas (2018): heat-transfer correlations in flashing flow}
+\textbf{Citation:} Y. Liao and D. Lucas, \emph{Evaluation of Interfacial Heat Transfer Models for Flashing Flow with Two-Fluid CFD}, \emph{Fluids} 3 (2018) 38. DOI \href{https://doi.org/10.3390/fluids3020038}{10.3390/fluids3020038} \cite{LiaoLucas2018}.
+
+\textbf{Main physics.} Reviews models of bubble growth in superheated liquids, comparing conduction-dominated, convection-dominated, and combined descriptions. In its Eqs.~1--5, mass flux is related to interface heat input through latent heat, with conduction and rising-bubble growth setting an effective interfacial $h$. Section 3 compares correlations based on $Ja$, $Pe$, $Re$, $Pr$, and Ranz--Marshall (Eq.~24). It identifies regimes where clean and contaminated bubbles respond differently and where Ranz--Marshall may underpredict clean-bubble heat transfer.
+
+\textbf{Relevance and limits.} Very useful if the interface creates a \emph{vapor bubble growing in superheated liquid}, rather than a water droplet evaporating into air. It cautions against one universal $Nu$ correlation. Correlations calibrated for isolated rising bubbles cannot be assumed valid for highly compressed, shock-driven, strongly deformed liquid surfaces. \textbf{Recommendation:} use it to select a regime-specific liquid-side $Nu$ and quantify correlation sensitivity; do not treat the reported empirical constants as mechanistic universal laws.
+
+\subsection{5. Sirianni (2026), thesis Chapter 5: rate parameter estimation}
+\textbf{Citation:} G. A. G. Sirianni, \emph{Disequilibrium Two-Phase Flows: Efficient Solution and Relaxation Interphase Transfer Model Assessment}, PhD dissertation, Politecnico di Milano (2026), supplied Chapter 5 \cite{SirianniThesis2026}.
+
+\textbf{Especially useful locations.} Section 5.1.2 explains the problem explicitly: conventional transfer models predict $\dot Q_k$ and $\dot m$, but are usually not written as relaxation parameters. Eqs.~5.4--5.5 introduce two interfacial thermal resistances $\dot Q_k^{\rm lit}=R_k(T_I-T_k)$ and a latent-enthalpy balance to determine $\dot m^{\rm lit}$. Eqs.~5.6--5.7 map these physical fluxes onto $\theta_k$ and the chemical relaxation coefficient $\epsilon$. Section 5.3.2, Eqs.~5.43--5.46, applies side-specific Nusselt coefficients $\xi_k=Nu_k k_k/d_p$ and explicitly derives the mass source from the interface heat balance.
+
+\textbf{Substantive limitation.} The thesis notes that in some metastable states both sides can transfer heat toward an interface colder than either phase. Under the chosen asymmetric relaxation structure, reproducing such flux signs would require a negative $\theta_k$, disallowed by its modeling assumptions (near printed p.~105). This matters directly to attempts to force two independent interfacial heat fluxes into a one-temperature-difference thermodynamic source.
+
+\textbf{Modeling caveat.} A later hot-air droplet experiment is represented as a cloud and the air replaced by pure vapor due to the two-phase model assumptions; the thesis acknowledges the approximation. That exercise is not a validation for noncondensable-gas diffusion in the requested LVG setting. \textbf{Recommendation:} use the two-resistance *interfacial balance* as physics, but revisit source splitting and entropy production rather than copying $\theta_k=Q_k/(T_j-T_k)$ indiscriminately.
+
+\subsection{6. Abramzon and Sirignano (1989): convecting-droplet evaporation and Stefan-flow correction}
+\textbf{Citation:} B. Abramzon and W. A. Sirignano, \emph{Droplet vaporization model for spray combustion calculations}, \emph{International Journal of Heat and Mass Transfer} 32 (1989) 1605--1618. DOI \href{https://doi.org/10.1016/0017-9310(89)90043-4}{10.1016/0017-9310(89)90043-4} \cite{AbramzonSirignano1989}.
+
+\textbf{Technical content.} Treats finite-rate droplet evaporation with variable film thermophysical properties, nonunit Lewis number, vapor blowing (Stefan flow), transient liquid heating, and internal circulation. The classical heat and mass transfer correlations are modified using effective film factors $F_T,F_M$, with $Nu^*=2+(Nu_0-2)/F_T$, $Sh^*=2+(Sh_0-2)/F_M$ (Eqs.~10--11). The evaporation rate depends logarithmically on the Spalding mass-transfer number $B_M$ (Eq.~8), not just a naive concentration difference.
+
+\textbf{Usefulness.} A high-priority candidate for the gas-side transfer closure of water drops evaporating into a vapor--inert mixture. It handles the important coupling between species diffusion and convective vapor outflow. It requires a meaningful far-field gas condition, a characteristic droplet length, and sufficiently smooth gas-film physics. \textbf{Recommendation:} prefer the complete film-corrected model over the uncorrected $Sh=2+0.6\sqrt{Re}Sc^{1/3}$ if Stefan flow is strong. Confirm validity under shock-wave transients before adopting a steady correlation.
+
+\subsection{7. Hurisse and Quibel (2021): liquid--water-vapor--inert two-fluid relaxation}
+\textbf{Citation:} O. Hurisse and L. Quibel, \emph{Simulations of liquid-vapor water flows with non-condensable gases on the basis of a two-fluid model}, \emph{Applied Mathematical Modelling} 99 (2021) 514--537. DOI \href{https://doi.org/10.1016/j.apm.2021.06.020}{10.1016/j.apm.2021.06.020} \cite{HurisseQuibel2021}.
+
+\textbf{Model.} Liquid water and a miscible steam--noncondensable-gas mixture are described as two fluids; gas species have common gas temperature and velocity, but liquid and gas may remain in full disequilibrium. Thermodynamic closures emphasize the gas-mixture partial pressures and entropy inequality. The authors propose a mass-transfer source convenient for numerical integration and examine the effect of relaxation time scales in a depressurization (SUPERCANON-like) application.
+
+\textbf{Rate evidence.} Section 4.3 considers thermal relaxation times in the approximate range $10^{-7}$--$10^{-4}\,\mathrm{s}$, and Section 4.5 introduces a nonuniform empirical mass-relaxation time $\lambda_m$ depending on vapor volume fraction and the departure from saturation (Eq.~53). These are adjusted to capture the observed depressurization trends; they are \emph{not} derived from Nusselt/Sherwood data. Results are sensitive to EOS quality and the chosen time scales.
+
+\textbf{Relevance.} Excellent comparator for the underlying LVG thermodynamics and for sensitivity studies; much less direct as a predictive interfacial transport closure. \textbf{Recommendation:} keep the empirical time model as a baseline test, not the preferred constitutive law for a resolved shock--water-drop surface.
+
+\subsection{8. Bure\v{s} and Sato (2021): geometrically sharp interface and diffusion}
+\textbf{Citation:} L. Bure\v{s} and Y. Sato, \emph{Direct numerical simulation of evaporation and condensation with the geometric VOF method and a sharp-interface phase-change model}, \emph{International Journal of Heat and Mass Transfer} 173 (2021) 121233. DOI \href{https://doi.org/10.1016/j.ijheatmasstransfer.2021.121233}{10.1016/j.ijheatmasstransfer.2021.121233} \cite{BuresSato2021}.
+
+\textbf{Direct equations.} In Section 2.1, $s_m=j_m\varphi_\gamma$ with $\varphi_\gamma$ the geometrically calculated interface area density (their Eq.~5). Section 2.3, Eq.~23 computes interfacial phase-change mass flux from the imbalance of liquid- and gas-side temperature gradients divided by latent heat. Section 2.4 solves gas-side noncondensable species transport with zero inert species penetration at the interface. Subgrid-accurate interface reconstruction is central to computing gradients, and the paper validates Stefan-type cases and rising-bubble problems.
+
+\textbf{Transferability.} This is the best numerical precedent in the set for sharp geometric VOF coupled to physical fluxes and species transport. The solver is incompressible, so the exact energy/momentum treatment must be rederived for a compressible shock-driven flow. It is not a conventional Nu/Sh closure; its point is that resolved gradients can replace empirical film coefficients in a DNS-like calculation.
+
+\textbf{Recommendation.} Before imposing a correlation, check whether your compressible solver resolves the thermal and concentration boundary layers. If so, compute one-sided face/interface gradients and use a conservative interfacial flux instead of an extra volumetric relaxation on top of diffusion.
+
+\subsection{9. Chen (2025): noncondensable gas and interfacial kinetic resistance}
+\textbf{Citation:} G. Chen, \emph{Interfacial Temperature and Density Discontinuities for Phase-Change Heat Transfer With Noncondensable Gas} (2025), DOI \href{https://doi.org/10.1115/1.4068720}{10.1115/1.4068720} \cite{Chen2025}.
+
+\textbf{Physics.} Derives molecular kinetic interface conditions for vapor and inert molecules, generalizing a Schrage-type mass flux with a coupled interfacial heat condition. Eqs.~7--9 link vanishing inert-species interfacial flux, vapor phase change, and heat transfer; continuum bulk diffusion and heat transport are coupled to these conditions in Section 3. Unlike models assuming $T_{\ell,I}=T_{g,I}$, the formulation can produce temperature and density jumps.
+
+\textbf{Implications.} A finite transfer rate may be \emph{interfacial kinetic limited}, \emph{gas diffusion limited}, or both. A Sherwood correlation only models bulk-side gas transport resistance. For air-rich gas it is often a strong contributor, but interface accommodation may matter at small scales or far from equilibrium. The paper is not directly derived as a Pelanti $\nu$ coefficient; combining transport resistances requires solving the interface state consistently.
+
+\textbf{Recommendation.} Use as the advanced closure when a saturation-interface approximation becomes unreliable; introduce kinetic accommodation resistance only when a parameter can be physically justified or bounded.
+
+\subsection{10. Vijaya Kumar et al. (2021): condensation with noncondensable gas}
+\textbf{Citation:} G. Vijaya Kumar et al., \emph{Implementation of a CFD model for wall condensation in the presence of non-condensable gas mixtures}, \emph{Applied Thermal Engineering} 187 (2021) 116546. DOI \href{https://doi.org/10.1016/j.applthermaleng.2021.116546}{10.1016/j.applthermaleng.2021.116546} \cite{VijayaKumar2021}.
+
+\textbf{Model.} Treats multicomponent vapor condensation as largely controlled by noncondensable-gas diffusion-layer resistance in its studied wall-condensation regime. It solves species convection/diffusion and compares imposing condensation as a volumetric source versus an interface-face flux. It uses an interface impermeable to the noncondensable species, and computes local condensation from near-interface transport. The paper reports better accuracy, efficiency, and reduced grid dependence for its face-flux implementation.
+
+\textbf{Limitations.} This is condensation on a stationary wall or liquid film in lower-Mach gas flow, not an arbitrary moving droplet struck by a shock. The assumed negligible liquid-film resistance is not universally valid. Nonetheless the source consistency and species boundary conditions are highly relevant.
+
+\textbf{Recommendation.} Prefer a conservative interface flux application whenever the numerical architecture permits it, with an explicit inert-species no-penetration condition and proper species enthalpy flux.
+
+\section{Cross-paper synthesis and evidence strength}
+\small
+\begin{longtable}{p{0.21\linewidth}p{0.28\linewidth}p{0.37\linewidth}}
+\toprule
+\textbf{Reference} & \textbf{Strongest contribution for rates} & \textbf{What it does not establish}\\\midrule\endfirsthead
+\toprule\textbf{Reference}&\textbf{Strongest contribution for rates}&\textbf{What it does not establish}\\\midrule\endhead
+Sirianni--Re & Nusselt-based $\theta,\nu$ estimates; diameter-dependent BN rate & Validated universal transport closure under shocks\\
+De Lorenzo et al. & $h A_I\Delta T$ in a mechanical/thermal/chemical relaxation formulation & Universal $h$ or chemical time $\Theta_g$\\
+Pelanti (2026) & LVG arbitrary-rate Gibbs-relaxation integrator & Physical calculation of $\nu$ from $Nu$ or $Sh$\\
+Liao--Lucas & Comparison of liquid-side bubble $Nu$ correlations and limits & Single universal $Nu$ across morphologies\\
+Sirianni thesis & Two-resistance transfer and coefficient mapping; sign limitations & Guaranteed positive mapped coefficients in metastable states\\
+Abramzon--Sirignano & $Nu/Sh$ with Stefan-blowing and droplet heat-up & Instant validity in strong shock transients\\
+Hurisse--Quibel & LVG disequilibrium and empirically calibrated $\tau_m$ & Parameter-free physical relaxation times\\
+Bure\v{s}--Sato & Geometric area plus resolved interfacial heat/species gradients & Compressible-shock validation\\
+Chen & Molecular kinetic interfacial flux jumps with inert gas & Direct BN coefficient without interface-state solution\\
+Vijaya Kumar et al. & Diffusion-limited condensation, conservative face flux & Moving, curved water drop dynamics\\\bottomrule
+\end{longtable}
+\normalsize
+
+\section{Proposed implementation architecture for the target solver}
+\subsection{Step 0: audit the actual PDEs}
+Determine whether the compressible code solves thermal conduction in each phase, diffusion of vapor relative to inert gas, and species enthalpy transport. Document whether the relaxation operator acts in mixed VOF cells, reconstructed geometric interface cells, or each phase's bulk. A Nu/Sh film closure should model \emph{unresolved} transport, not add heat/mass exchange to already resolved fluxes.
+
+\subsection{Step 1: geometry and thermodynamic interface state}
+\begin{enumerate}
+\item Reconstruct interface normal $\bm n$, area $A_I$, curvature $\kappa$, and appropriate adjacent gas/liquid states.
+\item Compute $T_I,p_{\ell,I},p_{g,I},Y_{v,I}$ from mechanical jump conditions and chemical equilibrium at the interface, using a consistent liquid EOS and vapor chemical potential. When capillarity is negligible use $p_{\ell,I}\simeq p_{g,I}$; for small radii consider the Laplace/Kelvin effect.
+\item Decide whether interfacial kinetic temperature jumps are neglected (local-equilibrium interface) or represented with an accommodation closure.
+\end{enumerate}
+
+\subsection{Step 2: two defensible flux models}
+\textbf{Model A: unresolved boundary-layer film closure.} Calculate $Nu,Sh$ from an applicability-checked local configuration, then
+\begin{equation}
+h_\ell=Nu_\ell k_\ell/d,\quad h_g=Nu_gk_g/d,\quad
+k_m=Sh D_{va}/d.
+\end{equation}
+Use the two-sided thermal fluxes $q''_\ell=h_\ell(T_{\ell,b}-T_I)$, $q''_g=h_g(T_{g,b}-T_I)$ together with Eq.~\eqref{eq:cond} and Eq.~\eqref{eq:stefan}; solve the coupled interface state and net transfer. In the dilute limit a linear concentration law may suffice; otherwise use the logarithmic Stefan flux and possibly Abramzon--Sirignano modified numbers.
+
+\textbf{Model B: resolved-gradient closure.} Compute one-sided conductive fluxes and gas species diffusive flux using reconstructed interface gradients and apply a coupled Stefan boundary condition as in Bure\v{s}--Sato. This is appropriate only if spatial/temporal resolution and the species equations support it. A hybrid model can resolve one side and parameterize the other, but its resistances must be distinguished.
+
+\subsection{Step 3: preserve conservation and entropy production}
+For each interface element $A_I$:
+\begin{enumerate}
+\item Apply equal and opposite water mass exchange to liquid and vapor; inert-gas mass exchange is zero.
+\item Apply interface-consistent mass-carried enthalpy and heat fluxes, with mixture total energy remaining conserved in a closed relaxation step.
+\item Compute the induced change in liquid volume, gas composition, and thermodynamic state. Use EOS-consistent inversion of the conservative variables.
+\item Verify $\Delta S_{\rm total}\ge0$ for each isolated relaxation step under the chosen closure. A positive $\nu$ and $\vartheta$ are sufficient for specific Pelanti-style constructions only when the accompanying interface quantities and other assumptions satisfy the model's entropy conditions.
+\end{enumerate}
+
+\subsection{Step 4: use the physical flux directly or project it onto relaxation coefficients}
+\textbf{Best physics-first implementation:} use $\mcal=\area\jcond$ and the corresponding interfacial energy flux in the conservative source ODEs, rather than automatically forcing $\mcal=\nu\Delta g$. If the existing Pelanti operator \emph{requires} the latter form, use the near-equilibrium coefficient Eq.~\eqref{eq:nu} and a sign-checked far-from-equilibrium secant only where well conditioned. This distinction will be particularly important in cells where $\Delta g\to0$ or when $T_g\ne T_\ell$.
+
+\subsection{Step 5: obtain consistent local time scales}
+For the actual relaxation state $\bm z$ (e.g., phase masses, energies, fractions) write $\dot{\bm z}=\bm S(\bm z)$ and linearize about an equilibrium state $\bm z_*$:
+\begin{equation}\label{eq:jac}
+\frac{\dif}{\dif t}\delta\bm z=\bm J\,\delta\bm z,\qquad
+\bm J=\left.\frac{\partial\bm S}{\partial\bm z}\right|_{\bm z_*}.
+\end{equation}
+The nonzero eigenvalues of $\bm J$ give physically consistent linearized decay rates; exact zero modes correspond to conserved quantities. Compare these with Pelanti's analytical $K_T,K_g$ and \emph{do not} equate raw $\nu$ to $1/\tau_g$.
+
+\section{Numerical and physical experiments to run}
+\begin{enumerate}
+\item \textbf{Uniform zero-dimensional relaxation:} prove mass, inert-mass, momentum, energy conservation, monotone entropy production, and correct equilibrium limit. Explore evaporation and condensation for varied $Y_v$, $T$, $p$, and phase fractions; include $\Delta g\approx0$.
+\item \textbf{Pure water into dry or humid air, planar interface:} prescribed interface temperature; compare the numerical source to Eq.~\eqref{eq:ste}, including near-equilibrium sign and magnitude. Test different $p_v/p$ and Stefan correction.
+\item \textbf{Single spherical droplet, low-speed limit:} with known temperature and composition, compare $Nu/Sh\to2$ behavior, the $d^2$ evaporation trend where assumptions apply, and Abramzon--Sirignano predictions.
+\item \textbf{Two-sided interface Stefan problem:} compare $j=(q_\ell''+q_g'')/L$ with independent gas diffusion; solve the interface temperature rather than prescribing incompatible independent fluxes.
+\item \textbf{Grid refinement of a reconstructed sharp interface:} monitor total transfer $\sum_c \mcal_c V_c=\sum_c j_c A_{I,c}$ and verify that integrated transfer converges even though $a_{\mi,c}\sim1/\Delta x$ in cut cells.
+\item \textbf{Shock--cylindrical-drop sensitivity:} report $Nu,Sh,Re,Pr,Sc,\area,\nu,\vartheta$, and effective $\tau$ fields; diagnose fast pressure transients, transient boundary layers, strong deformation, and lack of reliable quasi-steady correlations.
+\item \textbf{Unresolved nucleation/micro-mist:} distinguish resolved parent-interface evaporation from subgrid nucleation. A resolved VOF area cannot describe the latent area of newly formed droplets or bubbles that are not reconstructed.
+\end{enumerate}
+
+\section{Potential failure modes and open questions}
+\begin{itemize}
+\item \textbf{Same-velocity problem:} A single-velocity multiphase model generally does not predict phase slip. The velocity scale needed in $Re_d$ may need to come from nearby gas flow relative to an interface tracking velocity, not directly from $u_g-u_\ell$ in the same cell.
+\item \textbf{Transient transfer:} Immediately after shock impact, the gas thermal/diffusion boundary layer is not in a quasi-steady spherical state. Transient conduction $h\sim k/\sqrt{\pi\alpha t}$ can be a more appropriate early-time scaling in appropriate geometries; it requires a physical time-since-exposure or unsteady transport model.
+\item \textbf{Rate sign:} The correct thermodynamic driving force is the vapor partial chemical potential relative to liquid. For $p_v>p_{v,I}^{\rm eq}$ at fixed $T$, condensation is positive; inconsistent signs can make $\nu$ negative and violate entropy constraints.
+\item \textbf{Thermal/mass coupling:} Gas film heat and species mass transfer are coupled by Stefan flow, sensible enthalpy, latent heat, and interface temperature. Two independently evaluated rates may violate conservation.
+\item \textbf{Cavitation and new phase appearance:} Neither $Nu$ nor $Sh$ creates absent nuclei. A separate nucleation/cavitation model is required when new interfacial area is formed in otherwise pure-phase regions.
+\item \textbf{Capillarity and high compressibility:} Interface pressure differences and fast waves can invalidate simple isobaric diffusion film models. Corrections must be regime-specific.
+\item \textbf{EOS and composition:} Chemical potential must use a rigorous reference convention; for ideal binary gas, $p_v$ differs from total gas pressure. Mechanical/thermal equilibrium cannot be imposed indiscriminately if independent finite transport is intended.
+\end{itemize}
+
+\section{Priority decisions and remaining research tasks}
+\begin{enumerate}
+\item \textbf{Recommend as baseline:} implement physical interface geometry $A_I/V$ and a Nu-based $\vartheta$ for an unresolved sensible-transfer film; compute the physical chemical mass flux from a Stefan-corrected Sh model using $Y_{v,I}$ from saturation/chemical equilibrium.
+\item \textbf{Before introducing $\nu$:} derive from the actual source state and EOS the relationship between $\Delta g$ and $Y_v$ (or use Eq.~\eqref{eq:nu} in the ideal, common-temperature limit); check entropy. Avoid naive divisions by vanishing Gibbs differences.
+\item \textbf{Most important methodological decision:} whether to retain the existing semi-exact Pelanti chemical relaxation ODE with a state-dependent $\nu$, or to use an interfacial conservative mass flux plus a new energy-consistent source integration. The latter may be more physically direct, but is not automatically compatible with all assumptions behind the original exponential solution.
+\item \textbf{Need further verification:} evaluate geometric and flow-condition applicability of Ranz--Marshall/Abramzon--Sirignano to a 2D cylindrical shock--droplet; inspect the exact implementation of the gas enthalpy species flux; read the remaining bubble growth/time-scale papers for alternate nucleation/thermal times.
+\item \textbf{Missing model inputs:} physical droplet diameter/radius or local curvature scale, transport coefficients $k_\ell,k_g,D_{va}$, resolved diffusivity equations, interface temperature and contact pressure, actual local vapor mass fraction, and a physical measure of surrounding gas--interface relative flow.
+\end{enumerate}
+
+\section{Bibliography of the ten uploaded items (and original formulation)}
+\begin{thebibliography}{99}
+\bibitem{SirianniRe2026} G. Sirianni and B. Re, ``Efficient solution of mechanical and thermo-chemical finite-rate relaxation for compressible liquid-vapor flows under arbitrary equations of state,'' \emph{Journal of Computational Physics} 545 (2026) 114467. \url{https://doi.org/10.1016/j.jcp.2025.114467}.
+\bibitem{DeLorenzo2019} M. De Lorenzo, Ph. Lafon, and M. Pelanti, ``A hyperbolic phase-transition model with non-instantaneous EoS-independent relaxation procedures,'' \emph{Journal of Computational Physics} 379 (2019) 279--308. \url{https://doi.org/10.1016/j.jcp.2018.12.002}.
+\bibitem{Pelanti2026} M. Pelanti, ``Numerical relaxation techniques for mass transfer in three-phase liquid-vapor-gas flows,'' \emph{Computers \& Fluids} 305 (2026) 106893. \url{https://doi.org/10.1016/j.compfluid.2025.106893}.
+\bibitem{LiaoLucas2018} Y. Liao and D. Lucas, ``Evaluation of Interfacial Heat Transfer Models for Flashing Flow with Two-Fluid CFD,'' \emph{Fluids} 3 (2018) 38. \url{https://doi.org/10.3390/fluids3020038}.
+\bibitem{SirianniThesis2026} G. A. G. Sirianni, \emph{Disequilibrium Two-Phase Flows: Efficient Solution and Relaxation Interphase Transfer Model Assessment}, doctoral dissertation, Politecnico di Milano (2026), supplied Chapter 5. \url{https://www.politesi.polimi.it/bitstream/10589/248617/1/thesis.pdf}.
+\bibitem{AbramzonSirignano1989} B. Abramzon and W. A. Sirignano, ``Droplet vaporization model for spray combustion calculations,'' \emph{International Journal of Heat and Mass Transfer} 32 (1989) 1605--1618. \url{https://doi.org/10.1016/0017-9310(89)90043-4}.
+\bibitem{HurisseQuibel2021} O. Hurisse and L. Quibel, ``Simulations of liquid-vapor water flows with non-condensable gases on the basis of a two-fluid model,'' \emph{Applied Mathematical Modelling} 99 (2021) 514--537. \url{https://doi.org/10.1016/j.apm.2021.06.020}.
+\bibitem{BuresSato2021} L. Bure\v{s} and Y. Sato, ``Direct numerical simulation of evaporation and condensation with the geometric VOF method and a sharp-interface phase-change model,'' \emph{International Journal of Heat and Mass Transfer} 173 (2021) 121233. \url{https://doi.org/10.1016/j.ijheatmasstransfer.2021.121233}.
+\bibitem{Chen2025} G. Chen, ``Interfacial Temperature and Density Discontinuities for Phase-Change Heat Transfer With Noncondensable Gas'' (2025). \url{https://doi.org/10.1115/1.4068720}.
+\bibitem{VijayaKumar2021} G. Vijaya Kumar, L. M. F. Cammiade, S. Kelm, K. A. Prakash, E. M. Gro\ss{}, H.-J. Allelein, R. Kneer, and W. Rohlfs, ``Implementation of a CFD model for wall condensation in the presence of non-condensable gas mixtures,'' \emph{Applied Thermal Engineering} 187 (2021) 116546. \url{https://doi.org/10.1016/j.applthermaleng.2021.116546}.
+\bibitem{Pelanti2022} M. Pelanti, ``Arbitrary-rate relaxation techniques for the numerical modeling of compressible two-phase flows with heat and mass transfer,'' \emph{International Journal of Multiphase Flow} 153 (2022) 104097. \url{https://doi.org/10.1016/j.ijmultiphaseflow.2022.104097}. Original paper previously supplied by the user; included for baseline equations, outside the ten-paper count.
+\end{thebibliography}
+\end{document}

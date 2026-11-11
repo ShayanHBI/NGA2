@@ -514,3 +514,9 @@ Documented in `examples/amrcomp_impact/overshoot_rules_gpu_friendly.md`; code in
 - `trace.py`: `load(run_dir)` returns probe states per (i, j, step, stage) and the parsed `[TR]`, `[PP]`, `[MQ]` and `[splitremix dbg]` records. Run with `python -I` from the tools directory or add it to `sys.path`.
 - `cellwin.py <amrviz case dir> i j [hi] [hj]`: field window around a cell for every frame. `pocket.py`: gas region connected to a cell, binned by VF. `neigh.py`: mixed cells against their pure-gas face neighbours, binned by VF.
 - `replay_split.f90` (whole-cell vs one split-remix call) and `replay_repeat.f90` (60 repeated calls), case EOS and relaxation settings; input `cells.dat` lines `tag VF Pjump Q(1:8)`. Build with `bash build.sh` / `bash build_repeat.sh` (case flags, sources from `src/` and `examples/eos_relax/`).
+
+## 11. relax_igmix_nasg p_relax / pT_relax changed (2026-11-09)
+The reactor's relaxation (`relax_igmix_nasg`) now conserves E_l+E_g+Pjump*V_l in `p_relax` and `pT_relax` (liquid works
+at p_I, gas at p_I-Pjump), uses a cancellation-free quadratic root, and no longer rejects cells with a negative liquid
+energy. Details and verification: `src/thermo/max_ent_open_items.md` item 9. Results of amrcomp_impact and cavitation
+runs made before this change are not reproducible with the current code; neither case has been rerun yet.
