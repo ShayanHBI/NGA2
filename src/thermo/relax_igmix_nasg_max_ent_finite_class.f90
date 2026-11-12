@@ -82,7 +82,7 @@ contains
       if (this%pI_mode.eq.pI_end) then
          call nasg_relax_M(this,this%bL,VF,Q,Pjump,ierr)
       else
-         call this%iterate(1,VF,Q,Pjump,ierr)
+         call this%NR_stage_block(1,VF,Q,Pjump,ierr)
       end if
    end subroutine relax_M
 

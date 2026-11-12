@@ -18,9 +18,11 @@ code and the tex (PDF rebuilt), verified on the eos_relax drivers and scratch dr
   - `max_ent_apply`: `admissible(VF,Q,Pjump,ierr)` start check before p, pT, pTg (base: `get_state`). pTg near-pure cells
     (VF<0.01 or >0.99) are relaxed only if seeded; unseeded two-phase -> `RELAX_DEGENERATE` (split-remix reactor takes them),
     unseeded pure -> `RELAX_OK` (single phase is the S maximum, eq. nuc_cond). `RELAX_NUC_FAILED` only when a seed was undone.
-  - `relax_M` default `pI_end`: `iterate_pI_end`, damped Newton in (delta,p*) on R_l=p_l-p*, R_g=p_g+p_j-p* (tex: Mechanical
+  - `relax_M` default `pI_end`: `NR_stage_pI_end`, damped Newton in (delta,p*) on R_l=p_l-p*, R_g=p_g+p_j-p* (tex: Mechanical
     stage with p_I=p* for a general equation of state, eqs. mech_path, mech_end, mech_newton); = NASG closed form to 5e-12,
-    max 6 iterations, dS>=0. Other `pI_mode` keep `iterate(1)` with p_I held at the start (comment: no dS>=0 guarantee).
+    max 6 iterations, dS>=0. Other `pI_mode` keep `NR_stage_block(1)` with p_I held at the start (comment: no dS>=0 guarantee).
+  - `iterate` renamed `NR_stage_block`, `iterate_pI_end` renamed `NR_stage_pI_end`, `closure_restore` renamed `restore_faster_eq`, `closure_pelanti` renamed `energy_split`, `chemical_transfer_exact` renamed `finite_stage_C` (user): damped Newton on the stand-alone leading ns x ns block; older blocks below keep the old name.
+  - `eliminate` lost its unused `mv`, `logm` arguments (user); `bench_stages` stageA does its ln m_v mass step itself.
   - `force_tol(st,k,Pjump)` factored out of `converged` (eq. conv_tol, now in the tex with the pivot rule).
   - Comments fixed: `get_dir` (p_I=p_l only for relax_C), p_I option rationale.
 - `relax_igmix_nasg_max_ent_inst`: closed `admissible` (`nasg_admissible`: masses, 0<VF<1, W0>0, T_l>0, T_g>0; before, the
@@ -35,7 +37,7 @@ code and the tex (PDF rebuilt), verified on the eos_relax drivers and scratch dr
     Tex paragraph "Choice of the solution". Rejected after tests: consumption-only rule (nearly dry evaporation 97-100% wrong),
     seeding a dry gas then exponential (the seed, not nu, sets the evaporation).
   - Zero chemical rate returns before any root search. tauC is in the tex now (relaxation-time paragraph), not a departure.
-  - `closure_restore` default; `closure_pelanti` kept as Pelanti's model, comment says it leaves T_l/=T_g (by design).
+  - `restore_faster_eq` default; `energy_split` kept as Pelanti's model, comment says it leaves T_l/=T_g (by design).
   - The frozen-path solution is meant for small rates (user): at nu*K*dt>=10 it can pass the equilibrium by ~1.3% of the
     transfer; accepted.
 - `relax_igmix_nasg_max_ent_finite`: closed `admissible`; duplicate ierr line removed. Finite pT now agrees with the agnostic

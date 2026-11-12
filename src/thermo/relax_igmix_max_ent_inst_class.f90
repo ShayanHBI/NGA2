@@ -30,7 +30,7 @@ module relax_igmix_max_ent_inst_class
 
    type, extends(relax_igmix_sg) :: relax_igmix_max_ent_inst
       !> Interface-pressure closure of d_M (eq. pI_w). Default pI_end, p_I=p*: the only constant p_I whose end state is the pressure
-      !> equilibrium and the maximum of S on its path (tex: Choice of p_I), by Newton on eqs. mech_end (iterate_pI_end)
+      !> equilibrium and the maximum of S on its path (tex: Choice of p_I), by Newton on eqs. mech_end (NR_stage_pI_end)
       !> Other modes hold p_I at the start state: of these only the impedance weighting keeps K^M>0 except at extreme forces
       !> (tex Algorithm step 2), and the end state is not the maximum of S on its path (eq. FM_end), so p-only does not
       !> guarantee dS>=0 when T_l and T_g differ. A finite mechanical step uses the impedance p_I for pI_end; pT, pTg do not depend on p_I
@@ -64,8 +64,8 @@ module relax_igmix_max_ent_inst_class
       procedure :: force_tol
       procedure :: converged
       procedure :: dampedNR
-      procedure :: iterate_pI_end
-      procedure :: iterate
+      procedure :: NR_stage_pI_end
+      procedure :: NR_stage_block
       procedure :: relax_M
       procedure :: relax_MT
       procedure :: relax_C
@@ -334,7 +334,7 @@ contains
 
    !> Transfer directions at the reference state (tex: Matrix decomposition): columns d_M=[1,-p_I,0], d_T=[0,-1,0], d_C=[-v_l,-e_l,-1].
    !> With ns>=2 p_I=p_l (eqs. alg_T, alg_C): only the chemical stage on the pT-relaxed states (relax_C, ns=3) uses it;
-   !> the direct iterations (iterate) hold the p_I of pI_mode at their start state (tex: Iteration of the stages).
+   !> the direct iterations (NR_stage_block) hold the p_I of pI_mode at their start state (tex: Iteration of the stages).
    function get_dir(this,st,Pjump,ns) result(D)
       implicit none
       class(relax_igmix_max_ent_inst), intent(in) :: this
@@ -375,14 +375,12 @@ contains
 
    !> Leading ns x ns block of J^*dx~=-F^ by the elimination M->T->C (eqs. elim_V, schur_1, elim_Q, row_C), pivots -J_MM,
    !> -J'_TT, -J''_CC in K. The last transfer is omega times its Newton value (or dxs), the faster ones hold their forces.
-   subroutine eliminate(this,ns,J,F,mv,logm,omega,dx,K,ierr,dxs)
+   subroutine eliminate(this,ns,J,F,omega,dx,K,ierr,dxs)
       implicit none
       class(relax_igmix_max_ent_inst), intent(in)  :: this
       integer,                    intent(in)  :: ns
       real(WP), dimension(3,3),   intent(in)  :: J
       real(WP), dimension(3),     intent(in)  :: F
-      real(WP),                   intent(in)  :: mv
-      logical,                    intent(in)  :: logm
       real(WP),                   intent(in)  :: omega
       real(WP), dimension(3),     intent(out) :: dx,K
       integer,                    intent(out) :: ierr
@@ -425,8 +423,6 @@ contains
             K(3)=-J2
             if (K(3).le.0.0_WP) return
             dx(3)=-omega*F2/J2
-            ! Newton unknown ln m_v for the mass, K_CC~1/m_v (tex: Dilute vapor)
-            if (logm) dx(3)=mv*(exp(dx(3)/mv)-1.0_WP)
          end if
          dx(2)=-(F1(2)+J1(2,3)*dx(3))/J1(2,2)
          dx(1)=-(F(1)+J(1,2)*dx(2)+J(1,3)*dx(3))/J(1,1)
@@ -515,7 +511,7 @@ contains
       real(WP) :: du,dumax,lam,mv0,VFt
       integer :: ih
       F=st%F; mv0=st%mv
-      call this%eliminate(ns,J,F,mv0,.false.,1.0_WP,dxN,K,ierr)
+      call this%eliminate(ns,J,F,1.0_WP,dxN,K,ierr)
       if (ierr.ne.RELAX_OK) return
       ! Mass step in u=ln m_v; the liquid can give at most m_l
       du=0.0_WP; dumax=0.0_WP
@@ -529,7 +525,7 @@ contains
          if (ns.lt.3.or.(lam*du.lt.dumax.and.mv0*exp(lam*du).gt.0.0_WP)) then
             VFt=VF; Qt=Q
             if (ns.eq.3) then
-               call this%eliminate(3,J,lam*F,mv0,.false.,1.0_WP,dx,K2,ierr,dxs=mv0*(exp(lam*du)-1.0_WP))
+               call this%eliminate(3,J,lam*F,1.0_WP,dx,K2,ierr,dxs=mv0*(exp(lam*du)-1.0_WP))
                call this%transfer(D,dx,Pjump,VFt,Qt,mv=mv0*exp(lam*du))
             else
                call this%transfer(D,lam*dxN,Pjump,VFt,Qt)
@@ -545,7 +541,7 @@ contains
 
    !> Direct iteration of the leading ns block (1: M, 2: M,T, 3: M,T,C) from the current state: damped Newton steps with
    !> D held at the start (p_I of the mechanical step), EOS update at every iterate, until the first ns forces vanish
-   subroutine iterate(this,ns,VF,Q,Pjump,ierr)
+   subroutine NR_stage_block(this,ns,VF,Q,Pjump,ierr)
       implicit none
       class(relax_igmix_max_ent_inst), intent(inout) :: this
       integer,                    intent(in)    :: ns
@@ -588,7 +584,7 @@ contains
          end if
       end do
       ierr=RELAX_FAILED
-   end subroutine iterate
+   end subroutine NR_stage_block
 
    !> Mechanical stage: p_I=p* (pI_end) by Newton on eqs. mech_end, or Newton on the leading 1x1 block with p_I held at the
    !> start state (other pI_mode)
@@ -600,16 +596,16 @@ contains
       real(WP),                        intent(in)    :: Pjump
       integer,                         intent(out)   :: ierr
       if (this%pI_mode.eq.pI_end) then
-         call this%iterate_pI_end(VF,Q,Pjump,ierr)
+         call this%NR_stage_pI_end(VF,Q,Pjump,ierr)
       else
-         call this%iterate(1,VF,Q,Pjump,ierr)
+         call this%NR_stage_block(1,VF,Q,Pjump,ierr)
       end if
    end subroutine relax_M
 
    !> Mechanical stage with p_I=p*, its own end pressure (tex: Mechanical stage with p_I=p* for a general equation of state):
    !> damped Newton in (delta,p*) on R_l=p_l-p*, R_g=p_g+p_j-p* (eqs. mech_end, mech_newton), every iterate on the path
    !> eq. mech_path from the start state, so that E_l+E_g+p_j*V_l is conserved exactly
-   subroutine iterate_pI_end(this,VF,Q,Pjump,ierr)
+   subroutine NR_stage_pI_end(this,VF,Q,Pjump,ierr)
       implicit none
       class(relax_igmix_max_ent_inst), intent(inout) :: this
       real(WP),                        intent(inout) :: VF
@@ -663,7 +659,7 @@ contains
          VF=VFt; Q=Qt
       end do
       ierr=RELAX_FAILED
-   end subroutine iterate_pI_end
+   end subroutine NR_stage_pI_end
 
    !> pT-relaxed state at fixed masses: direct damped Newton on the leading 2x2 block (tex: Iteration of the stages)
    subroutine relax_MT(this,VF,Q,Pjump,ierr)
@@ -673,7 +669,7 @@ contains
       real(WP), dimension(:),          intent(inout) :: Q
       real(WP),                        intent(in)    :: Pjump
       integer,                         intent(out)   :: ierr
-      call this%iterate(2,VF,Q,Pjump,ierr)
+      call this%NR_stage_block(2,VF,Q,Pjump,ierr)
    end subroutine relax_MT
 
    !> Chemical stage on the pT-relaxed states from a pT-relaxed state (tex: Iteration of the stages): Newton in u=ln m_v on F^_C,
@@ -712,7 +708,7 @@ contains
          end if
          D=this%get_dir(st,Pjump,3)
          J=this%get_jac(st,D,Pjump)
-         call this%eliminate(3,J,st%F,st%mv,.false.,1.0_WP,dx,K,ierr)
+         call this%eliminate(3,J,st%F,1.0_WP,dx,K,ierr)
          if (ierr.ne.RELAX_OK) return
          if (it.eq.1) this%KC=K(3)
          ! Bounds of the root from the sign of F''_C=K^C*dm~ (eq. row_C); a Newton point outside them goes to their midpoint
@@ -729,7 +725,7 @@ contains
             ierr=RELAX_FAILED
             if (ut-u.lt.log(1.0_WP+st%ml/st%mv).and.exp(ut).gt.0.0_WP) then
                VFt=VF; Qt=Q
-               call this%eliminate(3,J,st%F,st%mv,.false.,1.0_WP,dx,K,ierr,dxs=st%mv*(exp(ut-u)-1.0_WP))
+               call this%eliminate(3,J,st%F,1.0_WP,dx,K,ierr,dxs=st%mv*(exp(ut-u)-1.0_WP))
                call this%transfer(D,dx,Pjump,VFt,Qt,mv=exp(ut))
                call this%relax_MT(VFt,Qt,Pjump,ierr)
                if (ierr.eq.RELAX_OK) exit

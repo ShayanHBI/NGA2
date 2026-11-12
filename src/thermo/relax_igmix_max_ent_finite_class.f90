@@ -12,21 +12,21 @@ module relax_igmix_max_ent_finite_class
    private
 
    public :: relax_igmix_max_ent_finite
-   public :: closure_restore,closure_pelanti
+   public :: restore_faster_eq,energy_split
 
    !> Closure after the finite step: restore the faster equilibria by their stages (Activation), or Pelanti's
    !> mixture-energy relation at the new V_l and masses (Pelanti 2022 eqs. 59, 70, 82)
-   integer, parameter :: closure_restore=1,closure_pelanti=2
+   integer, parameter :: restore_faster_eq=1,energy_split=2
 
    type, extends(relax_igmix_max_ent_inst) :: relax_igmix_max_ent_finite
       real(WP) :: MRR =huge(1.0_WP)   !< Mechanical rate lambda [1/(Pa s)]; huge = instantaneous
       real(WP) :: TRR =huge(1.0_WP)   !< Thermal rate vartheta [W/(m^3 K)]; huge = instantaneous
       real(WP) :: CRR =huge(1.0_WP)   !< Chemical rate nu [kg s/m^5]; huge = instantaneous
       real(WP) :: tauC=-1.0_WP        !< Chemical relaxation time; >0 sets nu=1/(K^C*tauC), K^C at the end state (tex: Chemical step with exact vapor potential)
-      !> Default closure_restore: the faster stages end exactly at their equilibria. closure_pelanti is Pelanti's one-pass closure
+      !> Default restore_faster_eq: the faster stages end exactly at their equilibria. energy_split is Pelanti's one-pass closure
       !> (F^_M=0 only), whose second-order energy error stays in the phase of smaller heat capacity: T_l/=T_g grows with the transfer
-      integer  :: closure=closure_restore
-      !> p_I: inherited default pI_end, p* for the instantaneous mechanical stage (iterate_pI_end); the finite mechanical step
+      integer  :: closure=restore_faster_eq
+      !> p_I: inherited default pI_end, p* for the instantaneous mechanical stage (NR_stage_pI_end); the finite mechanical step
       !> holds the impedance p_I of its start state, between the pressures (tex: Choice of p_I)
       !> Iteration limits and tolerances of the chemical step (eqs. FC_exact, dm_dt_exact); not converged gives RELAX_FAILED
       integer  :: itmax_bracket=2000      !< Doublings of the evaporation bracket of the root m_v^inf
@@ -44,7 +44,7 @@ module relax_igmix_max_ent_finite_class
       procedure :: pT_relax
       procedure :: pTg_relax
       procedure :: finite_step
-      procedure :: chemical_transfer_exact
+      procedure :: finite_stage_C
       procedure :: mixture_energy_closure
    end type relax_igmix_max_ent_finite
 
@@ -149,13 +149,13 @@ contains
       J=this%get_jac(st,D,Pjump)
       if (ns.eq.3) then
          ! Chemical transfer with the composition terms of F^_C exact (eq. dm_dt_exact)
-         call this%chemical_transfer_exact(st,D,J,dt,dm,ierr)
+         call this%finite_stage_C(st,D,J,dt,dm,ierr)
          if (ierr.ne.RELAX_OK) return
-         call this%eliminate(ns,J,st%F,st%mv,.false.,1.0_WP,dx,K,ierr,dxs=dm)
+         call this%eliminate(ns,J,st%F,1.0_WP,dx,K,ierr,dxs=dm)
          if (ierr.ne.RELAX_OK) return
       else
          ! Pivot K of the stage at the step start (eq. stiff_def)
-         call this%eliminate(ns,J,st%F,st%mv,.false.,1.0_WP,dx,K,ierr)
+         call this%eliminate(ns,J,st%F,1.0_WP,dx,K,ierr)
          if (ierr.ne.RELAX_OK) return
          if (ns.eq.1) then
             rate=this%MRR; this%KM=K(1)
@@ -168,14 +168,14 @@ contains
             omega=1.0_WP
             if (log(rate)+log(K(ns)*dt).lt.log(50.0_WP)) omega=1.0_WP-exp(-rate*K(ns)*dt)
          end if
-         call this%eliminate(ns,J,st%F,st%mv,.false.,omega,dx,K,ierr)
+         call this%eliminate(ns,J,st%F,omega,dx,K,ierr)
          if (ierr.ne.RELAX_OK) return
       end if
       call this%transfer(D,dx,Pjump,VF,Q)
       ! Closure of the faster equilibria
       if (ns.eq.1) return
       select case (this%closure)
-      case (closure_pelanti)
+      case (energy_split)
          call this%mixture_energy_closure(VF,Q,Pjump,ierr)
       case default
          if (ns.eq.2) then
@@ -188,7 +188,7 @@ contains
 
    !> Vapor mass dm received by the gas over dt, from a pT-relaxed state (tex: Chemical step with exact vapor potential).
    !> p_l, T, V_g are linear in the transfer with Pi, Theta, chi_V frozen (eq. FC_path); F^_C=g_l(p_l,T)-g_v(p_v,T) exactly
-   subroutine chemical_transfer_exact(this,st,D,J,dt,dm,ierr)
+   subroutine finite_stage_C(this,st,D,J,dt,dm,ierr)
       implicit none
       class(relax_igmix_max_ent_finite), intent(inout) :: this
       type(phasic_state),                     intent(in)    :: st
@@ -211,7 +211,7 @@ contains
       c=st%ma*this%gas%R(this%indA)/Rv
       m0=st%mv
       ! Pi, Theta, dV_l/dm~: changes of p, T, V_l per unit mass given by the liquid with F_M, F_T held (eqs. VE_C, PiTh)
-      call this%eliminate(3,J,[0.0_WP,0.0_WP,0.0_WP],st%mv,.false.,1.0_WP,chi,K,ierr,dxs=1.0_WP)
+      call this%eliminate(3,J,[0.0_WP,0.0_WP,0.0_WP],1.0_WP,chi,K,ierr,dxs=1.0_WP)
       if (ierr.ne.RELAX_OK) return
       Pi=-dot_product(st%Zl(1,:),matmul(D,chi))
       Theta=-dot_product(st%Zl(2,:),matmul(D,chi))
@@ -413,7 +413,7 @@ contains
          end do
          gauss_panel=0.5_WP*(b-a)*gauss_panel
       end function gauss_panel
-   end subroutine chemical_transfer_exact
+   end subroutine finite_stage_C
 
    !> Pelanti 2022 eqs. 59, 70, 82: V_l and the masses kept, energies split so that p_l-p_g=p_j with E_l+E_g fixed
    !> (tex: Update of pressure and temperature, option 3: heat dE~ along d_T until F^_M=0)
